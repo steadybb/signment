@@ -646,12 +646,39 @@
           <a href="{{ url_for('admin_csv') }}" class="btn btn-light btn-sm me-2">
             <i class="bi bi-download"></i>
           </a>
+          <span id="queuedEmailsBadge" class="badge bg-warning text-dark me-2 d-none" style="font-weight:600;">
+            <i class="bi bi-inbox-fill me-1"></i>
+            <span id="queuedEmailsCount">0</span> queued
+          </span>
           <a href="{{ url_for('admin_logout') }}" class="btn btn-outline-light btn-sm">
             <i class="bi bi-box-arrow-right"></i>
           </a>
         </div>
       </div>
     </div>
+    <script>
+      function updateQueuedEmailsBadge() {
+        fetch('/admin/api/notifications/count')
+          .then(r => r.json())
+          .then(j => {
+            const cnt = parseInt(j.count || 0, 10);
+            const badge = document.getElementById('queuedEmailsBadge');
+            const cntEl = document.getElementById('queuedEmailsCount');
+            if (!badge || !cntEl) return;
+            if (cnt > 0) {
+              cntEl.textContent = cnt;
+              badge.classList.remove('d-none');
+            } else {
+              badge.classList.add('d-none');
+            }
+          })
+          .catch(() => {});
+      }
+      document.addEventListener('DOMContentLoaded', function() {
+        try { updateQueuedEmailsBadge(); } catch (e) {}
+        setInterval(updateQueuedEmailsBadge, 15000);
+      });
+    </script>
 
     <!-- Live Map -->
     <div class="card border-0 shadow-sm mb-4">
