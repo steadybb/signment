@@ -54,7 +54,9 @@ try:
         smtp_port=int(os.getenv("SMTP_PORT", 587)),
         smtp_user=os.getenv("SMTP_USER", ""),
         smtp_pass=os.getenv("SMTP_PASS", ""),
-        smtp_from=os.getenv("SMTP_FROM", "no-reply@example.com")
+        smtp_from=os.getenv("SMTP_FROM", "no-reply@example.com"),
+        email_provider=os.getenv("EMAIL_PROVIDER", "resend" if os.getenv("RESEND_API_KEY", "").strip() else "smtp"),
+        resend_api_key=os.getenv("RESEND_API_KEY", "")
     )
 except Exception as e:
     logger.error(f"Configuration validation failed: {e}")
@@ -110,12 +112,28 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                smtp_class = smtplib.SMTP_SSL if int(config.smtp_port) == 465 else smtplib.SMTP
-                with smtp_class(config.smtp_host, config.smtp_port, timeout=20) as server:
-                    if int(config.smtp_port) != 465:
-                        server.starttls()
-                    server.login(config.smtp_user, config.smtp_pass)
-                    server.send_message(msg)
+                email_provider = 'resend' if config.resend_api_key else config.email_provider
+                if email_provider == 'resend':
+                    response = requests.post(
+                        'https://api.resend.com/emails',
+                        headers={'Authorization': f'Bearer {config.resend_api_key}', 'Content-Type': 'application/json'},
+                        json={
+                            'from': config.smtp_from,
+                            'to': [recipient_email],
+                            'subject': msg_subject,
+                            'html': html_body or f'<p>{plain_body or ""}</p>',
+                            'text': plain_body or ''
+                        },
+                        timeout=20
+                    )
+                    response.raise_for_status()
+                else:
+                    smtp_class = smtplib.SMTP_SSL if int(config.smtp_port) == 465 else smtplib.SMTP
+                    with smtp_class(config.smtp_host, config.smtp_port, timeout=20) as server:
+                        if int(config.smtp_port) != 465:
+                            server.starttls()
+                        server.login(config.smtp_user, config.smtp_pass)
+                        server.send_message(msg)
                 logger.info(f"Sent HTML email notification for {tracking_number} to {recipient_email}")
                 console.print(f"[info]Sent HTML email notification for {tracking_number} to {recipient_email}[/info]")
                 return True
