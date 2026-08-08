@@ -98,6 +98,21 @@ try:
     from rapidfuzz import fuzz
 except Exception:
     fuzz = None
+# RapidFuzz threshold configurable via env
+RAPIDFUZZ_THRESHOLD = int(os.getenv('RAPIDFUZZ_THRESHOLD', '70'))
+
+# Small curated transliteration map for high-value or commonly problematic cities
+# Keys should be lowercased (raw or transliterated) and map to a canonical 'City, CC' value.
+HIGH_VALUE_TRANSLITERATION_MAP = {
+    'רחובות': 'Rehovot, IL',
+    'rehovot': 'Rehovot, IL',
+    'תל אביב': 'Tel Aviv, IL',
+    'תל-אביב': 'Tel Aviv, IL',
+    'תלאביב': 'Tel Aviv, IL',
+    'תלאביב': 'Tel Aviv, IL',
+    'מדריד': 'Madrid, ES',
+    'לונדון': 'London, UK',
+}
 from collections import deque, defaultdict
 
 load_dotenv()
@@ -3389,6 +3404,23 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
                 for known in known_candidates:
                     if name in known.lower() or known.lower() in name:
                         return known
+                # Check curated transliteration map for high-value cities
+                try:
+                    for tok in toks:
+                        if not tok:
+                            continue
+                        key_raw = tok.lower()
+                        key_unidecode = _unidecode(tok).lower() if callable(_unidecode) else tok.lower()
+                        if key_raw in HIGH_VALUE_TRANSLITERATION_MAP:
+                            return HIGH_VALUE_TRANSLITERATION_MAP[key_raw]
+                        if key_unidecode in HIGH_VALUE_TRANSLITERATION_MAP:
+                            return HIGH_VALUE_TRANSLITERATION_MAP[key_unidecode]
+                    # also check full transliterated phrase
+                    full_key = _unidecode(' '.join(toks)).lower()
+                    if full_key in HIGH_VALUE_TRANSLITERATION_MAP:
+                        return HIGH_VALUE_TRANSLITERATION_MAP[full_key]
+                except Exception:
+                    pass
                 # Use RapidFuzz fuzzy matching if available to find the best-known candidate
                 try:
                     if fuzz and toks:
@@ -3403,7 +3435,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
                                     best = known
                             except Exception:
                                 continue
-                        if best and best_score >= 70:
+                        if best and best_score >= RAPIDFUZZ_THRESHOLD:
                             return best
                 except Exception:
                     pass
