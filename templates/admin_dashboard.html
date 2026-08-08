@@ -1555,10 +1555,15 @@
       })
       .then(r => r.json())
       .then(result => {
+        // When API enqueues the email (202 fallback), server returns { enqueued: true, message }
         if (result.success) {
           showEmailStatus('success', `✅ Email sent successfully to ${result.recipient}`);
           loadEmailHistory(currentEmailTn);
           showToast(`Email sent to ${result.recipient}`, 'success');
+        } else if (result.enqueued) {
+          const msg = result.message || 'Email send deferred; notification queued';
+          showEmailStatus('success', `ℹ️ ${msg}`);
+          showToast(msg, 'info');
         } else {
           showEmailStatus('error', `❌ ${result.error || 'Unable to send email'}`);
           showToast(result.error || 'Failed to send email', 'error');
