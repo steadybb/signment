@@ -365,6 +365,8 @@ class BotConfig:
         smtp_user=None,
         smtp_pass=None,
         smtp_from=None,
+        email_provider=None,
+        resend_api_key=None,
     ):
         self.telegram_bot_token = (
             telegram_bot_token
@@ -395,6 +397,11 @@ class BotConfig:
         self.smtp_user = smtp_user if smtp_user is not None else os.getenv("SMTP_USER", "")
         self.smtp_pass = smtp_pass if smtp_pass is not None else os.getenv("SMTP_PASS", "")
         self.smtp_from = smtp_from if smtp_from is not None else os.getenv("SMTP_FROM", "no-reply@example.com")
+        configured_provider = os.getenv("EMAIL_PROVIDER", "").strip().lower()
+        if not configured_provider:
+            configured_provider = "resend" if os.getenv("RESEND_API_KEY", "").strip() else "smtp"
+        self.email_provider = email_provider if email_provider is not None else configured_provider
+        self.resend_api_key = resend_api_key if resend_api_key is not None else os.getenv("RESEND_API_KEY", "")
 
 try:
     config = BotConfig()
@@ -441,6 +448,11 @@ app.config['SMTP_PORT'] = int(os.getenv('SMTP_PORT', 587))
 app.config['SMTP_USER'] = os.getenv('SMTP_USER', '')
 app.config['SMTP_PASS'] = os.getenv('SMTP_PASS', '')
 app.config['SMTP_FROM'] = os.getenv('SMTP_FROM', 'no-reply@example.com')
+app.config['RESEND_API_KEY'] = os.getenv('RESEND_API_KEY', '')
+configured_email_provider = os.getenv('EMAIL_PROVIDER', '').strip().lower()
+app.config['EMAIL_PROVIDER'] = configured_email_provider or (
+    'resend' if app.config['RESEND_API_KEY'].strip() else 'smtp'
+)
 app.config['RECAPTCHA_SITE_KEY'] = os.getenv('RECAPTCHA_SITE_KEY', 'your-site-key')
 app.config['RECAPTCHA_SECRET_KEY'] = os.getenv('RECAPTCHA_SECRET_KEY', 'your-secret-key')
 app.config['RECAPTCHA_VERIFY_URL'] = os.getenv('RECAPTCHA_VERIFY_URL', 'https://www.google.com/recaptcha/api/siteverify')
