@@ -3780,6 +3780,30 @@ def api_send_email():
 
     return jsonify({'success': True, 'recipient': shipment.recipient_email})
 
+
+@app.route('/admin/api/notifications/count')
+@admin_required
+def api_notifications_count():
+    """Return the number of pending notifications in the Redis queue."""
+    try:
+        if not redis_client:
+            return jsonify({'count': 0})
+        cnt = 0
+        try:
+            cnt = int(redis_client.llen('notifications') or 0)
+        except Exception:
+            # redis-py may return bytes/str; coerce
+            try:
+                raw = redis_client.execute_command('LLEN', 'notifications')
+                cnt = int(raw or 0)
+            except Exception:
+                cnt = 0
+        return jsonify({'count': cnt})
+    except Exception as e:
+        flask_logger.error(f"Failed to read notifications count: {e}")
+        flask_logger.debug(traceback.format_exc())
+        return jsonify({'count': 0}), 500
+
 @app.route('/admin/api/pause', methods=['POST'])
 @admin_required
 def api_pause_simulation():
