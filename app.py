@@ -88,6 +88,16 @@ from wtforms import StringField, SubmitField
 from wtforms.validators import DataRequired
 from flask_wtf import FlaskForm
 from functools import wraps, lru_cache
+try:
+    from unidecode import unidecode as _unidecode
+except Exception:
+    def _unidecode(s):
+        return s
+
+try:
+    from rapidfuzz import fuzz
+except Exception:
+    fuzz = None
 from collections import deque, defaultdict
 
 load_dotenv()
@@ -2417,6 +2427,20 @@ def admin_redis_metrics():
         flask_logger.error(f"Failed to fetch redis metrics: {e}")
         return jsonify({'error': 'Could not retrieve metrics'}), 500
 
+
+@app.route('/admin/api/error_codes')
+@admin_required
+def admin_error_codes():
+    """Expose mapping of `error_code` values to friendly messages for the admin UI."""
+    mapping = {
+        'missing_fields': 'Origin and destination are required',
+        'invalid_service_level': 'Selected service level is not valid',
+        'invalid_recipient_email': 'Recipient email is invalid',
+        'geocoding_failed': 'Could not resolve the address. Try City, Country Code',
+        'db_save_failed': 'Internal error saving shipment',
+    }
+    return jsonify(mapping)
+
 @app.route('/admin/api/logs')
 @admin_required
 def admin_logs():
@@ -3272,14 +3296,14 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
     recipient_email = recipient_email.strip() if isinstance(recipient_email, str) else recipient_email
 
     if not origin or not destination:
-        return {'error': 'Origin and destination required'}, 400
+        return {'error': 'Origin and destination required', 'error_code': 'missing_fields'}, 400
 
     valid_service_levels = set(DHLRealisticSimulator.SERVICE_LEVELS.keys())
     if service_level not in valid_service_levels:
-        return {'error': 'Invalid service_level', 'allowed': sorted(valid_service_levels)}, 400
+        return {'error': 'Invalid service_level', 'allowed': sorted(valid_service_levels), 'error_code': 'invalid_service_level'}, 400
 
     if recipient_email and not validate_email(recipient_email):
-        return {'error': 'Invalid recipient_email'}, 400
+        return {'error': 'Invalid recipient_email', 'error_code': 'invalid_recipient_email'}, 400
 
     tracking_number = generate_dhl_tracking()
     while Shipment.query.filter_by(tracking_number=tracking_number).first():
@@ -3295,15 +3319,155 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
             failed_locations.append(f"origin '{origin}'")
         if not dest_coords:
             failed_locations.append(f"destination '{destination}'")
-        flask_logger.warning(
-            "Shipment geocoding failed: %s (GEOCODING_API_KEY configured=%s)",
-            ', '.join(failed_locations),
-            bool(app.config.get('GEOCODING_API_KEY'))
-        )
-        return {
-            'error': 'Unable to resolve location coordinates',
-            'details': f"Could not resolve {', '.join(failed_locations)}. Use 'City, Country Code' or configure GEOCODING_API_KEY."
-        }, 400
+        # Try a heuristic: strip street/house-number, transliterate, and attempt city+country fallback
+        import re
+        import unicodedata
+
+        def _simplify_to_city_cc(addr):
+            if not addr or not isinstance(addr, str):
+                return None
+            s = addr.strip()
+            # Normalize unicode to remove accents when possible
+            try:
+                s = unicodedata.normalize('NFKD', s)
+                s = ''.join(c for c in s if not unicodedata.combining(c))
+            except Exception:
+                pass
+
+            # Remove common street prefixes/suffixes and house numbers
+            s = re.sub(r"\b(st|street|rd|road|ave|avenue|blvd|lane|ln|way|drive|dr|ha|ha')\b", ' ', s, flags=re.IGNORECASE)
+            s = re.sub(r"\d+[A-Za-z\-/]*", ' ', s)  # remove numbers like '12', '12A', '12-4'
+            s = re.sub(r"[^A-Za-z0-9, ]", ' ', s)
+            s = re.sub(r"\s+", ' ', s).strip()
+
+            parts = [p.strip() for p in s.split(',') if p.strip()]
+            # If we have at least two comma parts, assume last two are city and country code/name
+            if len(parts) >= 2:
+                cand = f"{parts[-2].title()}, {parts[-1].upper()}"
+                return cand
+
+            toks = s.split()
+            # Try to match tokens against known locations and DHL hubs
+            try:
+                known_candidates = set()
+                try:
+                    known_candidates.update(k for k in KNOWN_LOCATION_COORDS.keys())
+                except Exception:
+                    pass
+                try:
+                    known_candidates.update(k for k in DHLRealisticSimulator.DHL_HUBS.keys())
+                except Exception:
+                    pass
+                lower_to_known = {k.lower(): k for k in known_candidates}
+                for tok in toks[::-1]:
+                    if not tok:
+                        continue
+                    # If token looks like a country code (2 letters), prefer exact country-code suffix matches
+                    if len(tok) <= 2:
+                        # collect same-country candidates and score them by other token matches
+                        candidates = [k for k in known_candidates if k.endswith(', ' + tok.upper())]
+                        if candidates:
+                            best = None
+                            best_score = 0
+                            for cand in candidates:
+                                score = 0
+                                for t in toks:
+                                    if len(t) > 2 and t.lower() in cand.lower():
+                                        score += 1
+                                if score > best_score:
+                                    best_score = score
+                                    best = cand
+                            if best and best_score > 0:
+                                return best
+                        # skip very short tokens for substring matching if no scored candidate
+                        continue
+                    for known in known_candidates:
+                        if tok.lower() in known.lower():
+                            return known
+                # also try full string match
+                name = ' '.join(toks).lower()
+                for known in known_candidates:
+                    if name in known.lower() or known.lower() in name:
+                        return known
+                # Use RapidFuzz fuzzy matching if available to find the best-known candidate
+                try:
+                    if fuzz and toks:
+                        query = ' '.join(toks)
+                        best = None
+                        best_score = 0
+                        for known in known_candidates:
+                            try:
+                                score = fuzz.partial_ratio(_unidecode(known).lower(), _unidecode(query).lower())
+                                if score > best_score:
+                                    best_score = score
+                                    best = known
+                            except Exception:
+                                continue
+                        if best and best_score >= 70:
+                            return best
+                except Exception:
+                    pass
+                # Last-resort: prefix match on transliterated tokens to catch script mismatches
+                try:
+                    if toks:
+                        longest = max(toks, key=len)
+                        prefix = longest[:4].lower()
+                        for known in known_candidates:
+                            try:
+                                if prefix and prefix in _unidecode(known).lower():
+                                    return known
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            if len(toks) >= 2:
+                # If last token looks like country code (2 letters), use it
+                last = toks[-1].upper()
+                if len(last) == 2:
+                    city = ' '.join(toks[:-1]).title()
+                    return f"{city}, {last}"
+                # Otherwise, return last two tokens as city + country-code-like token
+                city = toks[-2].title()
+                country_like = toks[-1].upper()
+                return f"{city}, {country_like}"
+
+            return None
+
+        # Attempt to salvage by simplifying failing addresses
+        salvaged = False
+        if not origin_coords:
+            simp = _simplify_to_city_cc(origin)
+            if simp:
+                flask_logger.info(f"Attempting simplified origin geocode: '{simp}'")
+                n_origin, o_coords = resolve_location(simp)
+                if o_coords:
+                    origin_coords = o_coords
+                    norm_origin = n_origin
+                    salvaged = True
+        if not dest_coords:
+            simp = _simplify_to_city_cc(destination)
+            if simp:
+                flask_logger.info(f"Attempting simplified destination geocode: '{simp}'")
+                n_dest, d_coords = resolve_location(simp)
+                if d_coords:
+                    dest_coords = d_coords
+                    norm_destination = n_dest
+                    salvaged = True
+
+        if not salvaged:
+            flask_logger.warning(
+                "Shipment geocoding failed: %s (GEOCODING_API_KEY configured=%s)",
+                ', '.join(failed_locations),
+                bool(app.config.get('GEOCODING_API_KEY'))
+            )
+            return {
+                'error': 'Unable to resolve location coordinates',
+                'error_code': 'geocoding_failed',
+                'details': f"Could not resolve {', '.join(failed_locations)}. Use 'City, Country Code' or configure GEOCODING_API_KEY."
+            }, 400
 
     checkpoints = f"{now.strftime('%Y-%m-%d %H:%M')} - {norm_origin} - Shipment information received"
 
@@ -3330,7 +3494,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
     except Exception as e:
         db.session.rollback()
         flask_logger.error(f"Failed to save shipment {tracking_number}: {e}")
-        return {'error': 'Failed to save shipment to database'}, 500
+        return {'error': 'Failed to save shipment to database', 'error_code': 'db_save_failed'}, 500
 
     distance = None
     try:
@@ -3404,6 +3568,12 @@ def api_create_shipment():
         data.get('recipient_email'),
         data.get('service_level', 'DHL Express')
     )
+    # Log payload and validation details for easier debugging from the admin UI
+    if status_code != 201:
+        try:
+            flask_logger.warning("create_shipment failed: status=%s payload=%s error=%s", status_code, data, result)
+        except Exception:
+            flask_logger.warning("create_shipment failed: status=%s (failed to serialize payload/result)", status_code)
     return jsonify(result), status_code
 
 @app.route('/admin/api/bulk_create', methods=['POST'])
@@ -3732,4 +3902,11 @@ def admin_debug():
 # Start
 if __name__ == '__main__':
     start_background_services()
-    socketio.run(app, host='0.0.0.0', port=10000, debug=os.getenv('FLASK_ENV') == 'development')
+    # Respect platform-provided PORT (e.g. Render/GCP); fall back to 10000 for local dev
+    port_env = os.getenv('PORT') or app.config.get('PORT')
+    try:
+        port = int(port_env) if port_env else 10000
+    except Exception:
+        port = 10000
+    flask_logger.info(f"Detected service running on port {port}")
+    socketio.run(app, host='0.0.0.0', port=port, debug=os.getenv('FLASK_ENV') == 'development')
