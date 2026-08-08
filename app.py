@@ -88,6 +88,8 @@ from wtforms import StringField, SubmitField
 from wtforms.validators import DataRequired
 from flask_wtf import FlaskForm
 from functools import wraps, lru_cache
+import traceback
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 try:
     from unidecode import unidecode as _unidecode
 except Exception:
@@ -1267,6 +1269,48 @@ KNOWN_LOCATION_COORDS = {
     "Yerevan, AM": {"lat": 40.1872, "lon": 44.5152}
 }
 
+# Auto-populate `HIGH_VALUE_TRANSLITERATION_MAP` from `KNOWN_LOCATION_COORDS` to
+# provide transliterated and tokenized lookup keys for common cities. Do not
+# override any explicitly curated entries already present in the map.
+try:
+    import re as _re
+    for _known in list(KNOWN_LOCATION_COORDS.keys()):
+        try:
+            canonical = _known  # e.g. 'Rehovot, IL'
+            # City part (before comma) and full known key
+            city_part = _known.split(',', 1)[0].strip()
+            full_lower = _known.lower()
+            city_lower = city_part.lower()
+            # transliterated variants
+            try:
+                city_unidecode = _unidecode(city_part).lower()
+                full_unidecode = _unidecode(_known).lower()
+            except Exception:
+                city_unidecode = city_lower
+                full_unidecode = full_lower
+
+            # cleaned versions (remove punctuation, normalize spaces)
+            cleaned_city = _re.sub(r'[^a-z0-9 ]', ' ', city_unidecode).strip()
+            cleaned_full = _re.sub(r'[^a-z0-9 ,]', ' ', full_unidecode).strip()
+
+            variants = set([full_lower, full_unidecode, city_lower, city_unidecode, cleaned_city, cleaned_full])
+            # add individual tokens from the city name (e.g., 'rishon', 'lezion')
+            for tok in cleaned_city.split():
+                if tok:
+                    variants.add(tok)
+
+            for key in variants:
+                if not key:
+                    continue
+                # don't override hand-curated map entries
+                if key in HIGH_VALUE_TRANSLITERATION_MAP:
+                    continue
+                HIGH_VALUE_TRANSLITERATION_MAP[key] = canonical
+        except Exception:
+            continue
+except Exception:
+    pass
+
 
 def normalize_location(loc):
     """Normalize a free-text location into a readable 'City, CC' or fallback to a cleaned string.
@@ -2273,7 +2317,7 @@ def open_smtp_connection(timeout=None):
     """Open and authenticate an SMTP connection for STARTTLS or implicit SSL."""
     host = app.config['SMTP_HOST']
     port = int(app.config['SMTP_PORT'])
-    timeout = timeout or int(os.getenv('SMTP_TIMEOUT', '20'))
+    timeout = timeout or int(os.getenv('SMTP_TIMEOUT', '120'))
     if port == 465:
         server = smtplib.SMTP_SSL(host, port, timeout=timeout)
     else:
@@ -2327,38 +2371,41 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
         msg.attach(MIMEText(plain_body, "plain"))
     if html_body:
         msg.attach(MIMEText(html_body, "html"))
-    max_retries = 3
-    for attempt in range(max_retries):
+    @retry(reraise=True, stop=stop_after_attempt(int(os.getenv('SMTP_MAX_RETRIES', '3'))), wait=wait_exponential(multiplier=2, max=30))
+    def _send():
+        if email_provider == 'resend':
+            send_email_via_resend(recipient, subject, html_body, plain_body)
+        else:
+            with open_smtp_connection() as server:
+                server.send_message(msg)
+
+    try:
+        _send()
+        flask_logger.info(f"Email sent to {recipient}")
+        if tracking_number:
+            try:
+                history_key = f"email_history:{tracking_number}"
+                entry = {
+                    'timestamp': datetime.now().isoformat(),
+                    'type': email_type or 'status_update',
+                    'recipient': recipient,
+                    'subject': subject,
+                    'message': message
+                }
+                if redis_client:
+                    redis_client.lpush(history_key, json.dumps(entry))
+                    redis_client.ltrim(history_key, 0, 99)
+            except Exception as history_exc:
+                flask_logger.warning('Failed to store email history for %s: %s', tracking_number, history_exc)
+        return True
+    except Exception as e:
+        flask_logger.error(f"Email failed after retries: {e}")
+        flask_logger.debug(traceback.format_exc())
         try:
-            if email_provider == 'resend':
-                send_email_via_resend(recipient, subject, html_body, plain_body)
-            else:
-                with open_smtp_connection() as server:
-                    server.send_message(msg)
-            flask_logger.info(f"Email sent to {recipient}")
-            if tracking_number:
-                try:
-                    history_key = f"email_history:{tracking_number}"
-                    entry = {
-                        'timestamp': datetime.now().isoformat(),
-                        'type': email_type or 'status_update',
-                        'recipient': recipient,
-                        'subject': subject,
-                        'message': message
-                    }
-                    if redis_client:
-                        redis_client.lpush(history_key, json.dumps(entry))
-                        redis_client.ltrim(history_key, 0, 99)
-                except Exception as history_exc:
-                    flask_logger.warning('Failed to store email history for %s: %s', tracking_number, history_exc)
-            return True
-        except Exception as e:
-            flask_logger.error(f"Email attempt {attempt+1} failed: {e}")
-            if attempt == max_retries - 1:
-                console.print(Panel(f"[error]Failed to send email to {recipient}[/error]", title="Email Error"))
-                return False
-            time.sleep(2 ** attempt)
-    return False
+            console.print(Panel(f"[error]Failed to send email to {recipient}[/error]", title="Email Error"))
+        except Exception:
+            pass
+        return False
 
 # === BROADCAST UPDATE ===
 def broadcast_update(tn):
@@ -3682,18 +3729,55 @@ def api_send_email():
     html_body = f"<p>{message}</p><p>Track your shipment <a href='{app.config['WEBSOCKET_SERVER']}/track/{tn}'>here</a>.</p>"
     plain_body = f"{message}\nTrack your shipment: {app.config['WEBSOCKET_SERVER']}/track/{tn}"
 
-    success = send_email_notification(
-        shipment.recipient_email,
-        subject,
-        html_body=html_body,
-        plain_body=plain_body,
-        tracking_number=tn,
-        email_type=email_type,
-        message=message
-    )
+    try:
+        success = send_email_notification(
+            shipment.recipient_email,
+            subject,
+            html_body=html_body,
+            plain_body=plain_body,
+            tracking_number=tn,
+            email_type=email_type,
+            message=message
+        )
+    except Exception as e:
+        flask_logger.error(f"Exception in api_send_email for {tn}: {e}")
+        flask_logger.debug(traceback.format_exc())
+        # Attempt to enqueue the notification as a fallback
+        try:
+            enqueue_notification({
+                "tracking_number": tn,
+                "type": "email",
+                "data": {
+                    "recipient_email": shipment.recipient_email,
+                    "subject": subject,
+                    "html_body": html_body,
+                    "plain_body": plain_body
+                }
+            })
+            return jsonify({'success': False, 'enqueued': True, 'message': 'Email send failed; notification enqueued'}), 202
+        except Exception as enq_exc:
+            flask_logger.error(f"Failed to enqueue email notification for {tn}: {enq_exc}")
+            flask_logger.debug(traceback.format_exc())
+            return jsonify({'error': 'Failed to send or enqueue email'}), 500
 
     if not success:
-        return jsonify({'error': 'Failed to send email'}), 500
+        # Try enqueue fallback when direct send returns False (transient issues)
+        try:
+            enqueue_notification({
+                "tracking_number": tn,
+                "type": "email",
+                "data": {
+                    "recipient_email": shipment.recipient_email,
+                    "subject": subject,
+                    "html_body": html_body,
+                    "plain_body": plain_body
+                }
+            })
+            return jsonify({'success': False, 'enqueued': True, 'message': 'Direct send failed; notification enqueued'}), 202
+        except Exception:
+            flask_logger.debug(traceback.format_exc())
+            return jsonify({'error': 'Failed to send email and fallback enqueue failed'}), 500
+
     return jsonify({'success': True, 'recipient': shipment.recipient_email})
 
 @app.route('/admin/api/pause', methods=['POST'])
