@@ -613,6 +613,16 @@
   </style>
 </head>
 <body>
+  <script>
+    // Load admin-friendly error_code -> message map for UI
+    window.errorCodeMap = {};
+    document.addEventListener('DOMContentLoaded', function() {
+      fetch('/admin/api/error_codes')
+        .then(r => r.json())
+        .then(map => { window.errorCodeMap = map || {}; })
+        .catch(() => { window.errorCodeMap = {}; });
+    });
+  </script>
   <div class="container-fluid px-4 py-3">
     <!-- Header -->
     <div class="dhl-header px-4 mb-4">
@@ -1284,9 +1294,18 @@
 
       if (data.error) {
         alertDiv.className = 'alert alert-danger';
-        alertDiv.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i> Error: ' + data.error;
+        // Prefer server-provided error_code mapping when available
+        let friendly = data.error || 'Error';
+        if (data.error_code && window.errorCodeMap && window.errorCodeMap[data.error_code]) {
+          friendly = window.errorCodeMap[data.error_code];
+          // If server also provided a raw error string, show it in parentheses for debugging
+          if (data.error && data.error !== friendly) {
+            friendly = `${friendly} (${data.error})`;
+          }
+        }
+        alertDiv.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i> Error: ' + friendly;
         listDiv.innerHTML = '';
-        showToast(data.error, 'error');
+        showToast(friendly, 'error');
         return;
       }
 
