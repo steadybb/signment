@@ -205,6 +205,10 @@
             animation: pulse 2s ease-in-out infinite;
             will-change: transform, opacity;
         }
+        .live-indicator.paused-dot {
+            background: #f59e0b;
+            animation: none;
+        }
         @keyframes pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.4; transform: scale(0.85); }
@@ -219,6 +223,43 @@
         }
         .connection-dot.connected { background: #22c55e; }
         .connection-dot.disconnected { background: #dc2626; }
+
+        /* ---------- Paused Banner ---------- */
+        .paused-banner {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            margin: 12px 0 0;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            color: #92400e;
+            font-size: 0.86rem;
+            font-weight: 600;
+        }
+        .paused-banner.show { display: flex; }
+
+        /* ---------- Speed / Mode Badges ---------- */
+        .meta-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .meta-badge {
+            display: none;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            color: #4b5563;
+            border: 1px solid #e5e7eb;
+        }
+        .meta-badge.show { display: inline-flex; }
 
         /* ---------- Progress ---------- */
         .progress-container {
@@ -721,6 +762,13 @@
                 height: 80px;
             }
         }
+
+        /* ---------- Reduced motion ---------- */
+        @media (prefers-reduced-motion: reduce) {
+            .live-indicator { animation: none; }
+            .progress-bar .fill { transition: none; }
+            .checkpoint-new { animation: none; }
+        }
     </style>
 
     <!-- Scripts with SRI -->
@@ -799,13 +847,25 @@
 
                     <!-- Live Controls -->
                     <div class="flex items-center gap-3 mt-4 flex-wrap">
-                        <span class="live-indicator" aria-hidden="true"></span>
-                        <span class="text-sm text-gray-500 font-medium">Live</span>
+                        <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
+                        <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
                         <span class="connection-dot connected" id="connectionDot" aria-hidden="true"></span>
                         <span id="connectionStatus" class="text-xs text-gray-500">Connected</span>
                         <button class="refresh-btn" id="refreshBtn" disabled aria-label="Refresh tracking data">Refresh</button>
                         <span id="refreshHint" class="refresh-hint">Live connection active</span>
                         <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection">Reconnect</button>
+                    </div>
+
+                    <!-- Simulator state badges (speed / transport mode) -->
+                    <div class="meta-badges" id="metaBadges">
+                        <span class="meta-badge" id="modeBadge">🚚 Ground</span>
+                        <span class="meta-badge" id="speedBadge">1.0x speed</span>
+                    </div>
+
+                    <!-- Paused banner (shown when the simulator is paused) -->
+                    <div class="paused-banner" id="pausedBanner" role="status">
+                        <span>⏸</span>
+                        <span>This shipment's simulation is currently paused — position will resume updating once it's restarted.</span>
                     </div>
 
                     <!-- Position Card -->
@@ -997,20 +1057,39 @@
 
             // ============================================================
             //  CONSTANTS & CONFIGURATION
+            //
+            //  NOTE ON BACKEND UPDATE TYPES (app.py):
+            //  This page receives 'tracking_update' socket events from THREE
+            //  different sources in app.py, which carry different fields:
+            //    1. on_request('request_tracking')  -> full payload, always
+            //       includes coords/route_coords/mode. Fired on connect and
+            //       every REFRESH_INTERVAL_MS as a resync safety net.
+            //    2. broadcast_update(tn)             -> full payload, includes
+            //       coords/route_coords, fired roughly every 15-120s per
+            //       simulator tick (see enhanced_full_simulate_tracking).
+            //    3. sim_emit_light(tn, ...)           -> LIGHTWEIGHT payload,
+            //       only sent if a client is registered as viewing this tn
+            //       (via add_client, which happens inside on_request above).
+            //       It does NOT include coords or route_coords - only
+            //       current_lat/current_lon/progress/status/checkpoints -
+            //       fired every ~2s (SIM_BROADCAST_INTERVAL_SEC) while a
+            //       simulation is actively running.
+            //
+            //  Because (3) never includes route data, marker movement and
+            //  route drawing are handled by two SEPARATE functions below:
+            //  moveLiveMarker() (always runs when lat/lon present) and
+            //  maybeRedrawRoute() (only runs when coords/route_coords are
+            //  present AND have actually changed). This is what makes the
+            //  marker glide smoothly on every light update instead of only
+            //  jumping once per full broadcast.
             // ============================================================
             const SOCKET_URL = window.location.origin;
             const REFRESH_INTERVAL_MS = 30000;
-            const ANIMATION_DURATION = 1200;
-            const DEBUG = true; // keep enabled for now
+            const MARKER_TWEEN_MS = 900; // matches roughly the sim's light-update cadence
+            const DEBUG = true;
 
             function debugLog(...args) {
                 if (DEBUG) console.log(...args);
-            }
-
-            function safeParseDate(dateStr) {
-                if (!dateStr) return null;
-                const d = new Date(dateStr);
-                return isNaN(d.getTime()) ? null : d;
             }
 
             function sanitizeArray(arr) {
@@ -1022,6 +1101,12 @@
                 if (el && value !== undefined && value !== null && value !== '') {
                     el.textContent = value;
                 }
+            }
+
+            function toNum(v) {
+                if (v === null || v === undefined) return null;
+                const n = parseFloat(v);
+                return isNaN(n) ? null : n;
             }
 
             // ============================================================
@@ -1112,6 +1197,12 @@
             socket.on('connect', () => {
                 debugLog('Socket.IO connected');
                 updateConnectionStatus(true);
+                // IMPORTANT: this request_tracking emit is what causes app.py's
+                // on_request() handler to call add_client(tn, sid) server-side,
+                // which registers this browser tab as an active viewer. Without
+                // that registration, sim_emit_light() in app.py will silently
+                // skip sending light updates for this tracking number entirely
+                // (see get_clients(tn) check in sim_emit_light).
                 requestTracking();
                 if (trackingInterval) clearInterval(trackingInterval);
                 trackingInterval = setInterval(() => {
@@ -1173,17 +1264,12 @@
             let map = null;
             let markerGroup, polylineGroup, liveMarkerGroup;
             let routeBounds = null;
-            let isAnimationEnabled = true;
-            let isAnimating = false;
-            let animationFrameId = null;
-            let animatedPolyline = null;
+            let smoothMotionEnabled = true;
 
             function initMap() {
                 try {
-                    // Check if Leaflet is loaded
                     if (typeof L === 'undefined') {
                         console.warn('Leaflet library not loaded – map will not be available');
-                        // Try loading it dynamically from a fallback CDN
                         loadLeafletFallback();
                         return;
                     }
@@ -1200,34 +1286,26 @@
                         maxZoom: 19,
                         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                     }).addTo(map);
-                    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                        maxZoom: 19,
-                        attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
-                    }).addTo(map);
 
                     markerGroup = L.layerGroup().addTo(map);
                     polylineGroup = L.layerGroup().addTo(map);
                     liveMarkerGroup = L.layerGroup().addTo(map);
 
-                    const ToggleAnimationControl = L.Control.extend({
+                    const SmoothMotionControl = L.Control.extend({
                         options: { position: 'topright' },
                         onAdd: function() {
                             const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                            container.id = 'toggleAnimation';
-                            container.innerHTML = '▶ Animation';
+                            container.id = 'toggleSmoothMotion';
+                            container.innerHTML = '▶ Smooth Motion';
                             container.classList.add('active');
-                            container.setAttribute('aria-label', 'Toggle route animation');
+                            container.setAttribute('aria-label', 'Toggle smooth marker movement');
                             container.setAttribute('role', 'switch');
                             container.setAttribute('aria-checked', 'true');
-                            container.disabled = true;
                             container.onclick = function() {
-                                isAnimationEnabled = !isAnimationEnabled;
+                                smoothMotionEnabled = !smoothMotionEnabled;
                                 container.classList.toggle('active');
-                                container.innerHTML = isAnimationEnabled ? '▶ Animation' : '⏸ Paused';
-                                container.setAttribute('aria-checked', isAnimationEnabled ? 'true' : 'false');
-                                if (window._lastCoords) {
-                                    updateMap(window._lastCoords);
-                                }
+                                container.innerHTML = smoothMotionEnabled ? '▶ Smooth Motion' : '⏸ Instant Jumps';
+                                container.setAttribute('aria-checked', smoothMotionEnabled ? 'true' : 'false');
                             };
                             return container;
                         }
@@ -1242,7 +1320,11 @@
                             container.setAttribute('aria-label', 'Reset map view');
                             container.disabled = true;
                             container.onclick = function() {
-                                if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
+                                if (routeBounds) {
+                                    map.fitBounds(routeBounds, { padding: [20, 20] });
+                                } else if (window._lastMarkerLatLng) {
+                                    map.setView(window._lastMarkerLatLng, 6);
+                                }
                             };
                             return container;
                         }
@@ -1265,11 +1347,22 @@
                         }
                     });
 
-                    map.addControl(new ToggleAnimationControl());
+                    map.addControl(new SmoothMotionControl());
                     map.addControl(new ResetViewControl());
                     map.addControl(new FullscreenControl());
 
                     console.log('✅ Map initialized successfully');
+
+                    // If data already arrived before the map finished initializing,
+                    // apply it now instead of waiting for the next socket event.
+                    if (window._pendingRoute) {
+                        maybeRedrawRoute(window._pendingRoute);
+                        window._pendingRoute = null;
+                    }
+                    if (window._pendingMarker) {
+                        moveLiveMarker(window._pendingMarker.lat, window._pendingMarker.lon, window._pendingMarker.label, true);
+                        window._pendingMarker = null;
+                    }
                 } catch (e) {
                     console.error('Map initialization failed:', e);
                 }
@@ -1284,7 +1377,6 @@
                 script.onload = function() {
                     console.log('Leaflet fallback loaded, re-initializing map...');
                     initMap();
-                    // Also reload CSS
                     const link = document.createElement('link');
                     link.rel = 'stylesheet';
                     link.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css';
@@ -1297,335 +1389,182 @@
             }
 
             // ============================================================
-            //  MAP ROUTE & ANIMATION functions
+            //  ROUTE DRAWING (checkpoints markers + polyline)
+            //  Only runs when route data is present AND has actually changed
+            //  from what's already drawn - so repeated full broadcasts that
+            //  carry the same route (route rarely changes mid-simulation)
+            //  don't cause the map to redraw/re-fit on every tick.
             // ============================================================
-            function sortCoordsByTimestamp(coords) {
-                return coords.map((coord, idx) => ({ coord, idx }))
-                    .sort((a, b) => {
-                        const aTime = a.coord.desc ? a.coord.desc.split(' - ')[0] : null;
-                        const bTime = b.coord.desc ? b.coord.desc.split(' - ')[0] : null;
-                        const aDate = safeParseDate(aTime);
-                        const bDate = safeParseDate(bTime);
-                        if (aDate && bDate) return aDate - bDate;
-                        if (aDate) return -1;
-                        if (bDate) return 1;
-                        return a.idx - b.idx;
-                    })
-                    .map(entry => entry.coord);
+            function routeSignature(coords) {
+                if (!coords || !coords.length) return '';
+                const first = coords[0];
+                const last = coords[coords.length - 1];
+                return `${coords.length}:${first.lat},${first.lon}:${last.lat},${last.lon}`;
             }
 
-            function animateSegment(start, end, duration, callback) {
-                const startTime = performance.now();
-                const startLatLng = [start.lat, start.lon];
-                const endLatLng = [end.lat, end.lon];
-                let currentLatLngs = [startLatLng];
+            function maybeRedrawRoute(coords) {
+                if (!map) {
+                    window._pendingRoute = coords;
+                    return;
+                }
+                if (!coords || !coords.length) {
+                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                    return;
+                }
 
-                function step(timestamp) {
-                    const progress = Math.min((timestamp - startTime) / duration, 1);
-                    const lat = startLatLng[0] + (endLatLng[0] - startLatLng[0]) * progress;
-                    const lon = startLatLng[1] + (endLatLng[1] - startLatLng[1]) * progress;
-                    currentLatLngs = [startLatLng, [lat, lon]];
-                    if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
-                    animatedPolyline = L.polyline(currentLatLngs, {
-                        color: '#d32f2f',
-                        weight: 4,
-                        dashArray: '6, 10',
-                        opacity: 0.7
-                    });
-                    polylineGroup.addLayer(animatedPolyline);
+                const sig = routeSignature(coords);
+                if (sig === window._routeSignature) {
+                    // Route hasn't changed - don't touch the map (avoids jank/rezoom
+                    // on every simulator broadcast, which happens every 15-120s).
+                    return;
+                }
+                window._routeSignature = sig;
 
-                    if (progress < 1) {
-                        animationFrameId = requestAnimationFrame(step);
-                    } else {
-                        cancelAnimationFrame(animationFrameId);
-                        callback();
+                markerGroup.clearLayers();
+                polylineGroup.clearLayers();
+
+                // Checkpoint markers (only points that have a description, i.e.
+                // came from geocode_locations() on actual checkpoint text rather
+                // than the densified route_coords, which have no 'desc').
+                coords.forEach(c => {
+                    if (c.desc) {
+                        L.marker([c.lat, c.lon]).bindPopup(c.desc).addTo(markerGroup);
                     }
-                }
-                animationFrameId = requestAnimationFrame(step);
+                });
+
+                const latlngs = coords.map(c => [c.lat, c.lon]);
+                L.polyline(latlngs, {
+                    color: '#d32f2f',
+                    weight: 4,
+                    dashArray: '6, 10',
+                    opacity: 0.7
+                }).addTo(polylineGroup);
+
+                routeBounds = L.latLngBounds(latlngs);
+                map.fitBounds(routeBounds, { padding: [20, 20] });
+                document.getElementById('resetView')?.removeAttribute('disabled');
+                debugLog('Route redrawn:', coords.length, 'points');
             }
 
-            function animateRoute(coords) {
-                if (coords.length < 2) return;
-                let index = 0;
-                function animateNextSegment() {
-                    if (index < coords.length - 1) {
-                        animateSegment(coords[index], coords[index + 1], 1000, () => {
-                            index++;
-                            animateNextSegment();
-                        });
-                    } else {
-                        if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
-                        animatedPolyline = null;
-                        const latlngs = coords.map(c => [c.lat, c.lon]);
-                        const polyline = L.polyline(latlngs, {
-                            color: '#d32f2f',
-                            weight: 4,
-                            dashArray: '6, 10',
-                            opacity: 0.7
-                        });
-                        polylineGroup.addLayer(polyline);
-                    }
-                }
-                animateNextSegment();
+            // ============================================================
+            //  LIVE MARKER MOVEMENT
+            //  Called on EVERY update that includes current_lat/current_lon,
+            //  whether it's a full broadcast or a lightweight sim_emit_light
+            //  ping. The simulator computes current_lat/current_lon precisely
+            //  along the route based on real progress, so we just move the
+            //  marker to wherever the server says it is - tweened smoothly
+            //  between positions rather than replaying a fake route animation.
+            // ============================================================
+            let markerTweenFrame = null;
+
+            function buildMarkerIcon() {
+                return L.divIcon({
+                    html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
+                    className: '',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                });
             }
 
-            let markerAnimationFrame = null;
-            let markerPath = [];
-            let markerAnimActive = false;
-
-            function stopMarkerAnimation() {
-                markerAnimActive = false;
-                if (markerAnimationFrame) {
-                    cancelAnimationFrame(markerAnimationFrame);
-                    markerAnimationFrame = null;
+            function moveLiveMarker(lat, lon, label, skipTween) {
+                if (lat === null || lon === null) return;
+                if (!map || !liveMarkerGroup) {
+                    window._pendingMarker = { lat, lon, label };
+                    return;
                 }
-            }
 
-            function animateMarkerAlongRoute(coords) {
-                stopMarkerAnimation();
-                if (!coords || coords.length < 2) return;
-                markerPath = coords;
-                let index = 0;
-                let progress = 0;
-                const totalSegments = markerPath.length - 1;
-                const duration = Math.max(1200, 1800 / Math.max(totalSegments, 1));
-                markerAnimActive = true;
+                const newLatLng = L.latLng(lat, lon);
 
-                function step(timestamp) {
-                    if (!markerAnimActive) return;
-                    const elapsed = (timestamp % (duration * totalSegments)) / duration;
-                    const segmentIndex = Math.min(Math.floor(elapsed), totalSegments - 1);
-                    const localProgress = elapsed - segmentIndex;
-                    const start = markerPath[segmentIndex];
-                    const end = markerPath[segmentIndex + 1];
-                    const lat = start.lat + (end.lat - start.lat) * localProgress;
-                    const lon = start.lon + (end.lon - start.lon) * localProgress;
-
-                    liveMarkerGroup.clearLayers();
-                    const markerIcon = L.divIcon({
-                        html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
-                        className: '',
-                        iconSize: [20, 20],
-                        iconAnchor: [10, 10]
-                    });
-                    const marker = L.marker([lat, lon], { icon: markerIcon, zIndexOffset: 1000 });
-                    marker.bindPopup(`Current location: ${window.currentPosition?.label || 'Live position'}`);
-                    liveMarkerGroup.addLayer(marker);
-
-                    const pulse = L.circle([lat, lon], {
+                if (!window._liveMarker) {
+                    // First placement - no previous position to tween from.
+                    const icon = buildMarkerIcon();
+                    window._liveMarker = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(liveMarkerGroup);
+                    window._livePulse = L.circle(newLatLng, {
                         color: '#d40511',
                         fillColor: '#d40511',
                         fillOpacity: 0.15,
                         radius: 1200,
                         interactive: false
-                    });
-                    liveMarkerGroup.addLayer(pulse);
-
-                    markerAnimationFrame = requestAnimationFrame(step);
-                }
-                markerAnimationFrame = requestAnimationFrame(step);
-            }
-
-            // ============================================================
-            //  UPDATE MAP
-            // ============================================================
-            function updateMap(coords) {
-                if (!map) {
-                    console.warn('updateMap called but map is null');
-                    return;
-                }
-                markerGroup.clearLayers();
-                polylineGroup.clearLayers();
-                liveMarkerGroup.clearLayers();
-
-                if (!coords || !coords.length) {
-                    document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
-                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                    }).addTo(liveMarkerGroup);
+                    window._liveMarker.bindPopup(`Current location: ${label || 'Live position'}`);
+                    window._lastMarkerLatLng = newLatLng;
+                    if (!routeBounds) {
+                        map.setView(newLatLng, 6);
+                    }
                     return;
                 }
 
-                const sorted = sortCoordsByTimestamp(coords);
-                const hasDescriptions = sorted.some(c => c.desc);
-                if (hasDescriptions) {
-                    sorted.forEach(coord => {
-                        if (coord.desc) {
-                            const marker = L.marker([coord.lat, coord.lon])
-                                .bindPopup(coord.desc);
-                            markerGroup.addLayer(marker);
-                        }
-                    });
-                } else if (sorted.length >= 2) {
-                    const start = L.marker([sorted[0].lat, sorted[0].lon])
-                        .bindPopup('Route start');
-                    const end = L.marker([sorted[sorted.length - 1].lat, sorted[sorted.length - 1].lon])
-                        .bindPopup('Route end');
-                    markerGroup.addLayer(start);
-                    markerGroup.addLayer(end);
+                window._liveMarker.setPopupContent(`Current location: ${label || 'Live position'}`);
+
+                if (markerTweenFrame) {
+                    cancelAnimationFrame(markerTweenFrame);
+                    markerTweenFrame = null;
                 }
 
-                routeBounds = L.latLngBounds(sorted.map(c => [c.lat, c.lon]));
-                const latlngs = sorted.map(c => [c.lat, c.lon]);
-
-                if (isAnimationEnabled && sorted.length >= 2) {
-                    animateRoute(sorted);
-                    if (window.currentPosition && window.currentPosition.lat !== undefined) {
-                        animateMarkerAlongRoute(sorted);
-                    }
-                } else {
-                    const polyline = L.polyline(latlngs, {
-                        color: '#d32f2f',
-                        weight: 4,
-                        dashArray: '6, 10',
-                        opacity: 0.7
-                    });
-                    polylineGroup.addLayer(polyline);
-                    if (window.currentPosition && window.currentPosition.lat !== undefined) {
-                        const markerIcon = L.divIcon({
-                            html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
-                            className: '',
-                            iconSize: [20, 20],
-                            iconAnchor: [10, 10]
-                        });
-                        const marker = L.marker([window.currentPosition.lat, window.currentPosition.lon], {
-                            icon: markerIcon,
-                            zIndexOffset: 1000
-                        });
-                        marker.bindPopup(`Current location: ${window.currentPosition.label || 'Live position'}`);
-                        liveMarkerGroup.addLayer(marker);
-                        const pulse = L.circle([window.currentPosition.lat, window.currentPosition.lon], {
-                            color: '#d40511',
-                            fillColor: '#d40511',
-                            fillOpacity: 0.15,
-                            radius: 1200,
-                            interactive: false
-                        });
-                        liveMarkerGroup.addLayer(pulse);
-                    }
+                if (skipTween || !smoothMotionEnabled) {
+                    window._liveMarker.setLatLng(newLatLng);
+                    window._livePulse.setLatLng(newLatLng);
+                    window._lastMarkerLatLng = newLatLng;
+                    return;
                 }
 
-                map.fitBounds(routeBounds, { padding: [20, 20] });
-                document.getElementById('toggleAnimation')?.removeAttribute('disabled');
-                document.getElementById('resetView')?.removeAttribute('disabled');
-                console.log('Map updated with', sorted.length, 'points');
-            }
+                const startLatLng = window._lastMarkerLatLng || newLatLng;
+                const startTime = performance.now();
 
-            // ============================================================
-            //  INITIAL DATA LOAD
-            // ============================================================
-            let initialLoadDone = false;
-
-            function setInitialPageState() {
-                try {
-                    // Status
-                    const statusEl = document.getElementById('status');
-                    if (statusEl) {
-                        const status = "{{ shipment.status }}";
-                        statusEl.textContent = status;
-                        const cls = {
-                            'Delivered': 'delivered',
-                            'In_Transit': 'in-transit',
-                            'Out_for_Delivery': 'out-for-delivery',
-                            'Delayed': 'delayed',
-                            'Exception': 'exception',
-                            'On_Hold': 'on-hold'
-                        }[status] || 'pending';
-                        statusEl.className = `status-badge-header ${cls}`;
-                    }
-
-                    // Progress
-                    const progress = {{ progress | default(0) }};
-                    document.getElementById('progressPercent').textContent = `${Math.round(progress * 100)}%`;
-                    document.getElementById('progressFill').style.width = `${progress * 100}%`;
-
-                    // Current position
-                    const lat = {{ current_lat | default('null') }};
-                    const lon = {{ current_lon | default('null') }};
-                    const loc = "{{ current_location | default('Calculating...') }}";
-                    window.currentPosition = { lat, lon, label: loc };
-                    document.getElementById('currentLocation').textContent = loc;
-                    document.getElementById('currentCoordinates').textContent = (lat !== null && lon !== null) ? `${lat}, ${lon}` : 'Pending';
-                    document.getElementById('positionStatusText').textContent = (lat !== null && lon !== null) ? 'Moving now' : 'Tracking live';
-
-                    // Other fields
-                    updateElement('estimatedArrival', "{{ delivery_window | default('Calculating...') }}");
-                    updateElement('lastCheckpoint', "{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}");
-                    updateElement('deliveryLocation', "{{ shipment.delivery_location }}");
-                    updateElement('serviceLevel', "{{ service_level | default('DHL Express') }}");
-                    updateElement('deliveryWindow', "{{ delivery_window | default('Calculating...') }}");
-                    updateElement('proofOfDelivery', "{{ proof_of_delivery | default('Pending') }}");
-
-                    const checkpoints = sanitizeArray({{ checkpoints | tojson }});
-                    if (checkpoints.length > 1) {
-                        const nextIdx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
-                        updateElement('nextCheckpoint', checkpoints[nextIdx]);
+                function step(now) {
+                    const t = Math.min((now - startTime) / MARKER_TWEEN_MS, 1);
+                    const curLat = startLatLng.lat + (newLatLng.lat - startLatLng.lat) * t;
+                    const curLon = startLatLng.lng + (newLatLng.lng - startLatLng.lng) * t;
+                    const curLatLng = L.latLng(curLat, curLon);
+                    window._liveMarker.setLatLng(curLatLng);
+                    window._livePulse.setLatLng(curLatLng);
+                    if (t < 1) {
+                        markerTweenFrame = requestAnimationFrame(step);
                     } else {
-                        updateElement('nextCheckpoint', 'Next scan pending');
+                        window._lastMarkerLatLng = newLatLng;
+                        markerTweenFrame = null;
                     }
-
-                    // Last updated
-                    const last = "{{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}";
-                    document.getElementById('lastUpdated').textContent = `Last updated: ${last}`;
-
-                    // Map – we'll update after a delay
-                    const coords = sanitizeArray({{ coords | tojson }});
-                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
-                    const mapCoords = routeCoords.length ? routeCoords : coords;
-                    if (mapCoords.length) {
-                        window._lastCoords = mapCoords;
-                        // Update map after it's initialized
-                        setTimeout(() => {
-                            if (map) {
-                                updateMap(mapCoords);
-                                document.getElementById('toggleAnimation')?.removeAttribute('disabled');
-                                document.getElementById('resetView')?.removeAttribute('disabled');
-                            }
-                        }, 500);
-                    } else {
-                        document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
-                        document.getElementById('resetView')?.setAttribute('disabled', 'true');
-                    }
-                } catch (e) {
-                    console.error('Error in setInitialPageState:', e);
                 }
+                markerTweenFrame = requestAnimationFrame(step);
             }
 
             // ============================================================
-            //  START – initialize map after a delay (ensures DOM ready)
+            //  SIMULATOR STATE INDICATORS (paused / speed / mode)
             // ============================================================
-            try {
-                // First, set the initial page state (populates data)
-                setInitialPageState();
+            function applyPausedState(paused) {
+                const banner = document.getElementById('pausedBanner');
+                const dot = document.getElementById('liveIndicator');
+                const label = document.getElementById('liveIndicatorLabel');
+                if (paused === undefined || paused === null) return;
+                if (banner) banner.classList.toggle('show', !!paused);
+                if (dot) dot.classList.toggle('paused-dot', !!paused);
+                if (label) label.textContent = paused ? 'Paused' : 'Live';
+            }
 
-                // Then, initialize map with a slight delay to ensure container is visible
-                setTimeout(() => {
-                    initMap();
-                    // If map failed to init, try once more after a longer delay
-                    if (!map) {
-                        console.warn('Map not initialized on first attempt, retrying...');
-                        setTimeout(initMap, 2000);
-                    }
-                }, 300);
+            function applySpeedBadge(speed) {
+                const badge = document.getElementById('speedBadge');
+                if (!badge || speed === undefined || speed === null) return;
+                const n = toNum(speed);
+                if (n === null) return;
+                badge.textContent = `⚡ ${n.toFixed(1)}x speed`;
+                badge.classList.add('show');
+            }
 
-                debugLog('Tracking page fully loaded');
-            } catch (e) {
-                console.error('Fatal error during startup:', e);
-                const spinner = document.getElementById('loadingSpinner');
-                if (spinner) {
-                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${e.message}</p>`;
-                }
+            function applyModeBadge(mode) {
+                const badge = document.getElementById('modeBadge');
+                if (!badge || !mode) return;
+                const isAir = String(mode).toLowerCase() === 'air';
+                badge.textContent = isAir ? '✈️ Air' : '🚚 Ground';
+                badge.classList.add('show');
             }
 
             // ============================================================
-            //  SOCKET.IO TRACKING UPDATES
+            //  UNIFIED UPDATE HANDLER
+            //  Applies a 'tracking_update' payload regardless of which of
+            //  the three backend sources it came from (see notes above).
             // ============================================================
-            socket.on('tracking_update', (data) => {
-                debugLog('Received tracking update:', data);
-                if (data.error) {
-                    showToast(data.error, 'error', 5000);
-                    return;
-                }
-
-                updateConnectionStatus(true);
+            function applyTrackingUpdate(data) {
+                if (!data) return;
 
                 if (data.status) {
                     const statusEl = document.getElementById('status');
@@ -1642,7 +1581,8 @@
                 }
 
                 if (data.progress !== undefined) {
-                    const percent = Math.round(data.progress * 100);
+                    const progress = toNum(data.progress) || 0;
+                    const percent = Math.round(progress * 100);
                     document.getElementById('progressPercent').textContent = `${percent}%`;
                     document.getElementById('progressFill').style.width = `${percent}%`;
                 }
@@ -1650,15 +1590,18 @@
                 if (data.current_location) {
                     document.getElementById('currentLocation').textContent = data.current_location;
                 }
-                if (data.current_lat !== undefined && data.current_lon !== undefined) {
-                    const lat = parseFloat(data.current_lat);
-                    const lon = parseFloat(data.current_lon);
-                    if (!isNaN(lat) && !isNaN(lon)) {
-                        document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
-                        window.currentPosition = { lat, lon, label: data.current_location || 'Current location' };
-                        document.getElementById('positionStatusText').textContent = 'Moving now';
-                    }
+
+                const lat = toNum(data.current_lat);
+                const lon = toNum(data.current_lon);
+                if (lat !== null && lon !== null) {
+                    document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
+                    document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
+                    moveLiveMarker(lat, lon, data.current_location);
                 }
+
+                applyPausedState(data.paused);
+                applySpeedBadge(data.speed_multiplier);
+                applyModeBadge(data.mode);
 
                 updateElement('estimatedArrival', data.delivery_window);
                 if (data.checkpoints && data.checkpoints.length) {
@@ -1682,7 +1625,7 @@
                         `;
                         container.appendChild(div);
                     });
-                    const progress = parseFloat(data.progress || 0);
+                    const progress = toNum(data.progress) || 0;
                     if (checkpoints.length > 1) {
                         const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
                         updateElement('nextCheckpoint', checkpoints[idx]);
@@ -1697,14 +1640,94 @@
                 updateElement('proofOfDelivery', data.proof_of_delivery);
                 if (data.last_updated) {
                     const date = new Date(data.last_updated);
-                    document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
+                    if (!isNaN(date.getTime())) {
+                        document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
+                    }
                 }
 
+                // Route data (coords/route_coords) is only present on full
+                // broadcasts (request_tracking / broadcast_update), never on
+                // sim_emit_light pings - maybeRedrawRoute() already no-ops if
+                // there's nothing new to draw.
                 const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
-                if (routeData && routeData.length && map) {
-                    window._lastCoords = routeData;
-                    updateMap(routeData);
+                if (routeData && routeData.length) {
+                    maybeRedrawRoute(routeData);
                 }
+            }
+
+            // ============================================================
+            //  INITIAL DATA LOAD (server-rendered values from Flask/Jinja)
+            // ============================================================
+            function setInitialPageState() {
+                try {
+                    const initialData = {
+                        status: "{{ shipment.status }}",
+                        progress: {{ progress | default(0) }},
+                        current_lat: {{ current_lat | default('null') }},
+                        current_lon: {{ current_lon | default('null') }},
+                        current_location: "{{ current_location | default('Calculating...') }}",
+                        delivery_window: "{{ delivery_window | default('Calculating...') }}",
+                        delivery_location: "{{ shipment.delivery_location }}",
+                        service_level: "{{ service_level | default('DHL Express') }}",
+                        proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
+                        checkpoints: sanitizeArray({{ checkpoints | tojson }}),
+                        last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}"
+                    };
+
+                    // Apply everything the unified handler can (status, progress,
+                    // marker placement, checkpoints, badges) except route drawing,
+                    // which needs the map to exist first - handled below with a
+                    // short delay, same as before.
+                    applyTrackingUpdate(initialData);
+
+                    const coords = sanitizeArray({{ coords | tojson }});
+                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
+                    const mapCoords = routeCoords.length ? routeCoords : coords;
+                    if (mapCoords.length) {
+                        setTimeout(() => maybeRedrawRoute(mapCoords), 500);
+                    }
+                } catch (e) {
+                    console.error('Error in setInitialPageState:', e);
+                }
+            }
+
+            // ============================================================
+            //  START – initialize map after a delay (ensures DOM ready)
+            // ============================================================
+            try {
+                setInitialPageState();
+
+                setTimeout(() => {
+                    initMap();
+                    if (!map) {
+                        console.warn('Map not initialized on first attempt, retrying...');
+                        setTimeout(initMap, 2000);
+                    }
+                }, 300);
+
+                debugLog('Tracking page fully loaded');
+            } catch (e) {
+                console.error('Fatal error during startup:', e);
+                const spinner = document.getElementById('loadingSpinner');
+                if (spinner) {
+                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${e.message}</p>`;
+                }
+            }
+
+            // ============================================================
+            //  SOCKET.IO TRACKING UPDATES
+            //  Every update - full or light - flows through the same
+            //  applyTrackingUpdate() function now, so the marker moves on
+            //  every light ping and the route redraws only when it changes.
+            // ============================================================
+            socket.on('tracking_update', (data) => {
+                debugLog('Received tracking update:', data);
+                if (data.error) {
+                    showToast(data.error, 'error', 5000);
+                    return;
+                }
+                updateConnectionStatus(true);
+                applyTrackingUpdate(data);
             });
 
             // ============================================================
@@ -1769,7 +1792,7 @@
             </div>
         </div>
         <div class="copyright">
-            &copy; 2025 DHL International. All rights reserved.
+            &copy; 2026 DHL International. All rights reserved.
         </div>
     </footer>
 </body>
