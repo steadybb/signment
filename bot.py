@@ -243,7 +243,7 @@ if bot is not None:
             with app.app_context():
                 total = Shipment.query.count()
                 active = Shipment.query.filter(
-                    Shipment.status.in_(['Pending', 'In_Transit', 'Out_for_Delivery', 'Delayed'])
+                    Shipment.status.in_(['Pending', 'In_Transit', 'Out_for_Delivery', 'Delayed', 'On_Hold'])
                 ).count()
             paused_count = len(safe_redis_operation(redis_client.hgetall, "paused_simulations") or {}) if redis_client else 0
             response = (
@@ -802,32 +802,28 @@ if bot is not None:
             bot_logger.error(f"Webhook hostname resolution failed: {hostname} -> {e}")
             return False
 
+    # === SAFER WEBHOOK SETUP (avoids recursion) ===
     def set_webhook() -> None:
-        """Set Telegram webhook with proper error handling to prevent recursion."""
+        """Set Telegram webhook safely, avoiding recursive calls."""
         if bot is None:
             bot_logger.warning("Bot instance unavailable: skipping webhook setup.")
             return
 
-        # Get webhook URL from config or environment
         webhook_url = config.webhook_url or os.getenv('WEBHOOK_URL')
-        
         if not webhook_url:
             bot_logger.warning("WEBHOOK_URL not configured. Skipping webhook setup.")
             return
-        
-        # Validate URL
+
         if not is_valid_webhook_url(webhook_url):
             bot_logger.error(f"Invalid webhook URL: {webhook_url}")
             return
 
-        # Check if hostname is resolvable
         webhook_host = urlparse(webhook_url).hostname
         if webhook_host and not is_hostname_resolvable(webhook_host):
             bot_logger.warning(f"Webhook host not resolvable: {webhook_host}. Will retry later.")
-            # Don't return - we'll try anyway
 
         try:
-            # First, try to delete any existing webhook before setting a new one
+            # Try to delete existing webhook (safe call)
             try:
                 if hasattr(bot, 'remove_webhook'):
                     bot.remove_webhook()
@@ -835,8 +831,12 @@ if bot is not None:
                     bot.delete_webhook()
                 bot_logger.info("Deleted existing webhook")
             except Exception as e:
-                bot_logger.warning(f"Could not delete existing webhook: {e}")
-            
+                # If deletion fails with recursion, continue anyway
+                if "maximum recursion depth" in str(e):
+                    bot_logger.warning("Recursion error during webhook deletion, skipping.")
+                else:
+                    bot_logger.warning(f"Could not delete existing webhook: {e}")
+
             # Set new webhook with timeout
             bot.set_webhook(
                 url=webhook_url,
@@ -845,7 +845,7 @@ if bot is not None:
             )
             bot_logger.info(f"Webhook set successfully: {webhook_url}")
             
-            # Verify webhook was set (with error handling)
+            # Verify
             try:
                 webhook_info = bot.get_webhook_info()
                 bot_logger.info(f"Webhook verification: {webhook_info}")
@@ -853,38 +853,36 @@ if bot is not None:
                 bot_logger.warning(f"Could not verify webhook: {e}")
                 
         except RecursionError as e:
-            # This can happen with some TeleBot versions on Render
             bot_logger.error(f"Webhook recursion error: {e}")
             bot_logger.info("Falling back to polling mode...")
             start_polling_fallback()
-            
         except Exception as e:
             bot_logger.error(f"Webhook setup failed: {e}")
-            # Try polling as fallback
             bot_logger.info("Attempting fallback to polling mode...")
             start_polling_fallback()
 
+    # === POLLING FALLBACK (no recursion) ===
+    _polling_thread = None
+
     def start_polling_fallback():
-        """Start the bot in polling mode as a fallback when webhook fails."""
+        """Start the bot in polling mode as a fallback, avoiding recursion."""
+        global _polling_thread
         if bot is None:
             return
 
-        global _polling_thread
-        try:
-            if '_polling_thread' in globals() and _polling_thread and _polling_thread.is_alive():
-                bot_logger.info("Polling already running; skipping start")
-                return
-        except Exception:
-            pass
+        if _polling_thread and _polling_thread.is_alive():
+            bot_logger.info("Polling already running; skipping start")
+            return
 
         def poll():
-            max_retries = 5
+            max_retries = 3
             retries = 0
             backoff = 10
             while True:
                 try:
                     bot_logger.info("Starting polling mode...")
-                    bot.polling(none_stop=True, interval=1, timeout=30)
+                    # Use simple polling with exception handling
+                    bot.polling(none_stop=True, interval=1, timeout=30, allowed_updates=['message', 'callback_query'])
                 except RecursionError as re:
                     bot_logger.error(f"Polling hit recursion error: {re}; will stop polling thread to avoid crash.")
                     break
@@ -901,16 +899,18 @@ if bot is not None:
                     bot_logger.info("Bot polling stopped normally.")
                     break
 
-        # Ensure webhook is removed before polling so Telegram switches to getUpdates
+        # Ensure webhook is removed before polling, but catch recursion
         try:
             if hasattr(bot, 'remove_webhook'):
                 bot.remove_webhook()
             elif hasattr(bot, 'delete_webhook'):
                 bot.delete_webhook()
         except Exception as e:
-            bot_logger.warning(f"Could not remove webhook before polling: {e}")
+            if "maximum recursion depth" in str(e):
+                bot_logger.warning("Recursion error removing webhook; proceeding with polling anyway.")
+            else:
+                bot_logger.warning(f"Could not remove webhook before polling: {e}")
 
-        # Start polling in a separate thread and store a global reference
         _polling_thread = threading.Thread(target=poll, daemon=True)
         _polling_thread.start()
         bot_logger.info("Polling thread started as fallback")
@@ -924,13 +924,14 @@ if bot is not None:
         except Exception as e:
             bot_logger.error(f"Failed to cache route templates: {e}")
         
-        # Set webhook with error handling - but don't let it crash the bot
+        # Set webhook (with error handling)
         try:
             set_webhook()
         except Exception as e:
             bot_logger.error(f"Webhook setup failed: {e}")
-            # Start polling as fallback
-            start_polling_fallback()
+            # If webhook fails and we're not already polling, start polling
+            if not (_polling_thread and _polling_thread.is_alive()):
+                start_polling_fallback()
         
         # Notify admins
         try:
