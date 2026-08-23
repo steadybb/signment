@@ -1444,9 +1444,24 @@ def keep_alive():
             requests.get(f"{app.config['WEBSOCKET_SERVER']}/health", timeout=10)
         except:
             pass
-        time.sleep(300)
+        eventlet.sleep(300)
 
 def process_notification_queue():
+    """
+    NOTE: This function is no longer started automatically from
+    start_background_services(). The dedicated `worker` service
+    (worker.py, run as its own Render process) is now the sole
+    consumer of the "notifications" Redis queue. Running this here
+    AND worker.py at the same time causes both to race for the
+    same queue items, which made email delivery inconsistent
+    depending on which process happened to pop a given item first.
+
+    The function is kept in place (unused) in case you ever want to
+    run this app as a single combined process without a separate
+    worker dyno -- in that case, call process_notification_queue()
+    explicitly (e.g. via eventlet.spawn) and make sure worker.py is
+    NOT also deployed.
+    """
     while True:
         try:
             notif = rlist_lpop("notifications")
@@ -1454,7 +1469,7 @@ def process_notification_queue():
             flask_logger.error(f"Notification pop failed: {e}")
             notif = None
         if not notif:
-            time.sleep(1)
+            eventlet.sleep(1)
             continue
         try:
             data = json.loads(notif)
@@ -1477,7 +1492,7 @@ def process_notification_queue():
 
 def cleanup_websocket_clients():
     while True:
-        time.sleep(3600)
+        eventlet.sleep(3600)
         try:
             if redis_client:
                 for key in redis_client.scan_iter("clients:*"):
@@ -2606,16 +2621,10 @@ def track():
             else:
                 flask_logger.info(f"Simulator throttle active; skipping new thread for {tn}")
         except Exception:
-            try:
-                if can_start_simulation():
-                    eventlet.spawn(simulate_tracking, tn)
-                else:
-                    flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
-            except Exception:
-                if can_start_simulation():
-                    threading.Thread(target=simulate_tracking, args=(tn,), daemon=True).start()
-                else:
-                    flask_logger.info(f"Simulator throttle active; skipping thread start for {tn}")
+            if can_start_simulation():
+                eventlet.spawn(simulate_tracking, tn)
+            else:
+                flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
 
     # ✨ FIX: Redirect to the GET endpoint to make refreshes safe.
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -2653,16 +2662,10 @@ def track_direct(tracking_number):
             else:
                 flask_logger.info(f"Simulator throttle active; skipping new thread for {tn}")
         except Exception:
-            try:
-                if can_start_simulation():
-                    eventlet.spawn(simulate_tracking, tn)
-                else:
-                    flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
-            except Exception:
-                if can_start_simulation():
-                    threading.Thread(target=simulate_tracking, args=(tn,), daemon=True).start()
-                else:
-                    flask_logger.info(f"Simulator throttle active; skipping thread start for {tn}")
+            if can_start_simulation():
+                eventlet.spawn(simulate_tracking, tn)
+            else:
+                flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
     progress = float(rget('progress', tn, '0') or '0')
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
@@ -3961,9 +3964,16 @@ def start_background_services():
                         flask_logger.warning(f"Failed to spawn simulation for {s.tracking_number}: {e}")
         except Exception:
             pass
-        threading.Thread(target=keep_alive, daemon=True).start()
-        threading.Thread(target=process_notification_queue, daemon=True).start()
-        threading.Thread(target=cleanup_websocket_clients, daemon=True).start()
+        eventlet.spawn(keep_alive)
+        # NOTE: process_notification_queue is intentionally NOT started here.
+        # The dedicated `worker` service (worker.py) is the sole consumer of
+        # the "notifications" Redis queue. Running both this app's queue
+        # consumer AND worker.py at the same time causes both processes to
+        # race for the same queue items, which is what made email delivery
+        # inconsistent. If you are running this app WITHOUT a separate
+        # worker.py process, uncomment the line below instead:
+        # eventlet.spawn(process_notification_queue)
+        eventlet.spawn(cleanup_websocket_clients)
     except Exception:
         with services_started_lock:
             services_started = False
