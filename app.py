@@ -3682,6 +3682,7 @@ def api_email_history(tn):
             pass
     return jsonify(entries)
 
+# ✅ UPDATED: Admin Send Email – now uses the rich DHL HTML template
 @app.route('/admin/api/send_email', methods=['POST'])
 @admin_required
 def api_send_email():
@@ -3696,62 +3697,66 @@ def api_send_email():
     if not shipment.recipient_email:
         return jsonify({'error': 'No recipient email on file'}), 400
 
-    subject = f"DHL Shipment {tn} - {email_type.replace('_', ' ').title()}"
-    message = custom_message or f"Here is an update for your shipment {tn}."
-    html_body = f"<p>{message}</p><p>Track your shipment <a href='{app.config['WEBSOCKET_SERVER']}/track/{tn}'>here</a>.</p>"
-    plain_body = f"{message}\nTrack your shipment: {app.config['WEBSOCKET_SERVER']}/track/{tn}"
+    # Get additional details from Redis or compute them
+    service_level = rget("service_level", tn, "DHL Express") or "DHL Express"
+    delivery_window = rget("delivery_window", tn, "Calculating...") or "Calculating..."
+    checkpoints = (shipment.checkpoints or "").split(";") if shipment.checkpoints else []
+    latest_checkpoint = checkpoints[-1] if checkpoints else "Shipment information received"
 
-    try:
-        success = send_email_notification(
-            shipment.recipient_email,
-            subject,
-            html_body=html_body,
-            plain_body=plain_body,
-            tracking_number=tn,
-            email_type=email_type,
-            message=message
+    # Build the rich DHL HTML template
+    html_body = build_dhl_email_html(
+        tn,
+        shipment.status,
+        latest_checkpoint,
+        shipment.delivery_location,
+        service_level=service_level,
+        delivery_window=delivery_window
+    )
+
+    # Add custom message if provided, placed above the track button
+    if custom_message:
+        custom_html = f'<p style="margin: 1rem 0; padding: 1rem; background: #f0f9ff; border-radius: 6px; border-left: 4px solid #D40511;">{custom_message}</p>'
+        # Insert it before the "Track Shipment" button (which is preceded by <hr>)
+        html_body = html_body.replace(
+            '<hr style="border:0;border-top:1px solid #e5e7eb;margin:1.25rem 0;">',
+            f'{custom_html}<hr style="border:0;border-top:1px solid #e5e7eb;margin:1.25rem 0;">'
         )
-    except Exception as e:
-        flask_logger.error(f"Exception in api_send_email for {tn}: {e}")
-        flask_logger.debug(traceback.format_exc())
-        # Attempt to enqueue the notification as a fallback
-        try:
-            enqueue_notification({
-                "tracking_number": tn,
-                "type": "email",
-                "data": {
-                    "recipient_email": shipment.recipient_email,
-                    "subject": subject,
-                    "html_body": html_body,
-                    "plain_body": plain_body
-                }
-            })
-            return jsonify({'success': False, 'enqueued': True, 'message': 'Email send failed; notification enqueued'}), 202
-        except Exception as enq_exc:
-            flask_logger.error(f"Failed to enqueue email notification for {tn}: {enq_exc}")
-            flask_logger.debug(traceback.format_exc())
-            return jsonify({'error': 'Failed to send or enqueue email'}), 500
 
-    if not success:
-        # Try enqueue fallback when direct send returns False (transient issues)
-        try:
-            enqueue_notification({
-                "tracking_number": tn,
-                "type": "email",
-                "data": {
-                    "recipient_email": shipment.recipient_email,
-                    "subject": subject,
-                    "html_body": html_body,
-                    "plain_body": plain_body
-                }
-            })
-            return jsonify({'success': False, 'enqueued': True, 'message': 'Direct send failed; notification enqueued'}), 202
-        except Exception:
-            flask_logger.debug(traceback.format_exc())
-            return jsonify({'error': 'Failed to send email and fallback enqueue failed'}), 500
+    plain_body = (
+        f"DHL Update: {tn}\n"
+        f"Status: {shipment.status}\n"
+        f"Location: {latest_checkpoint.split(' - ')[1] if ' - ' in latest_checkpoint else shipment.delivery_location}\n"
+        f"Service: {service_level}\n"
+        f"Estimated Delivery: {delivery_window or 'Pending'}\n"
+        f"Track: {app.config['WEBSOCKET_SERVER']}/track/{tn}"
+    )
 
-    return jsonify({'success': True, 'recipient': shipment.recipient_email})
+    # Use existing send_email_notification (it handles SMTP/Resend)
+    success = send_email_notification(
+        shipment.recipient_email,
+        f"DHL Shipment {tn} - {email_type.replace('_', ' ').title()}",
+        html_body=html_body,
+        plain_body=plain_body,
+        tracking_number=tn,
+        email_type=email_type,
+        message=custom_message or "Shipment update"
+    )
 
+    if success:
+        return jsonify({'success': True, 'recipient': shipment.recipient_email})
+    else:
+        # Fallback: enqueue the notification
+        enqueue_notification({
+            "tracking_number": tn,
+            "type": "email",
+            "data": {
+                "recipient_email": shipment.recipient_email,
+                "subject": f"DHL Shipment {tn} - {email_type.replace('_', ' ').title()}",
+                "html_body": html_body,
+                "plain_body": plain_body
+            }
+        })
+        return jsonify({'success': False, 'enqueued': True, 'message': 'Email send failed; notification enqueued'}), 202
 
 @app.route('/admin/api/notifications/count')
 @admin_required
