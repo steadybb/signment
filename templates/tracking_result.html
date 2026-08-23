@@ -397,7 +397,7 @@
             font-weight: 500;
         }
 
-        /* ---------- Parcel Photos Grid (NEW) ---------- */
+        /* ---------- Parcel Photos Grid ---------- */
         .parcel-photos-section {
             margin-top: 20px;
             border-top: 1px solid #f0f0f0;
@@ -679,7 +679,6 @@
                 font-size: 0.85rem !important;
                 padding: 2px 10px !important;
             }
-            /* Photo grid on mobile */
             .parcel-grid {
                 grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
                 gap: 12px;
@@ -751,13 +750,17 @@
     <!-- ====== TOAST CONTAINER ====== -->
     <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
 
-    <!-- ====== MAIN CONTENT ====== -->
+    <!-- ============================================================ -->
+    <!--  MAIN CONTENT – conditional on error                          -->
+    <!-- ============================================================ -->
     {% if error %}
+        <!-- ====== ERROR STATE ====== -->
         <div class="error-message">
             <span>📦</span> {{ error }}<br>
             <a href="{{ url_for('index') }}">Try again →</a>
         </div>
     {% else %}
+        <!-- ====== TRACKING CONTENT (shipment exists) ====== -->
         <div class="tracking-result" id="trackingResult">
             <!-- Loading Spinner (shown while initial data loads) -->
             <div id="loadingSpinner" class="text-center py-8">
@@ -918,7 +921,7 @@
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
-                    <!-- ====== NEW: PARCEL PHOTOS GRID ====== -->
+                    <!-- Parcel Photos Grid -->
                     <div class="parcel-photos-section">
                         <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photos</h3>
                         <div class="parcel-grid">
@@ -950,16 +953,715 @@
                             </div>
                         </div>
                     </div>
-                    <!-- ====== END PARCEL PHOTOS ====== -->
 
                     <!-- Back Button -->
                     <a href="{{ url_for('index') }}" class="back-button">← Back to home</a>
                 </div>
             </div>
         </div>
-    {% endif %}
 
-    <!-- ====== FOOTER ====== -->
+        <!-- ============================================================ -->
+        <!--  SCRIPT – only included when shipment exists                   -->
+        <!-- ============================================================ -->
+        <script>
+            // ============================================================
+            //  CONSTANTS & CONFIGURATION
+            // ============================================================
+            const SOCKET_URL = window.location.origin; // adjust to your socket server if different
+            const REFRESH_INTERVAL_MS = 30000;
+            const ANIMATION_DURATION = 1200;
+            const DEBUG = false;
+
+            // ============================================================
+            //  UTILITY FUNCTIONS
+            // ============================================================
+            function debugLog(...args) {
+                if (DEBUG) console.log(...args);
+            }
+
+            function safeParseDate(dateStr) {
+                if (!dateStr) return null;
+                const d = new Date(dateStr);
+                return isNaN(d.getTime()) ? null : d;
+            }
+
+            function sanitizeArray(arr) {
+                return Array.isArray(arr) ? arr : [];
+            }
+
+            function updateElement(id, value) {
+                const el = document.getElementById(id);
+                if (el && value !== undefined && value !== null && value !== '') {
+                    el.textContent = value;
+                }
+            }
+
+            // ============================================================
+            //  TOAST NOTIFICATIONS
+            // ============================================================
+            function showToast(message, type = 'info', duration = 5000) {
+                const container = document.getElementById('toastContainer');
+                if (!container) return;
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.setAttribute('role', 'alert');
+                toast.innerHTML = `
+                    <span>${message}</span>
+                    <button class="close-toast" aria-label="Dismiss notification">&times;</button>
+                `;
+                container.appendChild(toast);
+                const closeBtn = toast.querySelector('.close-toast');
+                closeBtn.addEventListener('click', () => {
+                    toast.remove();
+                });
+                setTimeout(() => {
+                    if (toast.parentNode) toast.remove();
+                }, duration);
+            }
+
+            // ============================================================
+            //  MENU TOGGLE
+            // ============================================================
+            const menuBtn = document.getElementById('menuBtn');
+            const menuContent = document.getElementById('menuContent');
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const expanded = menuBtn.getAttribute('aria-expanded') === 'true';
+                menuBtn.setAttribute('aria-expanded', !expanded);
+                menuContent.classList.toggle('show');
+            });
+            document.addEventListener('click', (e) => {
+                if (!menuContent.contains(e.target) && e.target !== menuBtn) {
+                    menuContent.classList.remove('show');
+                    menuBtn.setAttribute('aria-expanded', 'false');
+                }
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && menuContent.classList.contains('show')) {
+                    menuContent.classList.remove('show');
+                    menuBtn.setAttribute('aria-expanded', 'false');
+                    menuBtn.focus();
+                }
+            });
+
+            // ============================================================
+            //  SOCKET.IO SETUP
+            // ============================================================
+            const socket = io(SOCKET_URL, {
+                transports: ['polling', 'websocket'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                auth: {
+                    // token: localStorage.getItem('dhl_token') // uncomment if you use auth
+                }
+            });
+
+            let trackingInterval = null;
+
+            function updateConnectionStatus(connected) {
+                const dot = document.getElementById('connectionDot');
+                const statusText = document.getElementById('connectionStatus');
+                const refreshBtn = document.getElementById('refreshBtn');
+                const refreshHint = document.getElementById('refreshHint');
+                const retryBtn = document.getElementById('retryBtn');
+
+                if (dot) dot.className = `connection-dot ${connected ? 'connected' : 'disconnected'}`;
+                if (statusText) {
+                    statusText.textContent = connected ? 'Connected' : 'Disconnected';
+                    statusText.className = `text-xs ${connected ? 'text-green-600' : 'text-red-600'}`;
+                }
+                if (refreshBtn) {
+                    refreshBtn.disabled = !connected;
+                    refreshBtn.title = connected ? 'Refresh live tracking data' : 'Waiting for connection...';
+                }
+                if (refreshHint) refreshHint.textContent = connected ? 'Live connection active' : 'Waiting for connection...';
+                if (retryBtn) {
+                    retryBtn.style.display = connected ? 'none' : 'inline-block';
+                }
+            }
+
+            socket.on('connect', () => {
+                debugLog('Socket.IO connected');
+                updateConnectionStatus(true);
+                requestTracking();
+                if (trackingInterval) clearInterval(trackingInterval);
+                trackingInterval = setInterval(() => {
+                    if (socket.connected) requestTracking();
+                }, REFRESH_INTERVAL_MS);
+            });
+
+            socket.on('disconnect', () => {
+                debugLog('Socket.IO disconnected');
+                updateConnectionStatus(false);
+                if (trackingInterval) {
+                    clearInterval(trackingInterval);
+                    trackingInterval = null;
+                }
+            });
+
+            socket.on('connect_error', (err) => {
+                console.error('Socket.IO connection error:', err);
+                updateConnectionStatus(false);
+                showToast('Connection error – retrying…', 'error', 4000);
+            });
+
+            // Retry button
+            document.getElementById('retryBtn')?.addEventListener('click', () => {
+                socket.connect();
+                showToast('Reconnecting…', 'info', 2000);
+            });
+
+            // ============================================================
+            //  TRACKING REQUEST
+            // ============================================================
+            const trackingNumber = "{{ shipment.tracking_number if shipment else '' }}";
+
+            function requestTracking() {
+                if (!trackingNumber) return;
+                debugLog('Requesting tracking update');
+                socket.emit('request_tracking', { tracking_number: trackingNumber });
+            }
+
+            function refreshTracking() {
+                const btn = document.getElementById('refreshBtn');
+                if (!btn || btn.disabled) return;
+                btn.disabled = true;
+                btn.textContent = 'Updating…';
+                requestTracking();
+                setTimeout(() => {
+                    btn.disabled = !socket.connected;
+                    btn.textContent = 'Refresh';
+                }, 3000);
+            }
+            document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
+
+            // ============================================================
+            //  MAP INITIALIZATION
+            // ============================================================
+            const map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }).addTo(map);
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
+            }).addTo(map);
+
+            // Layer groups for performance
+            const markerGroup = L.layerGroup().addTo(map);
+            const polylineGroup = L.layerGroup().addTo(map);
+            const liveMarkerGroup = L.layerGroup().addTo(map);
+
+            let routeBounds = null;
+            let isAnimationEnabled = true;
+            let isAnimating = false;
+            let animationFrameId = null;
+            let animatedPolyline = null;
+
+            // ============================================================
+            //  MAP ROUTE & ANIMATION
+            // ============================================================
+            function sortCoordsByTimestamp(coords) {
+                return coords.map((coord, idx) => ({ coord, idx }))
+                    .sort((a, b) => {
+                        const aTime = a.coord.desc ? a.coord.desc.split(' - ')[0] : null;
+                        const bTime = b.coord.desc ? b.coord.desc.split(' - ')[0] : null;
+                        const aDate = safeParseDate(aTime);
+                        const bDate = safeParseDate(bTime);
+                        if (aDate && bDate) return aDate - bDate;
+                        if (aDate) return -1;
+                        if (bDate) return 1;
+                        return a.idx - b.idx;
+                    })
+                    .map(entry => entry.coord);
+            }
+
+            function animateSegment(start, end, duration, callback) {
+                const startTime = performance.now();
+                const startLatLng = [start.lat, start.lon];
+                const endLatLng = [end.lat, end.lon];
+                let currentLatLngs = [startLatLng];
+
+                function step(timestamp) {
+                    const progress = Math.min((timestamp - startTime) / duration, 1);
+                    const lat = startLatLng[0] + (endLatLng[0] - startLatLng[0]) * progress;
+                    const lon = startLatLng[1] + (endLatLng[1] - startLatLng[1]) * progress;
+                    currentLatLngs = [startLatLng, [lat, lon]];
+                    if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
+                    animatedPolyline = L.polyline(currentLatLngs, {
+                        color: '#d32f2f',
+                        weight: 4,
+                        dashArray: '6, 10',
+                        opacity: 0.7
+                    });
+                    polylineGroup.addLayer(animatedPolyline);
+
+                    if (progress < 1) {
+                        animationFrameId = requestAnimationFrame(step);
+                    } else {
+                        cancelAnimationFrame(animationFrameId);
+                        callback();
+                    }
+                }
+                animationFrameId = requestAnimationFrame(step);
+            }
+
+            function animateRoute(coords) {
+                if (coords.length < 2) return;
+                let index = 0;
+                function animateNextSegment() {
+                    if (index < coords.length - 1) {
+                        animateSegment(coords[index], coords[index + 1], 1000, () => {
+                            index++;
+                            animateNextSegment();
+                        });
+                    } else {
+                        if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
+                        animatedPolyline = null;
+                        // draw final full route
+                        const latlngs = coords.map(c => [c.lat, c.lon]);
+                        const polyline = L.polyline(latlngs, {
+                            color: '#d32f2f',
+                            weight: 4,
+                            dashArray: '6, 10',
+                            opacity: 0.7
+                        });
+                        polylineGroup.addLayer(polyline);
+                    }
+                }
+                animateNextSegment();
+            }
+
+            // Marker animation
+            let markerAnimationFrame = null;
+            let markerPath = [];
+            let markerAnimActive = false;
+
+            function stopMarkerAnimation() {
+                markerAnimActive = false;
+                if (markerAnimationFrame) {
+                    cancelAnimationFrame(markerAnimationFrame);
+                    markerAnimationFrame = null;
+                }
+            }
+
+            function animateMarkerAlongRoute(coords) {
+                stopMarkerAnimation();
+                if (!coords || coords.length < 2) return;
+                markerPath = coords;
+                let index = 0;
+                let progress = 0;
+                const totalSegments = markerPath.length - 1;
+                const duration = Math.max(1200, 1800 / Math.max(totalSegments, 1));
+                markerAnimActive = true;
+
+                function step(timestamp) {
+                    if (!markerAnimActive) return;
+                    const elapsed = (timestamp % (duration * totalSegments)) / duration;
+                    const segmentIndex = Math.min(Math.floor(elapsed), totalSegments - 1);
+                    const localProgress = elapsed - segmentIndex;
+                    const start = markerPath[segmentIndex];
+                    const end = markerPath[segmentIndex + 1];
+                    const lat = start.lat + (end.lat - start.lat) * localProgress;
+                    const lon = start.lon + (end.lon - start.lon) * localProgress;
+
+                    // Update live marker
+                    liveMarkerGroup.clearLayers();
+                    const markerIcon = L.divIcon({
+                        html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
+                        className: '',
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10]
+                    });
+                    const marker = L.marker([lat, lon], { icon: markerIcon, zIndexOffset: 1000 });
+                    marker.bindPopup(`Current location: ${window.currentPosition?.label || 'Live position'}`);
+                    liveMarkerGroup.addLayer(marker);
+
+                    const pulse = L.circle([lat, lon], {
+                        color: '#d40511',
+                        fillColor: '#d40511',
+                        fillOpacity: 0.15,
+                        radius: 1200,
+                        interactive: false
+                    });
+                    liveMarkerGroup.addLayer(pulse);
+
+                    markerAnimationFrame = requestAnimationFrame(step);
+                }
+                markerAnimationFrame = requestAnimationFrame(step);
+            }
+
+            // ============================================================
+            //  UPDATE MAP
+            // ============================================================
+            function updateMap(coords) {
+                // Clear groups
+                markerGroup.clearLayers();
+                polylineGroup.clearLayers();
+                liveMarkerGroup.clearLayers();
+
+                if (!coords || !coords.length) {
+                    document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
+                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                    return;
+                }
+
+                const sorted = sortCoordsByTimestamp(coords);
+                const hasDescriptions = sorted.some(c => c.desc);
+                if (hasDescriptions) {
+                    sorted.forEach(coord => {
+                        if (coord.desc) {
+                            const marker = L.marker([coord.lat, coord.lon])
+                                .bindPopup(coord.desc);
+                            markerGroup.addLayer(marker);
+                        }
+                    });
+                } else if (sorted.length >= 2) {
+                    const start = L.marker([sorted[0].lat, sorted[0].lon])
+                        .bindPopup('Route start');
+                    const end = L.marker([sorted[sorted.length - 1].lat, sorted[sorted.length - 1].lon])
+                        .bindPopup('Route end');
+                    markerGroup.addLayer(start);
+                    markerGroup.addLayer(end);
+                }
+
+                routeBounds = L.latLngBounds(sorted.map(c => [c.lat, c.lon]));
+                const latlngs = sorted.map(c => [c.lat, c.lon]);
+
+                if (isAnimationEnabled && sorted.length >= 2) {
+                    animateRoute(sorted);
+                    // also animate marker if we have current position
+                    if (window.currentPosition && window.currentPosition.lat !== undefined) {
+                        animateMarkerAlongRoute(sorted);
+                    }
+                } else {
+                    const polyline = L.polyline(latlngs, {
+                        color: '#d32f2f',
+                        weight: 4,
+                        dashArray: '6, 10',
+                        opacity: 0.7
+                    });
+                    polylineGroup.addLayer(polyline);
+                    // Static marker at current position
+                    if (window.currentPosition && window.currentPosition.lat !== undefined) {
+                        const markerIcon = L.divIcon({
+                            html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
+                            className: '',
+                            iconSize: [20, 20],
+                            iconAnchor: [10, 10]
+                        });
+                        const marker = L.marker([window.currentPosition.lat, window.currentPosition.lon], {
+                            icon: markerIcon,
+                            zIndexOffset: 1000
+                        });
+                        marker.bindPopup(`Current location: ${window.currentPosition.label || 'Live position'}`);
+                        liveMarkerGroup.addLayer(marker);
+                        const pulse = L.circle([window.currentPosition.lat, window.currentPosition.lon], {
+                            color: '#d40511',
+                            fillColor: '#d40511',
+                            fillOpacity: 0.15,
+                            radius: 1200,
+                            interactive: false
+                        });
+                        liveMarkerGroup.addLayer(pulse);
+                    }
+                }
+
+                map.fitBounds(routeBounds, { padding: [20, 20] });
+                document.getElementById('toggleAnimation')?.removeAttribute('disabled');
+                document.getElementById('resetView')?.removeAttribute('disabled');
+            }
+
+            // ============================================================
+            //  MAP CONTROLS (Toggle Animation, Reset View, Fullscreen)
+            // ============================================================
+            const ToggleAnimationControl = L.Control.extend({
+                options: { position: 'topright' },
+                onAdd: function() {
+                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                    container.id = 'toggleAnimation';
+                    container.innerHTML = '▶ Animation';
+                    container.classList.add('active');
+                    container.setAttribute('aria-label', 'Toggle route animation');
+                    container.setAttribute('role', 'switch');
+                    container.setAttribute('aria-checked', 'true');
+                    container.disabled = true;
+                    container.onclick = function() {
+                        isAnimationEnabled = !isAnimationEnabled;
+                        container.classList.toggle('active');
+                        container.innerHTML = isAnimationEnabled ? '▶ Animation' : '⏸ Paused';
+                        container.setAttribute('aria-checked', isAnimationEnabled ? 'true' : 'false');
+                        // Re-draw map with current coords
+                        if (window._lastCoords) {
+                            updateMap(window._lastCoords);
+                        }
+                    };
+                    return container;
+                }
+            });
+
+            const ResetViewControl = L.Control.extend({
+                options: { position: 'topright' },
+                onAdd: function() {
+                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                    container.id = 'resetView';
+                    container.innerHTML = '⊞ Reset View';
+                    container.setAttribute('aria-label', 'Reset map view');
+                    container.disabled = true;
+                    container.onclick = function() {
+                        if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
+                    };
+                    return container;
+                }
+            });
+
+            const FullscreenControl = L.Control.extend({
+                options: { position: 'topright' },
+                onAdd: function() {
+                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                    container.id = 'fullscreenBtn';
+                    container.innerHTML = '⛶ Fullscreen';
+                    container.setAttribute('aria-label', 'Toggle fullscreen map');
+                    container.onclick = function() {
+                        const mapContainer = document.getElementById('mapContainer');
+                        mapContainer.classList.toggle('fullscreen');
+                        setTimeout(() => map.invalidateSize(), 100);
+                        container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Fullscreen';
+                    };
+                    return container;
+                }
+            });
+
+            map.addControl(new ToggleAnimationControl());
+            map.addControl(new ResetViewControl());
+            map.addControl(new FullscreenControl());
+
+            // ============================================================
+            //  INITIAL DATA LOAD
+            // ============================================================
+            let initialLoadDone = false;
+
+            function setInitialPageState() {
+                // Status
+                const statusEl = document.getElementById('status');
+                if (statusEl) {
+                    const status = "{{ shipment.status }}";
+                    statusEl.textContent = status;
+                    const cls = {
+                        'Delivered': 'delivered',
+                        'In_Transit': 'in-transit',
+                        'Out_for_Delivery': 'out-for-delivery',
+                        'Delayed': 'delayed',
+                        'Exception': 'exception',
+                        'On_Hold': 'on-hold'
+                    }[status] || 'pending';
+                    statusEl.className = `status-badge-header ${cls}`;
+                }
+
+                // Progress
+                const progress = {{ progress | default(0) }};
+                document.getElementById('progressPercent').textContent = `${Math.round(progress * 100)}%`;
+                document.getElementById('progressFill').style.width = `${progress * 100}%`;
+
+                // Current position
+                const lat = {{ current_lat | default('null') }};
+                const lon = {{ current_lon | default('null') }};
+                const loc = "{{ current_location | default('Calculating...') }}";
+                window.currentPosition = { lat, lon, label: loc };
+                document.getElementById('currentLocation').textContent = loc;
+                document.getElementById('currentCoordinates').textContent = (lat !== null && lon !== null) ? `${lat}, ${lon}` : 'Pending';
+                document.getElementById('positionStatusText').textContent = (lat !== null && lon !== null) ? 'Moving now' : 'Tracking live';
+
+                // Other fields
+                updateElement('estimatedArrival', "{{ delivery_window | default('Calculating...') }}");
+                updateElement('lastCheckpoint', "{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}");
+                updateElement('deliveryLocation', "{{ shipment.delivery_location }}");
+                updateElement('serviceLevel', "{{ service_level | default('DHL Express') }}");
+                updateElement('deliveryWindow', "{{ delivery_window | default('Calculating...') }}");
+                updateElement('proofOfDelivery', "{{ proof_of_delivery | default('Pending') }}");
+
+                const checkpoints = sanitizeArray({{ checkpoints | tojson }});
+                if (checkpoints.length > 1) {
+                    const nextIdx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
+                    updateElement('nextCheckpoint', checkpoints[nextIdx]);
+                } else {
+                    updateElement('nextCheckpoint', 'Next scan pending');
+                }
+
+                // Last updated
+                const last = "{{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}";
+                document.getElementById('lastUpdated').textContent = `Last updated: ${last}`;
+
+                // Map
+                const coords = sanitizeArray({{ coords | tojson }});
+                const routeCoords = sanitizeArray({{ route_coords | tojson }});
+                const mapCoords = routeCoords.length ? routeCoords : coords;
+                if (mapCoords.length) {
+                    window._lastCoords = mapCoords;
+                    updateMap(mapCoords);
+                    document.getElementById('toggleAnimation')?.removeAttribute('disabled');
+                    document.getElementById('resetView')?.removeAttribute('disabled');
+                } else {
+                    document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
+                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                }
+            }
+
+            // Show content and hide spinner
+            function showContent() {
+                document.getElementById('loadingSpinner').style.display = 'none';
+                document.getElementById('resultContent').style.display = 'block';
+                if (!initialLoadDone) {
+                    setInitialPageState();
+                    initialLoadDone = true;
+                }
+                // ensure map size is correct
+                setTimeout(() => map.invalidateSize(), 200);
+            }
+
+            // If we have shipment data already rendered, show content immediately
+            {% if shipment %}
+                showContent();
+            {% else %}
+                // If no shipment, hide spinner and show error
+                document.getElementById('loadingSpinner').innerHTML = '<p class="text-gray-500">No shipment data available.</p>';
+            {% endif %}
+
+            // ============================================================
+            //  SOCKET.IO TRACKING UPDATES
+            // ============================================================
+            socket.on('tracking_update', (data) => {
+                debugLog('Received tracking update:', data);
+                if (data.error) {
+                    showToast(data.error, 'error', 5000);
+                    return;
+                }
+
+                // Update connection status
+                updateConnectionStatus(true);
+
+                // Status
+                if (data.status) {
+                    const statusEl = document.getElementById('status');
+                    statusEl.textContent = data.status;
+                    const cls = {
+                        'Delivered': 'delivered',
+                        'In_Transit': 'in-transit',
+                        'Out_for_Delivery': 'out-for-delivery',
+                        'Delayed': 'delayed',
+                        'Exception': 'exception',
+                        'On_Hold': 'on-hold'
+                    }[data.status] || 'pending';
+                    statusEl.className = `status-badge-header ${cls}`;
+                }
+
+                // Progress
+                if (data.progress !== undefined) {
+                    const percent = Math.round(data.progress * 100);
+                    document.getElementById('progressPercent').textContent = `${percent}%`;
+                    document.getElementById('progressFill').style.width = `${percent}%`;
+                }
+
+                // Position
+                if (data.current_location) {
+                    document.getElementById('currentLocation').textContent = data.current_location;
+                }
+                if (data.current_lat !== undefined && data.current_lon !== undefined) {
+                    const lat = parseFloat(data.current_lat);
+                    const lon = parseFloat(data.current_lon);
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
+                        window.currentPosition = { lat, lon, label: data.current_location || 'Current location' };
+                        document.getElementById('positionStatusText').textContent = 'Moving now';
+                    }
+                }
+
+                // Estimated Arrival, Last Checkpoint, Next Checkpoint
+                updateElement('estimatedArrival', data.delivery_window);
+                if (data.checkpoints && data.checkpoints.length) {
+                    const checkpoints = data.checkpoints;
+                    updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
+                    // rebuild checkpoint list
+                    const container = document.getElementById('checkpoints');
+                    const oldCount = container.querySelectorAll('.checkpoint').length;
+                    container.innerHTML = '';
+                    checkpoints.forEach((cp, idx) => {
+                        const parts = cp.split(' - ');
+                        const div = document.createElement('div');
+                        div.className = `checkpoint${idx >= oldCount ? ' checkpoint-new' : ''}`;
+                        const isDelivered = cp.toLowerCase().includes('delivered');
+                        div.innerHTML = `
+                            <div class="dot ${isDelivered ? 'delivered' : ''}"></div>
+                            <div>
+                                <div class="time">${parts[0] || ''}</div>
+                                <div class="location">${parts[1] || ''}</div>
+                                <div class="event">${parts.slice(2).join(' - ') || ''}</div>
+                            </div>
+                        `;
+                        container.appendChild(div);
+                    });
+                    // next checkpoint
+                    const progress = parseFloat(data.progress || 0);
+                    if (checkpoints.length > 1) {
+                        const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
+                        updateElement('nextCheckpoint', checkpoints[idx]);
+                    } else {
+                        updateElement('nextCheckpoint', 'Next scan pending');
+                    }
+                }
+
+                // Other fields
+                updateElement('deliveryLocation', data.delivery_location);
+                updateElement('serviceLevel', data.service_level);
+                updateElement('deliveryWindow', data.delivery_window);
+                updateElement('proofOfDelivery', data.proof_of_delivery);
+                if (data.last_updated) {
+                    const date = new Date(data.last_updated);
+                    document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
+                }
+
+                // Update map with new route data
+                const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
+                if (routeData && routeData.length) {
+                    window._lastCoords = routeData;
+                    updateMap(routeData);
+                }
+            });
+
+            // ============================================================
+            //  KEYBOARD SHORTCUTS
+            // ============================================================
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'r' && e.ctrlKey) {
+                    e.preventDefault();
+                    refreshTracking();
+                }
+                if (e.key === 'Escape') {
+                    const mapContainer = document.getElementById('mapContainer');
+                    if (mapContainer.classList.contains('fullscreen')) {
+                        mapContainer.classList.remove('fullscreen');
+                        document.getElementById('fullscreenBtn').innerHTML = '⛶ Fullscreen';
+                        setTimeout(() => map.invalidateSize(), 100);
+                    }
+                }
+            });
+
+            // ============================================================
+            //  INITIAL CONNECTION STATUS
+            // ============================================================
+            updateConnectionStatus(socket.connected);
+            if (!socket.connected) {
+                showToast('Connecting to live server…', 'info', 3000);
+            }
+
+            debugLog('Tracking page fully loaded – 10/10 version with photo grid');
+        </script>
+    {% endif %}
+    <!-- =================== END OF SHIPMENT BLOCK =================== -->
+
+    <!-- ====== FOOTER (common to all pages) ====== -->
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-section">
@@ -991,702 +1693,5 @@
             &copy; 2025 DHL International. All rights reserved.
         </div>
     </footer>
-
-    <!-- ====== SCRIPTS ====== -->
-    <script>
-        // ============================================================
-        //  CONSTANTS & CONFIGURATION
-        // ============================================================
-        const SOCKET_URL = window.location.origin; // adjust to your socket server if different
-        const REFRESH_INTERVAL_MS = 30000;
-        const ANIMATION_DURATION = 1200;
-        const DEBUG = false;
-
-        // ============================================================
-        //  UTILITY FUNCTIONS
-        // ============================================================
-        function debugLog(...args) {
-            if (DEBUG) console.log(...args);
-        }
-
-        function safeParseDate(dateStr) {
-            if (!dateStr) return null;
-            const d = new Date(dateStr);
-            return isNaN(d.getTime()) ? null : d;
-        }
-
-        function sanitizeArray(arr) {
-            return Array.isArray(arr) ? arr : [];
-        }
-
-        function updateElement(id, value) {
-            const el = document.getElementById(id);
-            if (el && value !== undefined && value !== null && value !== '') {
-                el.textContent = value;
-            }
-        }
-
-        // ============================================================
-        //  TOAST NOTIFICATIONS
-        // ============================================================
-        function showToast(message, type = 'info', duration = 5000) {
-            const container = document.getElementById('toastContainer');
-            if (!container) return;
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.setAttribute('role', 'alert');
-            toast.innerHTML = `
-                <span>${message}</span>
-                <button class="close-toast" aria-label="Dismiss notification">&times;</button>
-            `;
-            container.appendChild(toast);
-            const closeBtn = toast.querySelector('.close-toast');
-            closeBtn.addEventListener('click', () => {
-                toast.remove();
-            });
-            setTimeout(() => {
-                if (toast.parentNode) toast.remove();
-            }, duration);
-        }
-
-        // ============================================================
-        //  MENU TOGGLE
-        // ============================================================
-        const menuBtn = document.getElementById('menuBtn');
-        const menuContent = document.getElementById('menuContent');
-        menuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const expanded = menuBtn.getAttribute('aria-expanded') === 'true';
-            menuBtn.setAttribute('aria-expanded', !expanded);
-            menuContent.classList.toggle('show');
-        });
-        document.addEventListener('click', (e) => {
-            if (!menuContent.contains(e.target) && e.target !== menuBtn) {
-                menuContent.classList.remove('show');
-                menuBtn.setAttribute('aria-expanded', 'false');
-            }
-        });
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && menuContent.classList.contains('show')) {
-                menuContent.classList.remove('show');
-                menuBtn.setAttribute('aria-expanded', 'false');
-                menuBtn.focus();
-            }
-        });
-
-        // ============================================================
-        //  SOCKET.IO SETUP
-        // ============================================================
-        const socket = io(SOCKET_URL, {
-            transports: ['polling', 'websocket'],
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
-            auth: {
-                // token: localStorage.getItem('dhl_token') // uncomment if you use auth
-            }
-        });
-
-        let trackingInterval = null;
-
-        function updateConnectionStatus(connected) {
-            const dot = document.getElementById('connectionDot');
-            const statusText = document.getElementById('connectionStatus');
-            const refreshBtn = document.getElementById('refreshBtn');
-            const refreshHint = document.getElementById('refreshHint');
-            const retryBtn = document.getElementById('retryBtn');
-
-            if (dot) dot.className = `connection-dot ${connected ? 'connected' : 'disconnected'}`;
-            if (statusText) {
-                statusText.textContent = connected ? 'Connected' : 'Disconnected';
-                statusText.className = `text-xs ${connected ? 'text-green-600' : 'text-red-600'}`;
-            }
-            if (refreshBtn) {
-                refreshBtn.disabled = !connected;
-                refreshBtn.title = connected ? 'Refresh live tracking data' : 'Waiting for connection...';
-            }
-            if (refreshHint) refreshHint.textContent = connected ? 'Live connection active' : 'Waiting for connection...';
-            if (retryBtn) {
-                retryBtn.style.display = connected ? 'none' : 'inline-block';
-            }
-        }
-
-        socket.on('connect', () => {
-            debugLog('Socket.IO connected');
-            updateConnectionStatus(true);
-            requestTracking();
-            if (trackingInterval) clearInterval(trackingInterval);
-            trackingInterval = setInterval(() => {
-                if (socket.connected) requestTracking();
-            }, REFRESH_INTERVAL_MS);
-        });
-
-        socket.on('disconnect', () => {
-            debugLog('Socket.IO disconnected');
-            updateConnectionStatus(false);
-            if (trackingInterval) {
-                clearInterval(trackingInterval);
-                trackingInterval = null;
-            }
-        });
-
-        socket.on('connect_error', (err) => {
-            console.error('Socket.IO connection error:', err);
-            updateConnectionStatus(false);
-            showToast('Connection error – retrying…', 'error', 4000);
-        });
-
-        // Retry button
-        document.getElementById('retryBtn')?.addEventListener('click', () => {
-            socket.connect();
-            showToast('Reconnecting…', 'info', 2000);
-        });
-
-        // ============================================================
-        //  TRACKING REQUEST
-        // ============================================================
-        const trackingNumber = "{{ shipment.tracking_number if shipment else '' }}";
-
-        function requestTracking() {
-            if (!trackingNumber) return;
-            debugLog('Requesting tracking update');
-            socket.emit('request_tracking', { tracking_number: trackingNumber });
-        }
-
-        function refreshTracking() {
-            const btn = document.getElementById('refreshBtn');
-            if (!btn || btn.disabled) return;
-            btn.disabled = true;
-            btn.textContent = 'Updating…';
-            requestTracking();
-            setTimeout(() => {
-                btn.disabled = !socket.connected;
-                btn.textContent = 'Refresh';
-            }, 3000);
-        }
-        document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
-
-        // ============================================================
-        //  MAP INITIALIZATION
-        // ============================================================
-        const map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        }).addTo(map);
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
-        }).addTo(map);
-
-        // Layer groups for performance
-        const markerGroup = L.layerGroup().addTo(map);
-        const polylineGroup = L.layerGroup().addTo(map);
-        const liveMarkerGroup = L.layerGroup().addTo(map);
-
-        let routeBounds = null;
-        let isAnimationEnabled = true;
-        let isAnimating = false;
-        let animationFrameId = null;
-        let animatedPolyline = null;
-
-        // ============================================================
-        //  MAP ROUTE & ANIMATION
-        // ============================================================
-        function sortCoordsByTimestamp(coords) {
-            return coords.map((coord, idx) => ({ coord, idx }))
-                .sort((a, b) => {
-                    const aTime = a.coord.desc ? a.coord.desc.split(' - ')[0] : null;
-                    const bTime = b.coord.desc ? b.coord.desc.split(' - ')[0] : null;
-                    const aDate = safeParseDate(aTime);
-                    const bDate = safeParseDate(bTime);
-                    if (aDate && bDate) return aDate - bDate;
-                    if (aDate) return -1;
-                    if (bDate) return 1;
-                    return a.idx - b.idx;
-                })
-                .map(entry => entry.coord);
-        }
-
-        function animateSegment(start, end, duration, callback) {
-            const startTime = performance.now();
-            const startLatLng = [start.lat, start.lon];
-            const endLatLng = [end.lat, end.lon];
-            let currentLatLngs = [startLatLng];
-
-            function step(timestamp) {
-                const progress = Math.min((timestamp - startTime) / duration, 1);
-                const lat = startLatLng[0] + (endLatLng[0] - startLatLng[0]) * progress;
-                const lon = startLatLng[1] + (endLatLng[1] - startLatLng[1]) * progress;
-                currentLatLngs = [startLatLng, [lat, lon]];
-                if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
-                animatedPolyline = L.polyline(currentLatLngs, {
-                    color: '#d32f2f',
-                    weight: 4,
-                    dashArray: '6, 10',
-                    opacity: 0.7
-                });
-                polylineGroup.addLayer(animatedPolyline);
-
-                if (progress < 1) {
-                    animationFrameId = requestAnimationFrame(step);
-                } else {
-                    cancelAnimationFrame(animationFrameId);
-                    callback();
-                }
-            }
-            animationFrameId = requestAnimationFrame(step);
-        }
-
-        function animateRoute(coords) {
-            if (coords.length < 2) return;
-            let index = 0;
-            function animateNextSegment() {
-                if (index < coords.length - 1) {
-                    animateSegment(coords[index], coords[index + 1], 1000, () => {
-                        index++;
-                        animateNextSegment();
-                    });
-                } else {
-                    if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
-                    animatedPolyline = null;
-                    // draw final full route
-                    const latlngs = coords.map(c => [c.lat, c.lon]);
-                    const polyline = L.polyline(latlngs, {
-                        color: '#d32f2f',
-                        weight: 4,
-                        dashArray: '6, 10',
-                        opacity: 0.7
-                    });
-                    polylineGroup.addLayer(polyline);
-                }
-            }
-            animateNextSegment();
-        }
-
-        // Marker animation
-        let markerAnimationFrame = null;
-        let markerPath = [];
-        let markerAnimActive = false;
-
-        function stopMarkerAnimation() {
-            markerAnimActive = false;
-            if (markerAnimationFrame) {
-                cancelAnimationFrame(markerAnimationFrame);
-                markerAnimationFrame = null;
-            }
-        }
-
-        function animateMarkerAlongRoute(coords) {
-            stopMarkerAnimation();
-            if (!coords || coords.length < 2) return;
-            markerPath = coords;
-            let index = 0;
-            let progress = 0;
-            const totalSegments = markerPath.length - 1;
-            const duration = Math.max(1200, 1800 / Math.max(totalSegments, 1));
-            markerAnimActive = true;
-
-            function step(timestamp) {
-                if (!markerAnimActive) return;
-                const elapsed = (timestamp % (duration * totalSegments)) / duration;
-                const segmentIndex = Math.min(Math.floor(elapsed), totalSegments - 1);
-                const localProgress = elapsed - segmentIndex;
-                const start = markerPath[segmentIndex];
-                const end = markerPath[segmentIndex + 1];
-                const lat = start.lat + (end.lat - start.lat) * localProgress;
-                const lon = start.lon + (end.lon - start.lon) * localProgress;
-
-                // Update live marker
-                liveMarkerGroup.clearLayers();
-                const markerIcon = L.divIcon({
-                    html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
-                    className: '',
-                    iconSize: [20, 20],
-                    iconAnchor: [10, 10]
-                });
-                const marker = L.marker([lat, lon], { icon: markerIcon, zIndexOffset: 1000 });
-                marker.bindPopup(`Current location: ${window.currentPosition?.label || 'Live position'}`);
-                liveMarkerGroup.addLayer(marker);
-
-                const pulse = L.circle([lat, lon], {
-                    color: '#d40511',
-                    fillColor: '#d40511',
-                    fillOpacity: 0.15,
-                    radius: 1200,
-                    interactive: false
-                });
-                liveMarkerGroup.addLayer(pulse);
-
-                markerAnimationFrame = requestAnimationFrame(step);
-            }
-            markerAnimationFrame = requestAnimationFrame(step);
-        }
-
-        // ============================================================
-        //  UPDATE MAP
-        // ============================================================
-        function updateMap(coords) {
-            // Clear groups
-            markerGroup.clearLayers();
-            polylineGroup.clearLayers();
-            liveMarkerGroup.clearLayers();
-
-            if (!coords || !coords.length) {
-                document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
-                document.getElementById('resetView')?.setAttribute('disabled', 'true');
-                return;
-            }
-
-            const sorted = sortCoordsByTimestamp(coords);
-            const hasDescriptions = sorted.some(c => c.desc);
-            if (hasDescriptions) {
-                sorted.forEach(coord => {
-                    if (coord.desc) {
-                        const marker = L.marker([coord.lat, coord.lon])
-                            .bindPopup(coord.desc);
-                        markerGroup.addLayer(marker);
-                    }
-                });
-            } else if (sorted.length >= 2) {
-                const start = L.marker([sorted[0].lat, sorted[0].lon])
-                    .bindPopup('Route start');
-                const end = L.marker([sorted[sorted.length - 1].lat, sorted[sorted.length - 1].lon])
-                    .bindPopup('Route end');
-                markerGroup.addLayer(start);
-                markerGroup.addLayer(end);
-            }
-
-            routeBounds = L.latLngBounds(sorted.map(c => [c.lat, c.lon]));
-            const latlngs = sorted.map(c => [c.lat, c.lon]);
-
-            if (isAnimationEnabled && sorted.length >= 2) {
-                animateRoute(sorted);
-                // also animate marker if we have current position
-                if (window.currentPosition && window.currentPosition.lat !== undefined) {
-                    animateMarkerAlongRoute(sorted);
-                }
-            } else {
-                const polyline = L.polyline(latlngs, {
-                    color: '#d32f2f',
-                    weight: 4,
-                    dashArray: '6, 10',
-                    opacity: 0.7
-                });
-                polylineGroup.addLayer(polyline);
-                // Static marker at current position
-                if (window.currentPosition && window.currentPosition.lat !== undefined) {
-                    const markerIcon = L.divIcon({
-                        html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
-                        className: '',
-                        iconSize: [20, 20],
-                        iconAnchor: [10, 10]
-                    });
-                    const marker = L.marker([window.currentPosition.lat, window.currentPosition.lon], {
-                        icon: markerIcon,
-                        zIndexOffset: 1000
-                    });
-                    marker.bindPopup(`Current location: ${window.currentPosition.label || 'Live position'}`);
-                    liveMarkerGroup.addLayer(marker);
-                    const pulse = L.circle([window.currentPosition.lat, window.currentPosition.lon], {
-                        color: '#d40511',
-                        fillColor: '#d40511',
-                        fillOpacity: 0.15,
-                        radius: 1200,
-                        interactive: false
-                    });
-                    liveMarkerGroup.addLayer(pulse);
-                }
-            }
-
-            map.fitBounds(routeBounds, { padding: [20, 20] });
-            document.getElementById('toggleAnimation')?.removeAttribute('disabled');
-            document.getElementById('resetView')?.removeAttribute('disabled');
-        }
-
-        // ============================================================
-        //  MAP CONTROLS (Toggle Animation, Reset View, Fullscreen)
-        // ============================================================
-        const ToggleAnimationControl = L.Control.extend({
-            options: { position: 'topright' },
-            onAdd: function() {
-                const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                container.id = 'toggleAnimation';
-                container.innerHTML = '▶ Animation';
-                container.classList.add('active');
-                container.setAttribute('aria-label', 'Toggle route animation');
-                container.setAttribute('role', 'switch');
-                container.setAttribute('aria-checked', 'true');
-                container.disabled = true;
-                container.onclick = function() {
-                    isAnimationEnabled = !isAnimationEnabled;
-                    container.classList.toggle('active');
-                    container.innerHTML = isAnimationEnabled ? '▶ Animation' : '⏸ Paused';
-                    container.setAttribute('aria-checked', isAnimationEnabled ? 'true' : 'false');
-                    // Re-draw map with current coords
-                    if (window._lastCoords) {
-                        updateMap(window._lastCoords);
-                    }
-                };
-                return container;
-            }
-        });
-
-        const ResetViewControl = L.Control.extend({
-            options: { position: 'topright' },
-            onAdd: function() {
-                const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                container.id = 'resetView';
-                container.innerHTML = '⊞ Reset View';
-                container.setAttribute('aria-label', 'Reset map view');
-                container.disabled = true;
-                container.onclick = function() {
-                    if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
-                };
-                return container;
-            }
-        });
-
-        const FullscreenControl = L.Control.extend({
-            options: { position: 'topright' },
-            onAdd: function() {
-                const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                container.id = 'fullscreenBtn';
-                container.innerHTML = '⛶ Fullscreen';
-                container.setAttribute('aria-label', 'Toggle fullscreen map');
-                container.onclick = function() {
-                    const mapContainer = document.getElementById('mapContainer');
-                    mapContainer.classList.toggle('fullscreen');
-                    setTimeout(() => map.invalidateSize(), 100);
-                    container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Fullscreen';
-                };
-                return container;
-            }
-        });
-
-        map.addControl(new ToggleAnimationControl());
-        map.addControl(new ResetViewControl());
-        map.addControl(new FullscreenControl());
-
-        // ============================================================
-        //  INITIAL DATA LOAD
-        // ============================================================
-        let initialLoadDone = false;
-
-        function setInitialPageState() {
-            // Status
-            const statusEl = document.getElementById('status');
-            if (statusEl) {
-                const status = "{{ shipment.status }}";
-                statusEl.textContent = status;
-                const cls = {
-                    'Delivered': 'delivered',
-                    'In_Transit': 'in-transit',
-                    'Out_for_Delivery': 'out-for-delivery',
-                    'Delayed': 'delayed',
-                    'Exception': 'exception',
-                    'On_Hold': 'on-hold'
-                }[status] || 'pending';
-                statusEl.className = `status-badge-header ${cls}`;
-            }
-
-            // Progress
-            const progress = {{ progress | default(0) }};
-            document.getElementById('progressPercent').textContent = `${Math.round(progress * 100)}%`;
-            document.getElementById('progressFill').style.width = `${progress * 100}%`;
-
-            // Current position
-            const lat = {{ current_lat | default('null') }};
-            const lon = {{ current_lon | default('null') }};
-            const loc = "{{ current_location | default('Calculating...') }}";
-            window.currentPosition = { lat, lon, label: loc };
-            document.getElementById('currentLocation').textContent = loc;
-            document.getElementById('currentCoordinates').textContent = (lat !== null && lon !== null) ? `${lat}, ${lon}` : 'Pending';
-            document.getElementById('positionStatusText').textContent = (lat !== null && lon !== null) ? 'Moving now' : 'Tracking live';
-
-            // Other fields
-            updateElement('estimatedArrival', "{{ delivery_window | default('Calculating...') }}");
-            updateElement('lastCheckpoint', "{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}");
-            updateElement('deliveryLocation', "{{ shipment.delivery_location }}");
-            updateElement('serviceLevel', "{{ service_level | default('DHL Express') }}");
-            updateElement('deliveryWindow', "{{ delivery_window | default('Calculating...') }}");
-            updateElement('proofOfDelivery', "{{ proof_of_delivery | default('Pending') }}");
-
-            const checkpoints = sanitizeArray({{ checkpoints | tojson }});
-            if (checkpoints.length > 1) {
-                const nextIdx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
-                updateElement('nextCheckpoint', checkpoints[nextIdx]);
-            } else {
-                updateElement('nextCheckpoint', 'Next scan pending');
-            }
-
-            // Last updated
-            const last = "{{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}";
-            document.getElementById('lastUpdated').textContent = `Last updated: ${last}`;
-
-            // Map
-            const coords = sanitizeArray({{ coords | tojson }});
-            const routeCoords = sanitizeArray({{ route_coords | tojson }});
-            const mapCoords = routeCoords.length ? routeCoords : coords;
-            if (mapCoords.length) {
-                window._lastCoords = mapCoords;
-                updateMap(mapCoords);
-                document.getElementById('toggleAnimation')?.removeAttribute('disabled');
-                document.getElementById('resetView')?.removeAttribute('disabled');
-            } else {
-                document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
-                document.getElementById('resetView')?.setAttribute('disabled', 'true');
-            }
-        }
-
-        // Show content and hide spinner
-        function showContent() {
-            document.getElementById('loadingSpinner').style.display = 'none';
-            document.getElementById('resultContent').style.display = 'block';
-            if (!initialLoadDone) {
-                setInitialPageState();
-                initialLoadDone = true;
-            }
-            // ensure map size is correct
-            setTimeout(() => map.invalidateSize(), 200);
-        }
-
-        // If we have shipment data already rendered, show content immediately
-        {% if shipment %}
-            showContent();
-        {% else %}
-            // If no shipment, hide spinner and show error
-            document.getElementById('loadingSpinner').innerHTML = '<p class="text-gray-500">No shipment data available.</p>';
-        {% endif %}
-
-        // ============================================================
-        //  SOCKET.IO TRACKING UPDATES
-        // ============================================================
-        socket.on('tracking_update', (data) => {
-            debugLog('Received tracking update:', data);
-            if (data.error) {
-                showToast(data.error, 'error', 5000);
-                return;
-            }
-
-            // Update connection status
-            updateConnectionStatus(true);
-
-            // Status
-            if (data.status) {
-                const statusEl = document.getElementById('status');
-                statusEl.textContent = data.status;
-                const cls = {
-                    'Delivered': 'delivered',
-                    'In_Transit': 'in-transit',
-                    'Out_for_Delivery': 'out-for-delivery',
-                    'Delayed': 'delayed',
-                    'Exception': 'exception',
-                    'On_Hold': 'on-hold'
-                }[data.status] || 'pending';
-                statusEl.className = `status-badge-header ${cls}`;
-            }
-
-            // Progress
-            if (data.progress !== undefined) {
-                const percent = Math.round(data.progress * 100);
-                document.getElementById('progressPercent').textContent = `${percent}%`;
-                document.getElementById('progressFill').style.width = `${percent}%`;
-            }
-
-            // Position
-            if (data.current_location) {
-                document.getElementById('currentLocation').textContent = data.current_location;
-            }
-            if (data.current_lat !== undefined && data.current_lon !== undefined) {
-                const lat = parseFloat(data.current_lat);
-                const lon = parseFloat(data.current_lon);
-                if (!isNaN(lat) && !isNaN(lon)) {
-                    document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
-                    window.currentPosition = { lat, lon, label: data.current_location || 'Current location' };
-                    document.getElementById('positionStatusText').textContent = 'Moving now';
-                }
-            }
-
-            // Estimated Arrival, Last Checkpoint, Next Checkpoint
-            updateElement('estimatedArrival', data.delivery_window);
-            if (data.checkpoints && data.checkpoints.length) {
-                const checkpoints = data.checkpoints;
-                updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
-                // rebuild checkpoint list
-                const container = document.getElementById('checkpoints');
-                const oldCount = container.querySelectorAll('.checkpoint').length;
-                container.innerHTML = '';
-                checkpoints.forEach((cp, idx) => {
-                    const parts = cp.split(' - ');
-                    const div = document.createElement('div');
-                    div.className = `checkpoint${idx >= oldCount ? ' checkpoint-new' : ''}`;
-                    const isDelivered = cp.toLowerCase().includes('delivered');
-                    div.innerHTML = `
-                        <div class="dot ${isDelivered ? 'delivered' : ''}"></div>
-                        <div>
-                            <div class="time">${parts[0] || ''}</div>
-                            <div class="location">${parts[1] || ''}</div>
-                            <div class="event">${parts.slice(2).join(' - ') || ''}</div>
-                        </div>
-                    `;
-                    container.appendChild(div);
-                });
-                // next checkpoint
-                const progress = parseFloat(data.progress || 0);
-                if (checkpoints.length > 1) {
-                    const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
-                    updateElement('nextCheckpoint', checkpoints[idx]);
-                } else {
-                    updateElement('nextCheckpoint', 'Next scan pending');
-                }
-            }
-
-            // Other fields
-            updateElement('deliveryLocation', data.delivery_location);
-            updateElement('serviceLevel', data.service_level);
-            updateElement('deliveryWindow', data.delivery_window);
-            updateElement('proofOfDelivery', data.proof_of_delivery);
-            if (data.last_updated) {
-                const date = new Date(data.last_updated);
-                document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
-            }
-
-            // Update map with new route data
-            const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
-            if (routeData && routeData.length) {
-                window._lastCoords = routeData;
-                updateMap(routeData);
-            }
-        });
-
-        // ============================================================
-        //  KEYBOARD SHORTCUTS
-        // ============================================================
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'r' && e.ctrlKey) {
-                e.preventDefault();
-                refreshTracking();
-            }
-            if (e.key === 'Escape') {
-                const mapContainer = document.getElementById('mapContainer');
-                if (mapContainer.classList.contains('fullscreen')) {
-                    mapContainer.classList.remove('fullscreen');
-                    document.getElementById('fullscreenBtn').innerHTML = '⛶ Fullscreen';
-                    setTimeout(() => map.invalidateSize(), 100);
-                }
-            }
-        });
-
-        // ============================================================
-        //  INITIAL CONNECTION STATUS
-        // ============================================================
-        updateConnectionStatus(socket.connected);
-        if (!socket.connected) {
-            showToast('Connecting to live server…', 'info', 3000);
-        }
-
-        debugLog('Tracking page fully loaded – 10/10 version with photo grid');
-    </script>
 </body>
 </html>
