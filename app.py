@@ -1901,7 +1901,8 @@ def enhanced_full_simulate_tracking(tn):
                     current_status = latest_shipment.status
                 if latest_shipment.checkpoints and latest_shipment.checkpoints != ";".join(checkpoints):
                     checkpoints = (latest_shipment.checkpoints or "").split(";")
-                    current_idx = len([c for c in checkpoints if any(phrase in c for phrase in event_phrases)])
+                    # REMOVED: current_idx = len([c for c in checkpoints if any(phrase in c for phrase in event_phrases)])
+                    # because event_phrases is not defined in this function and current_idx is never used.
             stage = rget('stage', tn, stage) or stage
             speed_multiplier = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
             speed_multiplier = max(0.1, min(5.0, speed_multiplier))
