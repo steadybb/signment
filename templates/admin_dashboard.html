@@ -790,8 +790,8 @@
                     </code>
                   </td>
                   <td>
-                    <span class="status-badge bg-{% if s.status == 'Delivered' %}success{% elif s.status == 'Exception' %}danger{% elif s.status == 'Delayed' %}warning{% elif s.paused %}secondary{% else %}primary{% endif %} text-white">
-                      <i class="bi {% if s.status == 'Delivered' %}bi-check-circle{% elif s.status == 'In_Transit' %}bi-truck{% elif s.status == 'Out_for_Delivery' %}bi-box-arrow-up{% elif s.status == 'Exception' %}bi-exclamation-triangle{% elif s.status == 'Delayed' %}bi-clock{% else %}bi-hourglass-split{% endif %} me-1"></i>
+                    <span class="status-badge bg-{% if s.status == 'Delivered' %}success{% elif s.status == 'Exception' %}danger{% elif s.status == 'Delayed' %}warning{% elif s.status == 'On_Hold' %}warning{% elif s.paused %}secondary{% else %}primary{% endif %} text-white">
+                      <i class="bi {% if s.status == 'Delivered' %}bi-check-circle{% elif s.status == 'In_Transit' %}bi-truck{% elif s.status == 'Out_for_Delivery' %}bi-box-arrow-up{% elif s.status == 'Exception' %}bi-exclamation-triangle{% elif s.status == 'Delayed' %}bi-clock{% elif s.status == 'On_Hold' %}bi-pause-circle{% else %}bi-hourglass-split{% endif %} me-1"></i>
                       {{ s.status }}{% if s.paused %} <i class="bi bi-pause-circle ms-1"></i>{% endif %}
                     </span>
                   </td>
@@ -1715,7 +1715,7 @@
           .bindPopup(`
             <div style="min-width:150px;">
               <strong style="color:var(--dhl-red);">${tn}</strong><br>
-              <span class="badge bg-${status === 'Delivered' ? 'success' : status === 'Exception' ? 'danger' : status === 'Delayed' ? 'warning' : 'primary'}">${status}</span><br>
+              <span class="badge bg-${status === 'Delivered' ? 'success' : status === 'Exception' ? 'danger' : status === 'Delayed' ? 'warning' : status === 'On_Hold' ? 'warning' : 'primary'}">${status}</span><br>
               <small>📍 ${currentLoc}</small><br>
               <small>📊 ${Math.round(progress * 100)}% complete</small>
               ${paused ? '<br><span class="badge bg-secondary">⏸ Paused</span>' : ''}
@@ -1736,7 +1736,7 @@
         markers[tn].setPopupContent(`
           <div style="min-width:150px;">
             <strong style="color:var(--dhl-red);">${tn}</strong><br>
-            <span class="badge bg-${status === 'Delivered' ? 'success' : status === 'Exception' ? 'danger' : status === 'Delayed' ? 'warning' : 'primary'}">${status}</span><br>
+            <span class="badge bg-${status === 'Delivered' ? 'success' : status === 'Exception' ? 'danger' : status === 'Delayed' ? 'warning' : status === 'On_Hold' ? 'warning' : 'primary'}">${status}</span><br>
             <small>📍 ${currentLoc}</small><br>
             <small>📊 ${Math.round(progress * 100)}% complete</small>
             ${paused ? '<br><span class="badge bg-secondary">⏸ Paused</span>' : ''}
@@ -1883,13 +1883,15 @@
         'Exception': 'bi-exclamation-triangle',
         'Delayed': 'bi-clock',
         'Pending': 'bi-hourglass-split',
-        'Customs_Clearance': 'bi-file-check'
+        'Customs_Clearance': 'bi-file-check',
+        'On_Hold': 'bi-pause-circle'
       };
       const iconClass = statusIcons[status] || 'bi-truck';
       const statusColors = {
         'Delivered': 'success',
         'Exception': 'danger',
         'Delayed': 'warning',
+        'On_Hold': 'warning',
         'In_Transit': 'primary',
         'Out_for_Delivery': 'info',
         'Pending': 'secondary',
@@ -2005,7 +2007,7 @@
                 <h6 class="fw-bold mb-3"><i class="bi bi-info-circle me-2 text-danger"></i>Shipment Information</h6>
                 ${[
                   ['Tracking', data.tracking_number],
-                  ['Status', `<span class="badge bg-${data.status === 'Delivered' ? 'success' : data.status === 'Exception' ? 'danger' : 'primary'}">${data.status}</span>`],
+                  ['Status', `<span class="badge bg-${data.status === 'Delivered' ? 'success' : data.status === 'Exception' ? 'danger' : data.status === 'On_Hold' ? 'warning' : 'primary'}">${data.status}</span>`],
                   ['Origin/Pickup', data.origin_location || 'N/A'],
                   ['Destination', data.delivery_location],
                   ['Carrier', data.carrier || 'DHL'],
