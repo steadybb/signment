@@ -959,22 +959,68 @@
                 </div>
             </div>
         </div>
+    {% endif %}
 
-        <!-- ============================================================ -->
-        <!--  SCRIPT – only included when shipment exists                   -->
-        <!-- ============================================================ -->
-        <script>
+    <!-- ============================================================ -->
+    <!--  SCRIPT – always runs, but checks for shipment existence      -->
+    <!-- ============================================================ -->
+    <script>
+        // ============================================================
+        //  GLOBAL ERROR HANDLER – catches any uncaught error
+        // ============================================================
+        window.onerror = function(message, source, lineno, colno, error) {
+            console.error('Global error caught:', message, error);
+            const spinner = document.getElementById('loadingSpinner');
+            if (spinner) {
+                spinner.innerHTML = `<p class="text-red-500">Error: ${message}</p>`;
+            }
+            // Prevent default error handling
+            return true;
+        };
+
+        console.log('📦 Tracking page script started');
+
+        // ============================================================
+        //  SAFELY CHECK IF SHIPMENT EXISTS
+        // ============================================================
+        // We'll check if the element with tracking number exists – a reliable indicator
+        const trackingNumberElement = document.getElementById('trackingNumberDisplay');
+        const hasShipment = trackingNumberElement !== null && trackingNumberElement.textContent.trim() !== '';
+
+        console.log('hasShipment:', hasShipment);
+
+        if (!hasShipment) {
+            // No shipment – show a message
+            const spinner = document.getElementById('loadingSpinner');
+            if (spinner) {
+                spinner.innerHTML = '<p class="text-gray-500">No shipment data available.</p>';
+            }
+            console.warn('No shipment found – showing fallback');
+        } else {
+            // ============================================================
+            //  SHOW CONTENT IMMEDIATELY (hides spinner)
+            // ============================================================
+            function showContent() {
+                try {
+                    document.getElementById('loadingSpinner').style.display = 'none';
+                    document.getElementById('resultContent').style.display = 'block';
+                    console.log('Content shown – spinner hidden');
+                } catch (e) {
+                    console.error('Error showing content:', e);
+                }
+            }
+
+            // Call it right away – before any map code
+            showContent();
+
             // ============================================================
             //  CONSTANTS & CONFIGURATION
             // ============================================================
             const SOCKET_URL = window.location.origin;
             const REFRESH_INTERVAL_MS = 30000;
             const ANIMATION_DURATION = 1200;
-            const DEBUG = false;
+            const DEBUG = true; // temporarily enabled
 
-            // ============================================================
-            //  UTILITY FUNCTIONS
-            // ============================================================
             function debugLog(...args) {
                 if (DEBUG) console.log(...args);
             }
@@ -1118,7 +1164,10 @@
             const trackingNumber = "{{ shipment.tracking_number if shipment else '' }}";
 
             function requestTracking() {
-                if (!trackingNumber) return;
+                if (!trackingNumber) {
+                    console.warn('No tracking number – skipping request');
+                    return;
+                }
                 debugLog('Requesting tracking update');
                 socket.emit('request_tracking', { tracking_number: trackingNumber });
             }
@@ -1137,7 +1186,7 @@
             document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
 
             // ============================================================
-            //  MAP INITIALIZATION – wrapped in try-catch to avoid blocking content
+            //  MAP INITIALIZATION – wrapped in try-catch
             // ============================================================
             let map = null;
             let markerGroup, polylineGroup, liveMarkerGroup;
@@ -1443,7 +1492,7 @@
             }
 
             // ============================================================
-            //  INITIAL DATA LOAD & CONTENT DISPLAY
+            //  INITIAL DATA LOAD
             // ============================================================
             let initialLoadDone = false;
 
@@ -1518,35 +1567,15 @@
             }
 
             // ============================================================
-            //  SHOW CONTENT (called early to hide spinner)
-            // ============================================================
-            function showContent() {
-                try {
-                    document.getElementById('loadingSpinner').style.display = 'none';
-                    document.getElementById('resultContent').style.display = 'block';
-                    if (!initialLoadDone) {
-                        setInitialPageState();
-                        initialLoadDone = true;
-                    }
-                    // ensure map size is correct
-                    setTimeout(() => {
-                        if (map) map.invalidateSize();
-                    }, 200);
-                    debugLog('Content shown');
-                } catch (e) {
-                    console.error('Error in showContent:', e);
-                }
-            }
-
-            // ============================================================
-            //  START – CALL showContent IMMEDIATELY, then init map
+            //  START – initialize map and load data
             // ============================================================
             try {
-                // Show content right away – this hides the spinner even if map fails
-                showContent();
-
                 // Initialize map (will not block if it fails)
                 initMap();
+
+                // Set initial page state (loads data into UI)
+                setInitialPageState();
+                initialLoadDone = true;
 
                 // If we have initial coords, update map after a short delay
                 setTimeout(() => {
@@ -1558,9 +1587,14 @@
                         updateMap(mapCoords);
                     }
                 }, 300);
+
+                debugLog('Tracking page fully loaded');
             } catch (e) {
                 console.error('Fatal error during startup:', e);
-                document.getElementById('loadingSpinner').innerHTML = `<p class="text-red-500">Error: ${e.message}</p>`;
+                const spinner = document.getElementById('loadingSpinner');
+                if (spinner) {
+                    spinner.innerHTML = `<p class="text-red-500">Error: ${e.message}</p>`;
+                }
             }
 
             // ============================================================
@@ -1683,10 +1717,10 @@
                 showToast('Connecting to live server…', 'info', 3000);
             }
 
-            debugLog('Tracking page fully loaded – content shown early');
-        </script>
-    {% endif %}
-    <!-- =================== END OF SHIPMENT BLOCK =================== -->
+            console.log('✅ Tracking page fully loaded – all systems go');
+        } // end hasShipment
+    </script>
+    <!-- =================== END OF SCRIPT =================== -->
 
     <!-- ====== FOOTER (common to all pages) ====== -->
     <footer class="footer">
@@ -1717,7 +1751,7 @@
             </div>
         </div>
         <div class="copyright">
-            &copy; 2026 DHL International. All rights reserved.
+            &copy; 2025 DHL International. All rights reserved.
         </div>
     </footer>
 </body>
