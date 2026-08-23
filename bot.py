@@ -1,4 +1,7 @@
 import os
+# Force eventlet monkey-patch OFF for this process (safe to do at the very top)
+os.environ['DISABLE_EVENTLET_MONKEY_PATCH'] = '1'
+
 import re
 import json
 import logging
@@ -14,27 +17,25 @@ from rich.console import Console
 from urllib.parse import quote_plus, urlparse
 from sqlalchemy import text
 
-# Import everything from utils (no eventlet monkey-patch here)
+# Import everything from utils (which does NOT call eventlet.monkey_patch())
 from utils import (
     BotConfig, config, get_bot, is_admin, send_dynamic_menu, get_shipment_details,
     generate_unique_id, search_shipments, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX,
     safe_redis_operation, sanitize_tracking_number, enqueue_notification,
     save_shipment, update_shipment, get_shipment_list, export_shipments, get_recent_logs,
-    show_shipment_menu, cache_route_templates, keep_alive, estimate_distance, DHL_CONFIG,
+    show_shipment_menu, cache_route_templates, estimate_distance, DHL_CONFIG,
     redis_client,
-    # Import app, db, Shipment from utils (not from app.py)
-    app, db, Shipment
+    app, db, Shipment  # Flask app from utils, NOT from app.py
 )
 
 # Logging setup
 bot_logger = logging.getLogger('telegram_bot')
 console = Console()
 
-# Initialize bot - MUST be done before decorators
+# Initialize bot
 bot = get_bot()
 if bot is None:
     bot_logger.warning("Telegram bot token not configured; bot disabled. Set TELEGRAM_BOT_TOKEN to enable.")
-    # keep module importable for local dev; some handlers will be no-ops without a bot
     bot = None
 
 # === RATE LIMIT DECORATOR ===
@@ -55,7 +56,6 @@ def rate_limit(func):
     return wrapper
 
 # === DATABASE HELPERS WITH CONTEXT ===
-# (All functions now use the app/db from utils)
 def get_shipment_with_context(tracking_number):
     with app.app_context():
         shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
@@ -811,17 +811,14 @@ if bot is not None:
                         updates = data.get("result", [])
                         if updates:
                             offset = updates[-1]["update_id"] + 1
-                            # Convert dicts to Update objects
                             from telebot import types
                             update_objects = [types.Update.de_json(u) for u in updates]
                             try:
                                 bot.process_new_updates(update_objects)
                             except RecursionError:
                                 bot_logger.error("Recursion error processing updates", exc_info=True)
-                                # Continue, don't break
-                        else:
-                            # no updates, continue
-                            pass
+                            except Exception as e:
+                                bot_logger.error(f"Error processing updates: {e}")
                         time.sleep(1)
                     else:
                         bot_logger.error(f"Polling API error: {data}")
@@ -845,7 +842,7 @@ if bot is not None:
         except Exception as e:
             bot_logger.error(f"Failed to cache route templates: {e}")
 
-        bot_logger.info("Using polling mode (webhook disabled to avoid recursion)")
+        bot_logger.info("Using polling mode (webhook disabled)")
         start_polling_fallback()
 
         try:
@@ -873,15 +870,11 @@ if bot is not None:
         else:
             bot.answer_callback_query(call.id, "❌ Failed.", show_alert=True)
 
-    # Removed keep_alive_loop and its thread to avoid any webhook calls.
-
     def main():
         try:
             start_bot_service()
             bot_logger.info("Bot service started")
             console.print("[green]✅ bot.py started — DHL + All Features Live[/green]")
-
-            # Keep the main thread alive
             while True:
                 time.sleep(60)
         except KeyboardInterrupt:
