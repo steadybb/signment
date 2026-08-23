@@ -33,6 +33,7 @@ console = Console()
 bot = get_bot()
 if bot is None:
     bot_logger.warning("Telegram bot token not configured; bot disabled. Set TELEGRAM_BOT_TOKEN to enable.")
+    # keep module importable for local dev; some handlers will be no-ops without a bot
     bot = None
 
 # === RATE LIMIT DECORATOR ===
@@ -767,7 +768,7 @@ if bot is not None:
             bot_logger.error(f"Webhook hostname resolution failed: {hostname} -> {e}")
             return False
 
-    # === CUSTOM POLLING USING REQUESTS (AVOIDS RECURSION) ===
+    # === CUSTOM POLLING USING REQUESTS (NO EVENTLET) ===
     _polling_thread = None
     _polling_active = False
 
@@ -792,6 +793,7 @@ if bot is not None:
             token = config.telegram_bot_token
             if not token:
                 bot_logger.error("No bot token for polling")
+                _polling_active = False
                 return
             while True:
                 try:
@@ -812,8 +814,8 @@ if bot is not None:
                             update_objects = [types.Update.de_json(u) for u in updates]
                             try:
                                 bot.process_new_updates(update_objects)
-                            except RecursionError as re:
-                                bot_logger.error(f"Recursion error processing updates: {re}")
+                            except RecursionError:
+                                bot_logger.error("Recursion error processing updates", exc_info=True)
                                 # Continue, don't break
                         else:
                             # no updates, continue
@@ -822,8 +824,8 @@ if bot is not None:
                     else:
                         bot_logger.error(f"Polling API error: {data}")
                         time.sleep(5)
-                except RecursionError as re:
-                    bot_logger.error(f"Recursion error in polling: {re}")
+                except RecursionError:
+                    bot_logger.error("Recursion error in polling", exc_info=True)
                     time.sleep(10)
                 except Exception as e:
                     bot_logger.error(f"Polling error: {e}")
