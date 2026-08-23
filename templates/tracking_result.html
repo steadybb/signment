@@ -954,6 +954,16 @@
 
     <script>
         // ============================================================
+        // HELPER: update DOM element only if value is provided
+        // ============================================================
+        function updateIfPresent(elementId, value) {
+            const el = document.getElementById(elementId);
+            if (el && value !== undefined && value !== null && value !== '') {
+                el.textContent = value;
+            }
+        }
+
+        // ============================================================
         // REFRESH
         // ============================================================
         const trackingNumber = "{{ shipment.tracking_number if shipment else '' }}";
@@ -1367,23 +1377,56 @@
 
             updateConnectionStatus(true);
 
-            const statusEl = document.getElementById('status');
-            const statusValue = data.status || 'Unknown';
-            statusEl.textContent = statusValue;
-            statusEl.className = 'status-badge-header ' + (
-                statusValue === 'Delivered' ? 'delivered' :
-                statusValue === 'In_Transit' ? 'in-transit' :
-                statusValue === 'Out_for_Delivery' ? 'out-for-delivery' :
-                statusValue === 'Delayed' ? 'delayed' :
-                statusValue === 'Exception' ? 'exception' : 'pending'
-            );
+            // ---- Status (only if provided) ----
+            if (data.status) {
+                const statusEl = document.getElementById('status');
+                const statusValue = data.status;
+                statusEl.textContent = statusValue;
+                statusEl.className = 'status-badge-header ' + (
+                    statusValue === 'Delivered' ? 'delivered' :
+                    statusValue === 'In_Transit' ? 'in-transit' :
+                    statusValue === 'Out_for_Delivery' ? 'out-for-delivery' :
+                    statusValue === 'Delayed' ? 'delayed' :
+                    statusValue === 'Exception' ? 'exception' : 'pending'
+                );
+            }
 
-            document.getElementById('delivery_location').textContent = data.delivery_location || 'N/A';
-            if (data.service_level) document.getElementById('service_level').textContent = data.service_level;
-            if (data.delivery_window) document.getElementById('delivery_window').textContent = data.delivery_window;
-            if (data.proof_of_delivery) document.getElementById('proof_of_delivery').textContent = data.proof_of_delivery;
+            // ---- Progress (only if provided) ----
+            if (data.progress !== undefined) {
+                const percent = Math.round(data.progress * 100);
+                document.getElementById('progress-percent').textContent = percent + '%';
+                document.getElementById('progress-fill').style.width = percent + '%';
+            }
 
+            // ---- Location and coordinates ----
+            if (data.current_location) {
+                document.getElementById('currentLocation').textContent = data.current_location;
+            }
+            if (data.current_lat !== undefined && data.current_lon !== undefined) {
+                const lat = parseFloat(data.current_lat);
+                const lon = parseFloat(data.current_lon);
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    document.getElementById('currentCoordinates').textContent = lat + ', ' + lon;
+                    window.currentPosition = { lat, lon, label: data.current_location || 'Current location' };
+                    // Update map marker later
+                }
+            }
+            // Position status text
+            const posStatus = document.getElementById('positionStatusText');
+            if (posStatus) {
+                if (data.current_lat !== undefined && data.current_lon !== undefined) {
+                    posStatus.textContent = 'Moving now';
+                } else {
+                    posStatus.textContent = 'Tracking live';
+                }
+            }
+
+            // ---- Estimated Arrival, Last Checkpoint, Next Checkpoint ----
+            updateIfPresent('estimatedArrival', data.delivery_window);
             if (data.checkpoints && data.checkpoints.length) {
+                const last = data.checkpoints[data.checkpoints.length - 1];
+                updateIfPresent('lastCheckpoint', last);
+                // Rebuild checkpoints list
                 const checkpointsDiv = document.getElementById('checkpoints');
                 const oldCount = checkpointsDiv.querySelectorAll('.checkpoint').length;
                 checkpointsDiv.innerHTML = '';
@@ -1402,37 +1445,9 @@
                     `;
                     checkpointsDiv.appendChild(div);
                 });
-            }
-
-            if (data.progress !== undefined) {
-                const percent = Math.round(data.progress * 100);
-                document.getElementById('progress-percent').textContent = percent + '%';
-                document.getElementById('progress-fill').style.width = percent + '%';
-            }
-
-            const currentLocationEl = document.getElementById('currentLocation');
-            const currentCoordsEl = document.getElementById('currentCoordinates');
-            const positionStatusText = document.getElementById('positionStatusText');
-            const estimatedArrivalEl = document.getElementById('estimatedArrival');
-            const lastCheckpointEl = document.getElementById('lastCheckpoint');
-            const currentLocation = data.current_location || data.currentLocation || 'Calculating...';
-            const currentLat = data.current_lat ?? data.currentLat;
-            const currentLon = data.current_lon ?? data.currentLon;
-            window.currentPosition = {
-                lat: currentLat,
-                lon: currentLon,
-                label: currentLocation
-            };
-            if (currentLocationEl) currentLocationEl.textContent = currentLocation;
-            if (currentCoordsEl) currentCoordsEl.textContent = (currentLat !== undefined && currentLon !== undefined && currentLat !== null && currentLon !== null) ? `${currentLat}, ${currentLon}` : 'Pending';
-            if (positionStatusText) positionStatusText.textContent = currentLat !== undefined && currentLon !== undefined ? 'Moving now' : 'Tracking live';
-            if (estimatedArrivalEl) estimatedArrivalEl.textContent = data.delivery_window || 'Calculating...';
-            if (lastCheckpointEl && data.checkpoints && data.checkpoints.length) lastCheckpointEl.textContent = data.checkpoints[data.checkpoints.length - 1];
-            
-            const nextElLive = document.getElementById('nextCheckpoint');
-            try {
-                if (nextElLive) {
-                    const cks = data.checkpoints || [];
+                // Compute next checkpoint
+                try {
+                    const cks = data.checkpoints;
                     const p = parseFloat(data.progress || 0) || 0;
                     let computed = 'Next scan pending';
                     if (cks && cks.length) {
@@ -1440,12 +1455,24 @@
                         computed = cks[idx];
                         nextCheckpointIndex = idx;
                     }
-                    nextElLive.textContent = computed;
+                    updateIfPresent('nextCheckpoint', computed);
+                } catch (e) {
+                    console.warn('Next checkpoint compute failed', e);
                 }
-            } catch (e) {
-                console.warn('Next checkpoint compute failed', e);
             }
-            if (window.currentPosition.lat !== undefined && window.currentPosition.lon !== undefined) {
+
+            // ---- Other fields (only if present) ----
+            updateIfPresent('delivery_location', data.delivery_location);
+            updateIfPresent('service_level', data.service_level);
+            updateIfPresent('delivery_window', data.delivery_window);
+            updateIfPresent('proof_of_delivery', data.proof_of_delivery);
+            if (data.last_updated) {
+                const date = new Date(data.last_updated);
+                document.getElementById('lastUpdated').textContent = 'Last updated: ' + date.toLocaleString();
+            }
+
+            // ---- Update map marker if we have coordinates ----
+            if (window.currentPosition && window.currentPosition.lat !== undefined && window.currentPosition.lon !== undefined) {
                 const markerIcon = L.divIcon({
                     html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
                     className: '',
@@ -1455,7 +1482,7 @@
                 if (liveMarker) map.removeLayer(liveMarker);
                 if (liveMarkerPulse) map.removeLayer(liveMarkerPulse);
                 liveMarker = L.marker([window.currentPosition.lat, window.currentPosition.lon], { icon: markerIcon, zIndexOffset: 1000 }).addTo(map);
-                liveMarker.bindPopup(`Current location: ${currentLocation}`);
+                liveMarker.bindPopup(`Current location: ${window.currentPosition.label || 'Live position'}`);
                 liveMarkerPulse = L.circle([window.currentPosition.lat, window.currentPosition.lon], {
                     color: '#d40511',
                     fillColor: '#d40511',
@@ -1466,11 +1493,7 @@
                 map.setView([window.currentPosition.lat, window.currentPosition.lon], Math.max(map.getZoom(), 8));
             }
 
-            if (data.last_updated) {
-                const date = new Date(data.last_updated);
-                document.getElementById('lastUpdated').textContent = 'Last updated: ' + date.toLocaleString();
-            }
-
+            // ---- Update route and map ----
             const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
             if (routeData && routeData.length) {
                 updateMap(routeData);
