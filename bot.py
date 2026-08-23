@@ -14,15 +14,16 @@ from rich.console import Console
 from urllib.parse import quote_plus, urlparse
 from sqlalchemy import text
 
-# Import app first, then get bot from utils
-from app import app, db, Shipment
+# Import everything from utils (no eventlet monkey-patch here)
 from utils import (
     BotConfig, config, get_bot, is_admin, send_dynamic_menu, get_shipment_details,
     generate_unique_id, search_shipments, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX,
     safe_redis_operation, sanitize_tracking_number, enqueue_notification,
     save_shipment, update_shipment, get_shipment_list, export_shipments, get_recent_logs,
     show_shipment_menu, cache_route_templates, keep_alive, estimate_distance, DHL_CONFIG,
-    redis_client
+    redis_client,
+    # Import app, db, Shipment from utils (not from app.py)
+    app, db, Shipment
 )
 
 # Logging setup
@@ -54,6 +55,7 @@ def rate_limit(func):
     return wrapper
 
 # === DATABASE HELPERS WITH CONTEXT ===
+# (All functions now use the app/db from utils)
 def get_shipment_with_context(tracking_number):
     with app.app_context():
         shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
@@ -871,17 +873,7 @@ if bot is not None:
         else:
             bot.answer_callback_query(call.id, "❌ Failed.", show_alert=True)
 
-    def keep_alive_loop():
-        while True:
-            try:
-                if redis_client:
-                    redis_client.ping()
-                with app.app_context():
-                    db.session.execute(text('SELECT 1'))
-                bot_logger.debug("Health check passed")
-            except Exception as e:
-                bot_logger.error(f"Health check failed: {e}")
-            time.sleep(300)
+    # Removed keep_alive_loop and its thread to avoid any webhook calls.
 
     def main():
         try:
@@ -889,10 +881,7 @@ if bot is not None:
             bot_logger.info("Bot service started")
             console.print("[green]✅ bot.py started — DHL + All Features Live[/green]")
 
-            keep_alive_thread = threading.Thread(target=keep_alive_loop, daemon=True)
-            keep_alive_thread.start()
-            bot_logger.info("Keep-alive loop started")
-
+            # Keep the main thread alive
             while True:
                 time.sleep(60)
         except KeyboardInterrupt:
