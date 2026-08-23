@@ -3965,14 +3965,12 @@ def start_background_services():
         except Exception:
             pass
         eventlet.spawn(keep_alive)
-        # NOTE: process_notification_queue is intentionally NOT started here.
-        # The dedicated `worker` service (worker.py) is the sole consumer of
-        # the "notifications" Redis queue. Running both this app's queue
-        # consumer AND worker.py at the same time causes both processes to
-        # race for the same queue items, which is what made email delivery
-        # inconsistent. If you are running this app WITHOUT a separate
-        # worker.py process, uncomment the line below instead:
-        # eventlet.spawn(process_notification_queue)
+        # --- FIX: Start the queue processor UNLESS DISABLE_QUEUE_PROCESSOR is set ---
+        if os.getenv('DISABLE_QUEUE_PROCESSOR', '').lower() not in ('1', 'true', 'yes'):
+            flask_logger.info("Starting notification queue processor (no separate worker detected)")
+            eventlet.spawn(process_notification_queue)
+        else:
+            flask_logger.info("Queue processor disabled by DISABLE_QUEUE_PROCESSOR (using external worker)")
         eventlet.spawn(cleanup_websocket_clients)
     except Exception:
         with services_started_lock:
