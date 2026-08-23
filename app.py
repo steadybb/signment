@@ -2588,21 +2588,7 @@ def track():
         shipment.recipient_email = email
         db.session.commit()
         invalidate_cache(tn)
-    checkpoints = (shipment.checkpoints or "").split(";")
-    coords = geocode_locations(checkpoints)
-    coords_list = [{'lat': c['lat'], 'lon': c['lon'], 'desc': c['desc']} for c in coords]
-    route_coords = build_route_from_checkpoints(coords_list, mode='drive')
-    try:
-        dens_km = float(os.getenv('SIM_ROUTE_DENSIFY_KM', '1.0') or '1.0')
-        route_coords = densify_route_coords(route_coords, dens_km)
-    except Exception:
-        pass
-    distance_km = estimate_distance(shipment.origin_location or "Lagos, NG", shipment.delivery_location)
-    service_level = DHLRealisticSimulator.get_service_level(
-        distance_km, DHLRealisticSimulator.is_business_hours(datetime.now())
-    )
-    delivery_window = DHLRealisticSimulator.get_delivery_window(service_level, distance_km)
-    proof_of_delivery = DHLRealisticSimulator.generate_pod_info()
+    # Start simulation (if not already) – this can remain here.
     if shipment.status not in ['Delivered', 'Returned']:
         try:
             if can_start_simulation():
@@ -2620,39 +2606,12 @@ def track():
                     threading.Thread(target=simulate_tracking, args=(tn,), daemon=True).start()
                 else:
                     flask_logger.info(f"Simulator throttle active; skipping thread start for {tn}")
-    progress = float(rget('progress', tn, '0') or '0')
-    current_location = rget('current_location', tn, '') or ''
-    current_lat = rget('current_lat', tn, None)
-    current_lon = rget('current_lon', tn, None)
-    
-    # Check if this is an AJAX request
+
+    # ✨ FIX: Redirect to the GET endpoint to make refreshes safe.
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        result_html = render_template(
-            'tracking_result.html',
-            shipment=shipment,
-            checkpoints=checkpoints,
-            coords=coords_list,
-            route_coords=route_coords,
-            service_level=service_level,
-            delivery_window=delivery_window,
-            proof_of_delivery=proof_of_delivery,
-            progress=progress,
-            current_location=current_location,
-            current_lat=current_lat,
-            current_lon=current_lon,
-            tawk_property_id=app.config['TAWK_PROPERTY_ID'],
-            tawk_widget_id=app.config['TAWK_WIDGET_ID']
-        )
-        return jsonify({'html': result_html})
-    
-    rendered = render_template(
-        'tracking_result.html', shipment=shipment, checkpoints=checkpoints, coords=coords_list,
-        route_coords=route_coords, service_level=service_level, delivery_window=delivery_window,
-        proof_of_delivery=proof_of_delivery, progress=progress,
-        current_location=current_location, current_lat=current_lat, current_lon=current_lon,
-        tawk_property_id=app.config['TAWK_PROPERTY_ID'], tawk_widget_id=app.config['TAWK_WIDGET_ID']
-    )
-    return _render_tracking_response(rendered, 200)
+        # For AJAX requests, return the redirect URL.
+        return jsonify({'redirect': url_for('track_direct', tracking_number=tn)})
+    return redirect(url_for('track_direct', tracking_number=tn))
 
 @app.route('/track/<tracking_number>')
 def track_direct(tracking_number):
