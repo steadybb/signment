@@ -981,38 +981,17 @@
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
-                    <!-- Parcel Photos Grid -->
+                    <!-- ====== PARCEL PHOTOS – only one image ====== -->
                     <div class="parcel-photos-section">
-                        <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photos</h3>
+                        <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
                         <div class="parcel-grid">
-                            <!-- 
-                                In production, loop over a list of photo URLs from your backend.
-                                Example with Jinja2:
-                                {% for photo in shipment.photos %}
-                                    <div class="grid-item">
-                                        <img src="{{ photo.url }}" alt="{{ photo.label | default('Parcel photo') }}">
-                                        <div class="grid-label">{{ photo.label | default('Parcel #' + loop.index) }}</div>
-                                    </div>
-                                {% endfor %}
-                            -->
                             <div class="grid-item">
-                                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel 1">
+                                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel photo">
                                 <div class="grid-label">Parcel #1</div>
-                            </div>
-                            <div class="grid-item">
-                                <img src="https://picsum.photos/seed/parcel1/400/300" alt="Parcel 2">
-                                <div class="grid-label">Parcel #2</div>
-                            </div>
-                            <div class="grid-item">
-                                <img src="https://picsum.photos/seed/parcel2/400/300" alt="Parcel 3">
-                                <div class="grid-label">Parcel #3</div>
-                            </div>
-                            <div class="grid-item">
-                                <img src="https://picsum.photos/seed/parcel3/400/300" alt="Parcel 4">
-                                <div class="grid-label">Parcel #4</div>
                             </div>
                         </div>
                     </div>
+                    <!-- ====== END PARCEL PHOTOS ====== -->
 
                     <!-- Back Button -->
                     <a href="{{ url_for('index') }}" class="back-button">← Back to home</a>
@@ -1057,35 +1036,10 @@
 
             // ============================================================
             //  CONSTANTS & CONFIGURATION
-            //
-            //  NOTE ON BACKEND UPDATE TYPES (app.py):
-            //  This page receives 'tracking_update' socket events from THREE
-            //  different sources in app.py, which carry different fields:
-            //    1. on_request('request_tracking')  -> full payload, always
-            //       includes coords/route_coords/mode. Fired on connect and
-            //       every REFRESH_INTERVAL_MS as a resync safety net.
-            //    2. broadcast_update(tn)             -> full payload, includes
-            //       coords/route_coords, fired roughly every 15-120s per
-            //       simulator tick (see enhanced_full_simulate_tracking).
-            //    3. sim_emit_light(tn, ...)           -> LIGHTWEIGHT payload,
-            //       only sent if a client is registered as viewing this tn
-            //       (via add_client, which happens inside on_request above).
-            //       It does NOT include coords or route_coords - only
-            //       current_lat/current_lon/progress/status/checkpoints -
-            //       fired every ~2s (SIM_BROADCAST_INTERVAL_SEC) while a
-            //       simulation is actively running.
-            //
-            //  Because (3) never includes route data, marker movement and
-            //  route drawing are handled by two SEPARATE functions below:
-            //  moveLiveMarker() (always runs when lat/lon present) and
-            //  maybeRedrawRoute() (only runs when coords/route_coords are
-            //  present AND have actually changed). This is what makes the
-            //  marker glide smoothly on every light update instead of only
-            //  jumping once per full broadcast.
             // ============================================================
             const SOCKET_URL = window.location.origin;
             const REFRESH_INTERVAL_MS = 30000;
-            const MARKER_TWEEN_MS = 900; // matches roughly the sim's light-update cadence
+            const MARKER_TWEEN_MS = 900;
             const DEBUG = true;
 
             function debugLog(...args) {
@@ -1197,12 +1151,6 @@
             socket.on('connect', () => {
                 debugLog('Socket.IO connected');
                 updateConnectionStatus(true);
-                // IMPORTANT: this request_tracking emit is what causes app.py's
-                // on_request() handler to call add_client(tn, sid) server-side,
-                // which registers this browser tab as an active viewer. Without
-                // that registration, sim_emit_light() in app.py will silently
-                // skip sending light updates for this tracking number entirely
-                // (see get_clients(tn) check in sim_emit_light).
                 requestTracking();
                 if (trackingInterval) clearInterval(trackingInterval);
                 trackingInterval = setInterval(() => {
@@ -1353,8 +1301,6 @@
 
                     console.log('✅ Map initialized successfully');
 
-                    // If data already arrived before the map finished initializing,
-                    // apply it now instead of waiting for the next socket event.
                     if (window._pendingRoute) {
                         maybeRedrawRoute(window._pendingRoute);
                         window._pendingRoute = null;
@@ -1390,10 +1336,6 @@
 
             // ============================================================
             //  ROUTE DRAWING (checkpoints markers + polyline)
-            //  Only runs when route data is present AND has actually changed
-            //  from what's already drawn - so repeated full broadcasts that
-            //  carry the same route (route rarely changes mid-simulation)
-            //  don't cause the map to redraw/re-fit on every tick.
             // ============================================================
             function routeSignature(coords) {
                 if (!coords || !coords.length) return '';
@@ -1414,8 +1356,6 @@
 
                 const sig = routeSignature(coords);
                 if (sig === window._routeSignature) {
-                    // Route hasn't changed - don't touch the map (avoids jank/rezoom
-                    // on every simulator broadcast, which happens every 15-120s).
                     return;
                 }
                 window._routeSignature = sig;
@@ -1423,9 +1363,6 @@
                 markerGroup.clearLayers();
                 polylineGroup.clearLayers();
 
-                // Checkpoint markers (only points that have a description, i.e.
-                // came from geocode_locations() on actual checkpoint text rather
-                // than the densified route_coords, which have no 'desc').
                 coords.forEach(c => {
                     if (c.desc) {
                         L.marker([c.lat, c.lon]).bindPopup(c.desc).addTo(markerGroup);
@@ -1448,12 +1385,6 @@
 
             // ============================================================
             //  LIVE MARKER MOVEMENT
-            //  Called on EVERY update that includes current_lat/current_lon,
-            //  whether it's a full broadcast or a lightweight sim_emit_light
-            //  ping. The simulator computes current_lat/current_lon precisely
-            //  along the route based on real progress, so we just move the
-            //  marker to wherever the server says it is - tweened smoothly
-            //  between positions rather than replaying a fake route animation.
             // ============================================================
             let markerTweenFrame = null;
 
@@ -1476,7 +1407,6 @@
                 const newLatLng = L.latLng(lat, lon);
 
                 if (!window._liveMarker) {
-                    // First placement - no previous position to tween from.
                     const icon = buildMarkerIcon();
                     window._liveMarker = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(liveMarkerGroup);
                     window._livePulse = L.circle(newLatLng, {
@@ -1529,7 +1459,7 @@
             }
 
             // ============================================================
-            //  SIMULATOR STATE INDICATORS (paused / speed / mode)
+            //  SIMULATOR STATE INDICATORS
             // ============================================================
             function applyPausedState(paused) {
                 const banner = document.getElementById('pausedBanner');
@@ -1560,8 +1490,6 @@
 
             // ============================================================
             //  UNIFIED UPDATE HANDLER
-            //  Applies a 'tracking_update' payload regardless of which of
-            //  the three backend sources it came from (see notes above).
             // ============================================================
             function applyTrackingUpdate(data) {
                 if (!data) return;
@@ -1645,10 +1573,6 @@
                     }
                 }
 
-                // Route data (coords/route_coords) is only present on full
-                // broadcasts (request_tracking / broadcast_update), never on
-                // sim_emit_light pings - maybeRedrawRoute() already no-ops if
-                // there's nothing new to draw.
                 const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
                 if (routeData && routeData.length) {
                     maybeRedrawRoute(routeData);
@@ -1674,10 +1598,6 @@
                         last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}"
                     };
 
-                    // Apply everything the unified handler can (status, progress,
-                    // marker placement, checkpoints, badges) except route drawing,
-                    // which needs the map to exist first - handled below with a
-                    // short delay, same as before.
                     applyTrackingUpdate(initialData);
 
                     const coords = sanitizeArray({{ coords | tojson }});
@@ -1716,9 +1636,6 @@
 
             // ============================================================
             //  SOCKET.IO TRACKING UPDATES
-            //  Every update - full or light - flows through the same
-            //  applyTrackingUpdate() function now, so the marker moves on
-            //  every light ping and the route redraws only when it changes.
             // ============================================================
             socket.on('tracking_update', (data) => {
                 debugLog('Received tracking update:', data);
