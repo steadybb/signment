@@ -196,6 +196,8 @@
         .status-badge-header.delayed { background: #fef3c7; color: #d97706; }
         .status-badge-header.exception { background: #fef2f2; color: #dc2626; }
         .status-badge-header.pending { background: #f3f4f6; color: #6b7280; }
+        /* On Hold */
+        .status-badge-header.on-hold { background: #fef3c7; color: #b45309; }
         
         /* === LIVE INDICATOR === */
         .live-indicator {
@@ -787,6 +789,7 @@
                                 {% elif shipment.status == 'Out_for_Delivery' %}out-for-delivery
                                 {% elif shipment.status == 'Delayed' %}delayed
                                 {% elif shipment.status == 'Exception' %}exception
+                                {% elif shipment.status == 'On_Hold' %}on-hold
                                 {% else %}pending{% endif %}">
                                 {{ shipment.status }}
                             </span>
@@ -1207,7 +1210,8 @@
                     {{ shipment.status | tojson }} === 'In_Transit' ? 'in-transit' :
                     {{ shipment.status | tojson }} === 'Out_for_Delivery' ? 'out-for-delivery' :
                     {{ shipment.status | tojson }} === 'Delayed' ? 'delayed' :
-                    {{ shipment.status | tojson }} === 'Exception' ? 'exception' : 'pending'
+                    {{ shipment.status | tojson }} === 'Exception' ? 'exception' :
+                    {{ shipment.status | tojson }} === 'On_Hold' ? 'on-hold' : 'pending'
                 );
             }
             const progressPercent = document.getElementById('progress-percent');
@@ -1387,7 +1391,8 @@
                     statusValue === 'In_Transit' ? 'in-transit' :
                     statusValue === 'Out_for_Delivery' ? 'out-for-delivery' :
                     statusValue === 'Delayed' ? 'delayed' :
-                    statusValue === 'Exception' ? 'exception' : 'pending'
+                    statusValue === 'Exception' ? 'exception' :
+                    statusValue === 'On_Hold' ? 'on-hold' : 'pending'
                 );
             }
 
