@@ -959,44 +959,26 @@
                 </div>
             </div>
         </div>
-    {% endif %}
 
-    <!-- ============================================================ -->
-    <!--  SCRIPT – always runs, but checks for shipment existence      -->
-    <!-- ============================================================ -->
-    <script>
-        // ============================================================
-        //  GLOBAL ERROR HANDLER – catches any uncaught error
-        // ============================================================
-        window.onerror = function(message, source, lineno, colno, error) {
-            console.error('Global error caught:', message, error);
-            const spinner = document.getElementById('loadingSpinner');
-            if (spinner) {
-                spinner.innerHTML = `<p class="text-red-500">Error: ${message}</p>`;
-            }
-            // Prevent default error handling
-            return true;
-        };
+        <!-- ============================================================ -->
+        <!--  SCRIPT – inside the "else" block, so shipment is guaranteed  -->
+        <!-- ============================================================ -->
+        <script>
+            // ============================================================
+            //  GLOBAL ERROR HANDLER – catches any uncaught error
+            // ============================================================
+            window.onerror = function(message, source, lineno, colno, error) {
+                console.error('Global error caught:', message, error);
+                const spinner = document.getElementById('loadingSpinner');
+                if (spinner) {
+                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${message}</p>`;
+                }
+                // Prevent default error handling
+                return true;
+            };
 
-        console.log('📦 Tracking page script started');
+            console.log('📦 Tracking page script started (inside else block)');
 
-        // ============================================================
-        //  SAFELY CHECK IF SHIPMENT EXISTS
-        // ============================================================
-        // We'll check if the element with tracking number exists – a reliable indicator
-        const trackingNumberElement = document.getElementById('trackingNumberDisplay');
-        const hasShipment = trackingNumberElement !== null && trackingNumberElement.textContent.trim() !== '';
-
-        console.log('hasShipment:', hasShipment);
-
-        if (!hasShipment) {
-            // No shipment – show a message
-            const spinner = document.getElementById('loadingSpinner');
-            if (spinner) {
-                spinner.innerHTML = '<p class="text-gray-500">No shipment data available.</p>';
-            }
-            console.warn('No shipment found – showing fallback');
-        } else {
             // ============================================================
             //  SHOW CONTENT IMMEDIATELY (hides spinner)
             // ============================================================
@@ -1004,7 +986,7 @@
                 try {
                     document.getElementById('loadingSpinner').style.display = 'none';
                     document.getElementById('resultContent').style.display = 'block';
-                    console.log('Content shown – spinner hidden');
+                    console.log('✅ Content shown – spinner hidden');
                 } catch (e) {
                     console.error('Error showing content:', e);
                 }
@@ -1019,7 +1001,7 @@
             const SOCKET_URL = window.location.origin;
             const REFRESH_INTERVAL_MS = 30000;
             const ANIMATION_DURATION = 1200;
-            const DEBUG = true; // temporarily enabled
+            const DEBUG = true; // keep enabled for now
 
             function debugLog(...args) {
                 if (DEBUG) console.log(...args);
@@ -1161,7 +1143,7 @@
             // ============================================================
             //  TRACKING REQUEST
             // ============================================================
-            const trackingNumber = "{{ shipment.tracking_number if shipment else '' }}";
+            const trackingNumber = "{{ shipment.tracking_number }}";
 
             function requestTracking() {
                 if (!trackingNumber) {
@@ -1186,7 +1168,7 @@
             document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
 
             // ============================================================
-            //  MAP INITIALIZATION – wrapped in try-catch
+            //  MAP INITIALIZATION – safe & delayed
             // ============================================================
             let map = null;
             let markerGroup, polylineGroup, liveMarkerGroup;
@@ -1198,10 +1180,21 @@
 
             function initMap() {
                 try {
+                    // Check if Leaflet is loaded
                     if (typeof L === 'undefined') {
                         console.warn('Leaflet library not loaded – map will not be available');
+                        // Try loading it dynamically from a fallback CDN
+                        loadLeafletFallback();
                         return;
                     }
+
+                    const mapContainer = document.getElementById('map');
+                    if (!mapContainer) {
+                        console.error('Map container #map not found');
+                        return;
+                    }
+
+                    console.log('Initializing map...');
                     map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
                     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                         maxZoom: 19,
@@ -1276,10 +1269,31 @@
                     map.addControl(new ResetViewControl());
                     map.addControl(new FullscreenControl());
 
-                    debugLog('Map initialized');
+                    console.log('✅ Map initialized successfully');
                 } catch (e) {
                     console.error('Map initialization failed:', e);
                 }
+            }
+
+            // Fallback: load Leaflet from CDN if not loaded
+            function loadLeafletFallback() {
+                if (document.querySelector('script[src*="leaflet"]')) return;
+                console.log('Attempting to load Leaflet from fallback CDN...');
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js';
+                script.onload = function() {
+                    console.log('Leaflet fallback loaded, re-initializing map...');
+                    initMap();
+                    // Also reload CSS
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css';
+                    document.head.appendChild(link);
+                };
+                script.onerror = function() {
+                    console.error('Failed to load Leaflet fallback');
+                };
+                document.head.appendChild(script);
             }
 
             // ============================================================
@@ -1416,7 +1430,10 @@
             //  UPDATE MAP
             // ============================================================
             function updateMap(coords) {
-                if (!map) return;
+                if (!map) {
+                    console.warn('updateMap called but map is null');
+                    return;
+                }
                 markerGroup.clearLayers();
                 polylineGroup.clearLayers();
                 liveMarkerGroup.clearLayers();
@@ -1489,6 +1506,7 @@
                 map.fitBounds(routeBounds, { padding: [20, 20] });
                 document.getElementById('toggleAnimation')?.removeAttribute('disabled');
                 document.getElementById('resetView')?.removeAttribute('disabled');
+                console.log('Map updated with', sorted.length, 'points');
             }
 
             // ============================================================
@@ -1548,15 +1566,20 @@
                     const last = "{{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}";
                     document.getElementById('lastUpdated').textContent = `Last updated: ${last}`;
 
-                    // Map
+                    // Map – we'll update after a delay
                     const coords = sanitizeArray({{ coords | tojson }});
                     const routeCoords = sanitizeArray({{ route_coords | tojson }});
                     const mapCoords = routeCoords.length ? routeCoords : coords;
                     if (mapCoords.length) {
                         window._lastCoords = mapCoords;
-                        updateMap(mapCoords);
-                        document.getElementById('toggleAnimation')?.removeAttribute('disabled');
-                        document.getElementById('resetView')?.removeAttribute('disabled');
+                        // Update map after it's initialized
+                        setTimeout(() => {
+                            if (map) {
+                                updateMap(mapCoords);
+                                document.getElementById('toggleAnimation')?.removeAttribute('disabled');
+                                document.getElementById('resetView')?.removeAttribute('disabled');
+                            }
+                        }, 500);
                     } else {
                         document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
                         document.getElementById('resetView')?.setAttribute('disabled', 'true');
@@ -1567,24 +1590,19 @@
             }
 
             // ============================================================
-            //  START – initialize map and load data
+            //  START – initialize map after a delay (ensures DOM ready)
             // ============================================================
             try {
-                // Initialize map (will not block if it fails)
-                initMap();
-
-                // Set initial page state (loads data into UI)
+                // First, set the initial page state (populates data)
                 setInitialPageState();
-                initialLoadDone = true;
 
-                // If we have initial coords, update map after a short delay
+                // Then, initialize map with a slight delay to ensure container is visible
                 setTimeout(() => {
-                    const coords = sanitizeArray({{ coords | tojson }});
-                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
-                    const mapCoords = routeCoords.length ? routeCoords : coords;
-                    if (mapCoords.length && map) {
-                        window._lastCoords = mapCoords;
-                        updateMap(mapCoords);
+                    initMap();
+                    // If map failed to init, try once more after a longer delay
+                    if (!map) {
+                        console.warn('Map not initialized on first attempt, retrying...');
+                        setTimeout(initMap, 2000);
                     }
                 }, 300);
 
@@ -1593,7 +1611,7 @@
                 console.error('Fatal error during startup:', e);
                 const spinner = document.getElementById('loadingSpinner');
                 if (spinner) {
-                    spinner.innerHTML = `<p class="text-red-500">Error: ${e.message}</p>`;
+                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${e.message}</p>`;
                 }
             }
 
@@ -1718,9 +1736,9 @@
             }
 
             console.log('✅ Tracking page fully loaded – all systems go');
-        } // end hasShipment
-    </script>
-    <!-- =================== END OF SCRIPT =================== -->
+        </script>
+    {% endif %}
+    <!-- =================== END OF SHIPMENT BLOCK =================== -->
 
     <!-- ====== FOOTER (common to all pages) ====== -->
     <footer class="footer">
