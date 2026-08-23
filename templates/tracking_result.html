@@ -967,7 +967,7 @@
             // ============================================================
             //  CONSTANTS & CONFIGURATION
             // ============================================================
-            const SOCKET_URL = window.location.origin; // adjust to your socket server if different
+            const SOCKET_URL = window.location.origin;
             const REFRESH_INTERVAL_MS = 30000;
             const ANIMATION_DURATION = 1200;
             const DEBUG = false;
@@ -1137,31 +1137,104 @@
             document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
 
             // ============================================================
-            //  MAP INITIALIZATION
+            //  MAP INITIALIZATION – wrapped in try-catch to avoid blocking content
             // ============================================================
-            const map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            }).addTo(map);
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                maxZoom: 19,
-                attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
-            }).addTo(map);
-
-            // Layer groups for performance
-            const markerGroup = L.layerGroup().addTo(map);
-            const polylineGroup = L.layerGroup().addTo(map);
-            const liveMarkerGroup = L.layerGroup().addTo(map);
-
+            let map = null;
+            let markerGroup, polylineGroup, liveMarkerGroup;
             let routeBounds = null;
             let isAnimationEnabled = true;
             let isAnimating = false;
             let animationFrameId = null;
             let animatedPolyline = null;
 
+            function initMap() {
+                try {
+                    if (typeof L === 'undefined') {
+                        console.warn('Leaflet library not loaded – map will not be available');
+                        return;
+                    }
+                    map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        maxZoom: 19,
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                    }).addTo(map);
+                    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                        maxZoom: 19,
+                        attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
+                    }).addTo(map);
+
+                    markerGroup = L.layerGroup().addTo(map);
+                    polylineGroup = L.layerGroup().addTo(map);
+                    liveMarkerGroup = L.layerGroup().addTo(map);
+
+                    const ToggleAnimationControl = L.Control.extend({
+                        options: { position: 'topright' },
+                        onAdd: function() {
+                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                            container.id = 'toggleAnimation';
+                            container.innerHTML = '▶ Animation';
+                            container.classList.add('active');
+                            container.setAttribute('aria-label', 'Toggle route animation');
+                            container.setAttribute('role', 'switch');
+                            container.setAttribute('aria-checked', 'true');
+                            container.disabled = true;
+                            container.onclick = function() {
+                                isAnimationEnabled = !isAnimationEnabled;
+                                container.classList.toggle('active');
+                                container.innerHTML = isAnimationEnabled ? '▶ Animation' : '⏸ Paused';
+                                container.setAttribute('aria-checked', isAnimationEnabled ? 'true' : 'false');
+                                if (window._lastCoords) {
+                                    updateMap(window._lastCoords);
+                                }
+                            };
+                            return container;
+                        }
+                    });
+
+                    const ResetViewControl = L.Control.extend({
+                        options: { position: 'topright' },
+                        onAdd: function() {
+                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                            container.id = 'resetView';
+                            container.innerHTML = '⊞ Reset View';
+                            container.setAttribute('aria-label', 'Reset map view');
+                            container.disabled = true;
+                            container.onclick = function() {
+                                if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
+                            };
+                            return container;
+                        }
+                    });
+
+                    const FullscreenControl = L.Control.extend({
+                        options: { position: 'topright' },
+                        onAdd: function() {
+                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                            container.id = 'fullscreenBtn';
+                            container.innerHTML = '⛶ Fullscreen';
+                            container.setAttribute('aria-label', 'Toggle fullscreen map');
+                            container.onclick = function() {
+                                const mapContainer = document.getElementById('mapContainer');
+                                mapContainer.classList.toggle('fullscreen');
+                                setTimeout(() => map.invalidateSize(), 100);
+                                container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Fullscreen';
+                            };
+                            return container;
+                        }
+                    });
+
+                    map.addControl(new ToggleAnimationControl());
+                    map.addControl(new ResetViewControl());
+                    map.addControl(new FullscreenControl());
+
+                    debugLog('Map initialized');
+                } catch (e) {
+                    console.error('Map initialization failed:', e);
+                }
+            }
+
             // ============================================================
-            //  MAP ROUTE & ANIMATION
+            //  MAP ROUTE & ANIMATION functions
             // ============================================================
             function sortCoordsByTimestamp(coords) {
                 return coords.map((coord, idx) => ({ coord, idx }))
@@ -1220,7 +1293,6 @@
                     } else {
                         if (animatedPolyline) polylineGroup.removeLayer(animatedPolyline);
                         animatedPolyline = null;
-                        // draw final full route
                         const latlngs = coords.map(c => [c.lat, c.lon]);
                         const polyline = L.polyline(latlngs, {
                             color: '#d32f2f',
@@ -1234,7 +1306,6 @@
                 animateNextSegment();
             }
 
-            // Marker animation
             let markerAnimationFrame = null;
             let markerPath = [];
             let markerAnimActive = false;
@@ -1267,7 +1338,6 @@
                     const lat = start.lat + (end.lat - start.lat) * localProgress;
                     const lon = start.lon + (end.lon - start.lon) * localProgress;
 
-                    // Update live marker
                     liveMarkerGroup.clearLayers();
                     const markerIcon = L.divIcon({
                         html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
@@ -1297,7 +1367,7 @@
             //  UPDATE MAP
             // ============================================================
             function updateMap(coords) {
-                // Clear groups
+                if (!map) return;
                 markerGroup.clearLayers();
                 polylineGroup.clearLayers();
                 liveMarkerGroup.clearLayers();
@@ -1332,7 +1402,6 @@
 
                 if (isAnimationEnabled && sorted.length >= 2) {
                     animateRoute(sorted);
-                    // also animate marker if we have current position
                     if (window.currentPosition && window.currentPosition.lat !== undefined) {
                         animateMarkerAlongRoute(sorted);
                     }
@@ -1344,7 +1413,6 @@
                         opacity: 0.7
                     });
                     polylineGroup.addLayer(polyline);
-                    // Static marker at current position
                     if (window.currentPosition && window.currentPosition.lat !== undefined) {
                         const markerIcon = L.divIcon({
                             html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
@@ -1375,159 +1443,125 @@
             }
 
             // ============================================================
-            //  MAP CONTROLS (Toggle Animation, Reset View, Fullscreen)
-            // ============================================================
-            const ToggleAnimationControl = L.Control.extend({
-                options: { position: 'topright' },
-                onAdd: function() {
-                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                    container.id = 'toggleAnimation';
-                    container.innerHTML = '▶ Animation';
-                    container.classList.add('active');
-                    container.setAttribute('aria-label', 'Toggle route animation');
-                    container.setAttribute('role', 'switch');
-                    container.setAttribute('aria-checked', 'true');
-                    container.disabled = true;
-                    container.onclick = function() {
-                        isAnimationEnabled = !isAnimationEnabled;
-                        container.classList.toggle('active');
-                        container.innerHTML = isAnimationEnabled ? '▶ Animation' : '⏸ Paused';
-                        container.setAttribute('aria-checked', isAnimationEnabled ? 'true' : 'false');
-                        // Re-draw map with current coords
-                        if (window._lastCoords) {
-                            updateMap(window._lastCoords);
-                        }
-                    };
-                    return container;
-                }
-            });
-
-            const ResetViewControl = L.Control.extend({
-                options: { position: 'topright' },
-                onAdd: function() {
-                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                    container.id = 'resetView';
-                    container.innerHTML = '⊞ Reset View';
-                    container.setAttribute('aria-label', 'Reset map view');
-                    container.disabled = true;
-                    container.onclick = function() {
-                        if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
-                    };
-                    return container;
-                }
-            });
-
-            const FullscreenControl = L.Control.extend({
-                options: { position: 'topright' },
-                onAdd: function() {
-                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                    container.id = 'fullscreenBtn';
-                    container.innerHTML = '⛶ Fullscreen';
-                    container.setAttribute('aria-label', 'Toggle fullscreen map');
-                    container.onclick = function() {
-                        const mapContainer = document.getElementById('mapContainer');
-                        mapContainer.classList.toggle('fullscreen');
-                        setTimeout(() => map.invalidateSize(), 100);
-                        container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Fullscreen';
-                    };
-                    return container;
-                }
-            });
-
-            map.addControl(new ToggleAnimationControl());
-            map.addControl(new ResetViewControl());
-            map.addControl(new FullscreenControl());
-
-            // ============================================================
-            //  INITIAL DATA LOAD
+            //  INITIAL DATA LOAD & CONTENT DISPLAY
             // ============================================================
             let initialLoadDone = false;
 
             function setInitialPageState() {
-                // Status
-                const statusEl = document.getElementById('status');
-                if (statusEl) {
-                    const status = "{{ shipment.status }}";
-                    statusEl.textContent = status;
-                    const cls = {
-                        'Delivered': 'delivered',
-                        'In_Transit': 'in-transit',
-                        'Out_for_Delivery': 'out-for-delivery',
-                        'Delayed': 'delayed',
-                        'Exception': 'exception',
-                        'On_Hold': 'on-hold'
-                    }[status] || 'pending';
-                    statusEl.className = `status-badge-header ${cls}`;
-                }
+                try {
+                    // Status
+                    const statusEl = document.getElementById('status');
+                    if (statusEl) {
+                        const status = "{{ shipment.status }}";
+                        statusEl.textContent = status;
+                        const cls = {
+                            'Delivered': 'delivered',
+                            'In_Transit': 'in-transit',
+                            'Out_for_Delivery': 'out-for-delivery',
+                            'Delayed': 'delayed',
+                            'Exception': 'exception',
+                            'On_Hold': 'on-hold'
+                        }[status] || 'pending';
+                        statusEl.className = `status-badge-header ${cls}`;
+                    }
 
-                // Progress
-                const progress = {{ progress | default(0) }};
-                document.getElementById('progressPercent').textContent = `${Math.round(progress * 100)}%`;
-                document.getElementById('progressFill').style.width = `${progress * 100}%`;
+                    // Progress
+                    const progress = {{ progress | default(0) }};
+                    document.getElementById('progressPercent').textContent = `${Math.round(progress * 100)}%`;
+                    document.getElementById('progressFill').style.width = `${progress * 100}%`;
 
-                // Current position
-                const lat = {{ current_lat | default('null') }};
-                const lon = {{ current_lon | default('null') }};
-                const loc = "{{ current_location | default('Calculating...') }}";
-                window.currentPosition = { lat, lon, label: loc };
-                document.getElementById('currentLocation').textContent = loc;
-                document.getElementById('currentCoordinates').textContent = (lat !== null && lon !== null) ? `${lat}, ${lon}` : 'Pending';
-                document.getElementById('positionStatusText').textContent = (lat !== null && lon !== null) ? 'Moving now' : 'Tracking live';
+                    // Current position
+                    const lat = {{ current_lat | default('null') }};
+                    const lon = {{ current_lon | default('null') }};
+                    const loc = "{{ current_location | default('Calculating...') }}";
+                    window.currentPosition = { lat, lon, label: loc };
+                    document.getElementById('currentLocation').textContent = loc;
+                    document.getElementById('currentCoordinates').textContent = (lat !== null && lon !== null) ? `${lat}, ${lon}` : 'Pending';
+                    document.getElementById('positionStatusText').textContent = (lat !== null && lon !== null) ? 'Moving now' : 'Tracking live';
 
-                // Other fields
-                updateElement('estimatedArrival', "{{ delivery_window | default('Calculating...') }}");
-                updateElement('lastCheckpoint', "{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}");
-                updateElement('deliveryLocation', "{{ shipment.delivery_location }}");
-                updateElement('serviceLevel', "{{ service_level | default('DHL Express') }}");
-                updateElement('deliveryWindow', "{{ delivery_window | default('Calculating...') }}");
-                updateElement('proofOfDelivery', "{{ proof_of_delivery | default('Pending') }}");
+                    // Other fields
+                    updateElement('estimatedArrival', "{{ delivery_window | default('Calculating...') }}");
+                    updateElement('lastCheckpoint', "{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}");
+                    updateElement('deliveryLocation', "{{ shipment.delivery_location }}");
+                    updateElement('serviceLevel', "{{ service_level | default('DHL Express') }}");
+                    updateElement('deliveryWindow', "{{ delivery_window | default('Calculating...') }}");
+                    updateElement('proofOfDelivery', "{{ proof_of_delivery | default('Pending') }}");
 
-                const checkpoints = sanitizeArray({{ checkpoints | tojson }});
-                if (checkpoints.length > 1) {
-                    const nextIdx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
-                    updateElement('nextCheckpoint', checkpoints[nextIdx]);
-                } else {
-                    updateElement('nextCheckpoint', 'Next scan pending');
-                }
+                    const checkpoints = sanitizeArray({{ checkpoints | tojson }});
+                    if (checkpoints.length > 1) {
+                        const nextIdx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
+                        updateElement('nextCheckpoint', checkpoints[nextIdx]);
+                    } else {
+                        updateElement('nextCheckpoint', 'Next scan pending');
+                    }
 
-                // Last updated
-                const last = "{{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}";
-                document.getElementById('lastUpdated').textContent = `Last updated: ${last}`;
+                    // Last updated
+                    const last = "{{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}";
+                    document.getElementById('lastUpdated').textContent = `Last updated: ${last}`;
 
-                // Map
-                const coords = sanitizeArray({{ coords | tojson }});
-                const routeCoords = sanitizeArray({{ route_coords | tojson }});
-                const mapCoords = routeCoords.length ? routeCoords : coords;
-                if (mapCoords.length) {
-                    window._lastCoords = mapCoords;
-                    updateMap(mapCoords);
-                    document.getElementById('toggleAnimation')?.removeAttribute('disabled');
-                    document.getElementById('resetView')?.removeAttribute('disabled');
-                } else {
-                    document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
-                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                    // Map
+                    const coords = sanitizeArray({{ coords | tojson }});
+                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
+                    const mapCoords = routeCoords.length ? routeCoords : coords;
+                    if (mapCoords.length) {
+                        window._lastCoords = mapCoords;
+                        updateMap(mapCoords);
+                        document.getElementById('toggleAnimation')?.removeAttribute('disabled');
+                        document.getElementById('resetView')?.removeAttribute('disabled');
+                    } else {
+                        document.getElementById('toggleAnimation')?.setAttribute('disabled', 'true');
+                        document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                    }
+                } catch (e) {
+                    console.error('Error in setInitialPageState:', e);
                 }
             }
 
-            // Show content and hide spinner
+            // ============================================================
+            //  SHOW CONTENT (called early to hide spinner)
+            // ============================================================
             function showContent() {
-                document.getElementById('loadingSpinner').style.display = 'none';
-                document.getElementById('resultContent').style.display = 'block';
-                if (!initialLoadDone) {
-                    setInitialPageState();
-                    initialLoadDone = true;
+                try {
+                    document.getElementById('loadingSpinner').style.display = 'none';
+                    document.getElementById('resultContent').style.display = 'block';
+                    if (!initialLoadDone) {
+                        setInitialPageState();
+                        initialLoadDone = true;
+                    }
+                    // ensure map size is correct
+                    setTimeout(() => {
+                        if (map) map.invalidateSize();
+                    }, 200);
+                    debugLog('Content shown');
+                } catch (e) {
+                    console.error('Error in showContent:', e);
                 }
-                // ensure map size is correct
-                setTimeout(() => map.invalidateSize(), 200);
             }
 
-            // If we have shipment data already rendered, show content immediately
-            {% if shipment %}
+            // ============================================================
+            //  START – CALL showContent IMMEDIATELY, then init map
+            // ============================================================
+            try {
+                // Show content right away – this hides the spinner even if map fails
                 showContent();
-            {% else %}
-                // If no shipment, hide spinner and show error
-                document.getElementById('loadingSpinner').innerHTML = '<p class="text-gray-500">No shipment data available.</p>';
-            {% endif %}
+
+                // Initialize map (will not block if it fails)
+                initMap();
+
+                // If we have initial coords, update map after a short delay
+                setTimeout(() => {
+                    const coords = sanitizeArray({{ coords | tojson }});
+                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
+                    const mapCoords = routeCoords.length ? routeCoords : coords;
+                    if (mapCoords.length && map) {
+                        window._lastCoords = mapCoords;
+                        updateMap(mapCoords);
+                    }
+                }, 300);
+            } catch (e) {
+                console.error('Fatal error during startup:', e);
+                document.getElementById('loadingSpinner').innerHTML = `<p class="text-red-500">Error: ${e.message}</p>`;
+            }
 
             // ============================================================
             //  SOCKET.IO TRACKING UPDATES
@@ -1539,10 +1573,8 @@
                     return;
                 }
 
-                // Update connection status
                 updateConnectionStatus(true);
 
-                // Status
                 if (data.status) {
                     const statusEl = document.getElementById('status');
                     statusEl.textContent = data.status;
@@ -1557,14 +1589,12 @@
                     statusEl.className = `status-badge-header ${cls}`;
                 }
 
-                // Progress
                 if (data.progress !== undefined) {
                     const percent = Math.round(data.progress * 100);
                     document.getElementById('progressPercent').textContent = `${percent}%`;
                     document.getElementById('progressFill').style.width = `${percent}%`;
                 }
 
-                // Position
                 if (data.current_location) {
                     document.getElementById('currentLocation').textContent = data.current_location;
                 }
@@ -1578,12 +1608,10 @@
                     }
                 }
 
-                // Estimated Arrival, Last Checkpoint, Next Checkpoint
                 updateElement('estimatedArrival', data.delivery_window);
                 if (data.checkpoints && data.checkpoints.length) {
                     const checkpoints = data.checkpoints;
                     updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
-                    // rebuild checkpoint list
                     const container = document.getElementById('checkpoints');
                     const oldCount = container.querySelectorAll('.checkpoint').length;
                     container.innerHTML = '';
@@ -1602,7 +1630,6 @@
                         `;
                         container.appendChild(div);
                     });
-                    // next checkpoint
                     const progress = parseFloat(data.progress || 0);
                     if (checkpoints.length > 1) {
                         const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
@@ -1612,7 +1639,6 @@
                     }
                 }
 
-                // Other fields
                 updateElement('deliveryLocation', data.delivery_location);
                 updateElement('serviceLevel', data.service_level);
                 updateElement('deliveryWindow', data.delivery_window);
@@ -1622,9 +1648,8 @@
                     document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
                 }
 
-                // Update map with new route data
                 const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
-                if (routeData && routeData.length) {
+                if (routeData && routeData.length && map) {
                     window._lastCoords = routeData;
                     updateMap(routeData);
                 }
@@ -1643,7 +1668,9 @@
                     if (mapContainer.classList.contains('fullscreen')) {
                         mapContainer.classList.remove('fullscreen');
                         document.getElementById('fullscreenBtn').innerHTML = '⛶ Fullscreen';
-                        setTimeout(() => map.invalidateSize(), 100);
+                        setTimeout(() => {
+                            if (map) map.invalidateSize();
+                        }, 100);
                     }
                 }
             });
@@ -1656,7 +1683,7 @@
                 showToast('Connecting to live server…', 'info', 3000);
             }
 
-            debugLog('Tracking page fully loaded – 10/10 version with photo grid');
+            debugLog('Tracking page fully loaded – content shown early');
         </script>
     {% endif %}
     <!-- =================== END OF SHIPMENT BLOCK =================== -->
@@ -1690,7 +1717,7 @@
             </div>
         </div>
         <div class="copyright">
-            &copy; 2025 DHL International. All rights reserved.
+            &copy; 2026 DHL International. All rights reserved.
         </div>
     </footer>
 </body>
