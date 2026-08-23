@@ -1862,6 +1862,11 @@ def enhanced_full_simulate_tracking(tn):
         while datetime.now() - start_time < timedelta(days=sim_days):
             latest_shipment = reload_shipment(tn)
             if latest_shipment:
+                # ---- ADD On_Hold check ----
+                if latest_shipment.status == "On_Hold":
+                    eventlet.sleep(30)
+                    continue
+                # ---- END ADD ----
                 if latest_shipment.delivery_location != destination or latest_shipment.origin_location != origin:
                     origin = latest_shipment.origin_location or "Lagos, NG"
                     destination = latest_shipment.delivery_location
@@ -2165,6 +2170,11 @@ def basic_simulate_tracking(tn):
     while datetime.now() - start_time < timedelta(days=sim_days):
         latest_shipment = reload_shipment(tn)
         if latest_shipment:
+            # ---- ADD On_Hold check ----
+            if latest_shipment.status == "On_Hold":
+                eventlet.sleep(30)
+                continue
+            # ---- END ADD ----
             if latest_shipment.delivery_location != destination or latest_shipment.origin_location != origin:
                 origin = latest_shipment.origin_location or "Lagos, NG"
                 destination = latest_shipment.delivery_location
