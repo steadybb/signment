@@ -5,6 +5,7 @@ import logging
 import socket
 import time
 import threading
+import requests
 from datetime import datetime
 from telebot import TeleBot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -32,7 +33,6 @@ console = Console()
 bot = get_bot()
 if bot is None:
     bot_logger.warning("Telegram bot token not configured; bot disabled. Set TELEGRAM_BOT_TOKEN to enable.")
-    # keep module importable for local dev; some handlers will be no-ops without a bot
     bot = None
 
 # === RATE LIMIT DECORATOR ===
@@ -54,27 +54,19 @@ def rate_limit(func):
 
 # === DATABASE HELPERS WITH CONTEXT ===
 def get_shipment_with_context(tracking_number):
-    """Get shipment details with proper app context."""
     with app.app_context():
         shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
-        if not shipment:
-            return None
-        return shipment.to_dict()
+        return shipment.to_dict() if shipment else None
 
 def get_all_shipments_with_context(page=1, per_page=10):
-    """Get all shipments with proper app context."""
     with app.app_context():
-        # Use Shipment.query directly instead of get_shipment_list
         shipments_query = Shipment.query.order_by(
             Shipment.created_at.desc()
         ).offset((page - 1) * per_page).limit(per_page).all()
-        
         total = Shipment.query.count()
-        shipments = [s.to_dict() for s in shipments_query]
-        return shipments, total
+        return [s.to_dict() for s in shipments_query], total
 
 def update_shipment_with_context(tracking_number, **kwargs):
-    """Update shipment with proper app context."""
     with app.app_context():
         shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
         if not shipment:
@@ -85,10 +77,9 @@ def update_shipment_with_context(tracking_number, **kwargs):
         db.session.commit()
         return True
 
-def save_shipment_with_context(tracking_number, status, checkpoints, delivery_location, 
-                               recipient_email=None, origin_location=None, 
+def save_shipment_with_context(tracking_number, status, checkpoints, delivery_location,
+                               recipient_email=None, origin_location=None,
                                webhook_url=None, carrier="DHL"):
-    """Save shipment with proper app context."""
     with app.app_context():
         try:
             shipment = Shipment(
@@ -113,7 +104,6 @@ def save_shipment_with_context(tracking_number, status, checkpoints, delivery_lo
             return False
 
 def search_shipments_with_context(query, page=1):
-    """Search shipments with proper app context."""
     with app.app_context():
         search = f"%{query}%"
         results = Shipment.query.filter(
@@ -133,14 +123,11 @@ def search_shipments_with_context(query, page=1):
         return [s.tracking_number for s in results], total
 
 def export_shipments_with_context():
-    """Export shipments with proper app context."""
     with app.app_context():
         shipments = Shipment.query.all()
         return json.dumps([s.to_dict() for s in shipments])
 
 def get_recent_logs_with_context(limit=10):
-    """Get recent logs with proper app context."""
-    # This doesn't need database access, just returns file logs
     try:
         log_file = 'flask_app.log'
         if os.path.exists(log_file):
@@ -153,19 +140,16 @@ def get_recent_logs_with_context(limit=10):
         return []
 
 # === COMMAND HANDLERS ===
-# Only register handlers if bot is available
 if bot is not None:
     @bot.message_handler(commands=['myid'])
     @rate_limit
     def get_my_id(message):
-        """Handle /myid command to return the user's Telegram ID."""
         bot.reply_to(message, f"Your Telegram user ID: `{message.from_user.id}`", parse_mode='Markdown')
         bot_logger.info(f"User requested their ID")
 
     @bot.message_handler(commands=['start', 'menu'])
     @rate_limit
     def send_menu(message):
-        """Handle /start and /menu commands to display the admin menu."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             bot_logger.warning(f"Access denied for user {message.from_user.id}")
@@ -176,7 +160,6 @@ if bot is not None:
     @bot.message_handler(commands=['track'])
     @rate_limit
     def track_shipment(message):
-        """Handle /track command to view shipment details with interactive controls."""
         parts = message.text.split(maxsplit=1)
         if len(parts) < 2:
             bot.reply_to(message, "Usage: /track <tracking_number>\nExample: /track JD1234567890")
@@ -193,14 +176,12 @@ if bot is not None:
             paused = safe_redis_operation(redis_client.hget, "paused_simulations", tracking_number) == "true" if redis_client else False
             speed = float(safe_redis_operation(redis_client.hget, "sim_speed_multipliers", tracking_number) or 1.0) if redis_client else 1.0
             distance = estimate_distance(shipment.get('origin_location') or "Lagos, NG", shipment.get('delivery_location', ''))
-            
             service_level = safe_redis_operation(redis_client.hget, "service_level", tracking_number) if redis_client else None
             if service_level and isinstance(service_level, bytes):
                 service_level = service_level.decode('utf-8')
             delivery_window = safe_redis_operation(redis_client.hget, "delivery_window", tracking_number) if redis_client else None
             if delivery_window and isinstance(delivery_window, bytes):
                 delivery_window = delivery_window.decode('utf-8')
-            
             response = (
                 f"*Shipment*: `{tracking_number}`\n"
                 f"*Carrier*: `{shipment.get('carrier', 'DHL')}`\n"
@@ -217,7 +198,7 @@ if bot is not None:
             markup = InlineKeyboardMarkup(row_width=2)
             if shipment['status'] not in ['Delivered', 'Returned']:
                 markup.add(
-                    InlineKeyboardButton("⏸ Pause" if not paused else "▶️ Resume", 
+                    InlineKeyboardButton("⏸ Pause" if not paused else "▶️ Resume",
                                        callback_data=f"{'pause' if not paused else 'resume'}_{tracking_number}_1"),
                     InlineKeyboardButton("⚡ Speed", callback_data=f"setspeed_{tracking_number}")
                 )
@@ -235,7 +216,6 @@ if bot is not None:
     @bot.message_handler(commands=['stats'])
     @rate_limit
     def system_stats(message):
-        """Handle /stats command to display system statistics."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -266,7 +246,6 @@ if bot is not None:
     @bot.message_handler(commands=['notify'])
     @rate_limit
     def manual_notification(message):
-        """Handle /notify command to send manual email or webhook notification."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -297,7 +276,6 @@ if bot is not None:
     @bot.message_handler(commands=['search'])
     @rate_limit
     def search_command(message):
-        """Handle /search command to find shipments by query."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -325,7 +303,6 @@ if bot is not None:
     @bot.message_handler(commands=['bulk_action'])
     @rate_limit
     def bulk_action_command(message):
-        """Handle /bulk_action command to perform bulk operations."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -341,7 +318,6 @@ if bot is not None:
     @bot.message_handler(commands=['stop'])
     @rate_limit
     def stop_simulation(message):
-        """Handle /stop command to pause a shipment's simulation."""
         parts = message.text.split(maxsplit=1)
         if len(parts) < 2:
             bot.reply_to(message, "Usage: /stop <tracking_number>\nExample: /stop JD1234567890")
@@ -371,7 +347,6 @@ if bot is not None:
     @bot.message_handler(commands=['continue'])
     @rate_limit
     def continue_simulation(message):
-        """Handle /continue command to resume a paused shipment's simulation."""
         parts = message.text.split(maxsplit=1)
         if len(parts) < 2:
             bot.reply_to(message, "Usage: /continue <tracking_number>\nExample: /continue JD1234567890")
@@ -401,7 +376,6 @@ if bot is not None:
     @bot.message_handler(commands=['setspeed'])
     @rate_limit
     def set_simulation_speed(message):
-        """Handle /setspeed command to set simulation speed for a shipment."""
         parts = message.text.split(maxsplit=2)
         if len(parts) < 3:
             bot.reply_to(message, "Usage: /setspeed <tracking_number> <speed>\nExample: /setspeed JD1234567890 2.0")
@@ -429,14 +403,12 @@ if bot is not None:
     @bot.message_handler(commands=['generate'])
     @rate_limit
     def handle_generate(message):
-        """Handle /generate command to create a tracking ID."""
         tracking_id = generate_unique_id()
         bot.reply_to(message, f"Generated Tracking ID: `{tracking_id}`", parse_mode='Markdown')
 
     @bot.message_handler(commands=['list'])
     @rate_limit
     def list_shipments(message):
-        """Handle /list command to display a paginated list of shipments."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -461,7 +433,6 @@ if bot is not None:
     @bot.message_handler(commands=['add'])
     @rate_limit
     def add_shipment(message):
-        """Handle /add command to create a new shipment."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -483,7 +454,7 @@ if bot is not None:
             if status not in config.valid_statuses:
                 bot.reply_to(message, f"Invalid status. Must be one of: {', '.join(config.valid_statuses)}")
                 return
-            if save_shipment_with_context(tracking_number, status, '', delivery_location, 
+            if save_shipment_with_context(tracking_number, status, '', delivery_location,
                                          recipient_email, origin_location, webhook_url, "DHL"):
                 bot.reply_to(message, f"✅ Shipment `{tracking_number}` added.", parse_mode='Markdown')
             else:
@@ -495,7 +466,6 @@ if bot is not None:
     @bot.message_handler(commands=['export'])
     @rate_limit
     def export_shipments_command(message):
-        """Handle /export command to export shipment data as JSON."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -518,7 +488,6 @@ if bot is not None:
     @bot.message_handler(commands=['logs'])
     @rate_limit
     def get_logs_command(message):
-        """Handle /logs command to retrieve recent bot logs."""
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
@@ -536,7 +505,6 @@ if bot is not None:
     # === CALLBACK HANDLERS ===
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback(call):
-        """Handle all callback queries from inline buttons."""
         data = call.data
         try:
             if data.startswith("menu_page_"):
@@ -551,14 +519,12 @@ if bot is not None:
                 paused = safe_redis_operation(redis_client.hget, "paused_simulations", tracking_number) == "true" if redis_client else False
                 speed = float(safe_redis_operation(redis_client.hget, "sim_speed_multipliers", tracking_number) or 1.0) if redis_client else 1.0
                 distance = estimate_distance(shipment.get('origin_location') or "Lagos, NG", shipment.get('delivery_location', ''))
-                
                 service_level = safe_redis_operation(redis_client.hget, "service_level", tracking_number) if redis_client else None
                 if service_level and isinstance(service_level, bytes):
                     service_level = service_level.decode('utf-8')
                 delivery_window = safe_redis_operation(redis_client.hget, "delivery_window", tracking_number) if redis_client else None
                 if delivery_window and isinstance(delivery_window, bytes):
                     delivery_window = delivery_window.decode('utf-8')
-                
                 response = (
                     f"*Shipment*: `{tracking_number}`\n"
                     f"*Carrier*: `{shipment.get('carrier', 'DHL')}`\n"
@@ -575,7 +541,7 @@ if bot is not None:
                 markup = InlineKeyboardMarkup(row_width=2)
                 if shipment['status'] not in ['Delivered', 'Returned']:
                     markup.add(
-                        InlineKeyboardButton("⏸ Pause" if not paused else "▶️ Resume", 
+                        InlineKeyboardButton("⏸ Pause" if not paused else "▶️ Resume",
                                            callback_data=f"{'pause' if not paused else 'resume'}_{tracking_number}_1"),
                         InlineKeyboardButton("⚡ Speed", callback_data=f"setspeed_{tracking_number}")
                     )
@@ -774,7 +740,6 @@ if bot is not None:
         welcome_text = get_startup_welcome_text()
         for admin_id in config.allowed_admins:
             try:
-                # send as plain text to avoid Markdown parsing errors in arbitrary content
                 bot.send_message(admin_id, welcome_text, disable_web_page_preview=True)
                 bot_logger.info(f"Sent startup welcome to admin {admin_id}")
             except Exception as e:
@@ -802,12 +767,11 @@ if bot is not None:
             bot_logger.error(f"Webhook hostname resolution failed: {hostname} -> {e}")
             return False
 
-    # === SAFE MANUAL POLLING (AVOIDS RECURSION) ===
+    # === CUSTOM POLLING USING REQUESTS (AVOIDS RECURSION) ===
     _polling_thread = None
     _polling_active = False
 
     def start_polling_fallback():
-        """Start the bot in polling mode using manual get_updates, avoiding recursion."""
         global _polling_thread, _polling_active
         if bot is None:
             return
@@ -822,68 +786,64 @@ if bot is not None:
 
         def poll():
             global _polling_active
-            bot_logger.info("Starting manual polling loop...")
+            bot_logger.info("Starting manual polling loop using requests...")
             offset = 0
             _polling_active = True
-            max_retries = 3
-            retries = 0
-            backoff = 5
+            token = config.telegram_bot_token
+            if not token:
+                bot_logger.error("No bot token for polling")
+                return
             while True:
                 try:
-                    # Get updates using offset to avoid duplicates
-                    updates = bot.get_updates(offset=offset, timeout=30, allowed_updates=['message', 'callback_query'])
-                    if updates:
-                        offset = updates[-1].update_id + 1
-                        bot.process_new_updates(updates)
-                        retries = 0  # reset retries on success
-                    # else no updates, continue
+                    url = f"https://api.telegram.org/bot{token}/getUpdates"
+                    params = {"offset": offset, "timeout": 30}
+                    resp = requests.get(url, params=params, timeout=35)
+                    if resp.status_code != 200:
+                        bot_logger.error(f"Polling HTTP error: {resp.status_code}")
+                        time.sleep(5)
+                        continue
+                    data = resp.json()
+                    if data.get("ok"):
+                        updates = data.get("result", [])
+                        if updates:
+                            offset = updates[-1]["update_id"] + 1
+                            # Convert dicts to Update objects
+                            from telebot import types
+                            update_objects = [types.Update.de_json(u) for u in updates]
+                            try:
+                                bot.process_new_updates(update_objects)
+                            except RecursionError as re:
+                                bot_logger.error(f"Recursion error processing updates: {re}")
+                                # Continue, don't break
+                        else:
+                            # no updates, continue
+                            pass
+                        time.sleep(1)
+                    else:
+                        bot_logger.error(f"Polling API error: {data}")
+                        time.sleep(5)
                 except RecursionError as re:
-                    bot_logger.error(f"Recursion error in get_updates: {re}")
-                    # This might be due to a bug in telebot; we can try to reset offset or sleep
+                    bot_logger.error(f"Recursion error in polling: {re}")
                     time.sleep(10)
-                    # Do not exit; continue after a delay
                 except Exception as e:
-                    retries += 1
-                    bot_logger.error(f"Polling error (attempt {retries}): {e}")
-                    if retries >= max_retries:
-                        bot_logger.error("Max polling retries reached; waiting longer before retry.")
-                        retries = 0
-                        backoff = min(backoff * 2, 300)
-                    time.sleep(backoff)
-                    # Attempt to recover by refreshing the bot instance? Not possible.
-                # Small sleep to avoid busy loop
-                time.sleep(1)
-
-        # Try to remove webhook to avoid conflicts, but catch recursion
-        try:
-            if hasattr(bot, 'remove_webhook'):
-                bot.remove_webhook()
-            elif hasattr(bot, 'delete_webhook'):
-                bot.delete_webhook()
-        except Exception as e:
-            if "maximum recursion depth" in str(e):
-                bot_logger.warning("Recursion error removing webhook; proceeding with polling anyway.")
-            else:
-                bot_logger.warning(f"Could not remove webhook before polling: {e}")
+                    bot_logger.error(f"Polling error: {e}")
+                    time.sleep(5)
 
         _polling_thread = threading.Thread(target=poll, daemon=True)
         _polling_thread.start()
         bot_logger.info("Manual polling thread started")
 
     def start_bot_service() -> None:
-        """Initialize bot services with proper app context."""
         try:
             with app.app_context():
                 cache_route_templates()
             bot_logger.info("Route templates cached")
         except Exception as e:
             bot_logger.error(f"Failed to cache route templates: {e}")
-        
-        # Skip webhook entirely and always use polling to avoid recursion
+
         bot_logger.info("Using polling mode (webhook disabled to avoid recursion)")
         start_polling_fallback()
-        
-        # Notify admins
+
         try:
             notify_admins_on_startup()
         except Exception as e:
@@ -910,13 +870,10 @@ if bot is not None:
             bot.answer_callback_query(call.id, "❌ Failed.", show_alert=True)
 
     def keep_alive_loop():
-        """Keep the bot alive with periodic health checks."""
         while True:
             try:
-                # Check Redis connection
                 if redis_client:
                     redis_client.ping()
-                # Check database connection
                 with app.app_context():
                     db.session.execute(text('SELECT 1'))
                 bot_logger.debug("Health check passed")
@@ -925,18 +882,15 @@ if bot is not None:
             time.sleep(300)
 
     def main():
-        """Main entry point for the bot."""
         try:
             start_bot_service()
             bot_logger.info("Bot service started")
             console.print("[green]✅ bot.py started — DHL + All Features Live[/green]")
-            
-            # Start keep-alive thread
+
             keep_alive_thread = threading.Thread(target=keep_alive_loop, daemon=True)
             keep_alive_thread.start()
             bot_logger.info("Keep-alive loop started")
-            
-            # Keep the main thread alive
+
             while True:
                 time.sleep(60)
         except KeyboardInterrupt:
@@ -950,12 +904,10 @@ if bot is not None:
     if __name__ == "__main__":
         main()
 else:
-    # Bot is None - log warning and exit gracefully
     bot_logger.warning("Telegram bot not configured. Set TELEGRAM_BOT_TOKEN to enable.")
     console.print("[yellow]⚠️ Telegram bot not configured. Set TELEGRAM_BOT_TOKEN to enable.[/yellow]")
-    
+
     def main():
-        """Empty main when bot is disabled."""
         console.print("[yellow]Bot is disabled. Set TELEGRAM_BOT_TOKEN to enable.[/yellow]")
         while True:
             time.sleep(60)
