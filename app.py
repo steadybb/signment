@@ -1,3 +1,13 @@
+# ============================================================
+# FIX: Ensure the current directory is in Python's path
+# ============================================================
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# ============================================================
+# Original imports (unchanged)
+# ============================================================
 import logging
 import sys
 
