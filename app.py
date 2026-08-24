@@ -2062,7 +2062,7 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
             pass
         return False
 
-# === BROADCAST UPDATE ===
+# === BROADCAST UPDATE (UPDATED to include stage + current_checkpoint_index) ===
 def broadcast_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
@@ -2088,11 +2088,19 @@ def broadcast_update(tn):
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
     current_lon = rget('current_lon', tn, None)
+    stage = rget('stage', tn, 'pickup') or 'pickup'
+
+    # Compute current checkpoint index
+    checkpoints = (shipment.checkpoints or "").split(";")
+    current_checkpoint_index = 0
+    if checkpoints:
+        current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
+
     data = {
         "tracking_number": tn,
         "status": shipment.status,
         "delivery_location": shipment.delivery_location,
-        "checkpoints": (shipment.checkpoints or "").split(";"),
+        "checkpoints": checkpoints,
         "coords": [{'lat': c['lat'], 'lon': c['lon'], 'desc': c['desc']} for c in coords],
         "route_coords": route_coords,
         "last_updated": shipment.last_updated.isoformat(),
@@ -2105,7 +2113,9 @@ def broadcast_update(tn):
         "proof_of_delivery": proof_of_delivery,
         "speed_multiplier": speed,
         "paused": paused,
-        "carrier": shipment.carrier
+        "carrier": shipment.carrier,
+        "stage": stage,
+        "current_checkpoint_index": current_checkpoint_index
     }
     try:
         socketio.emit('tracking_update', data, namespace='/')
@@ -2300,11 +2310,19 @@ def track_direct(tracking_number):
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
     current_lon = rget('current_lon', tn, None)
+    stage = rget('stage', tn, 'pickup') or 'pickup'
+
+    # Compute current checkpoint index
+    current_checkpoint_index = 0
+    if checkpoints:
+        current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
+
     return render_template(
         'tracking_result.html', shipment=shipment, checkpoints=checkpoints, coords=coords_list,
         route_coords=route_coords, service_level=service_level, delivery_window=delivery_window,
         proof_of_delivery=proof_of_delivery, progress=progress,
         current_location=current_location, current_lat=current_lat, current_lon=current_lon,
+        stage=stage, current_checkpoint_index=current_checkpoint_index,
         tawk_property_id=app.config['TAWK_PROPERTY_ID'], tawk_widget_id=app.config['TAWK_WIDGET_ID']
     )
 
@@ -3522,6 +3540,9 @@ def admin_client_error():
     flask_logger.error('Client-side error reported: %s', payload)
     return jsonify({'success': True})
 
+# ============================================================
+# SOCKET.IO REQUEST_TRACKING (UPDATED with stage + current_checkpoint_index)
+# ============================================================
 @socketio.on('request_tracking')
 def on_request(data):
     tn = sanitize_tracking_number(data.get('tracking_number'))
@@ -3551,11 +3572,16 @@ def on_request(data):
     )
     delivery_window = DHLRealisticSimulator.get_delivery_window(service_level, distance_km)
     proof_of_delivery = DHLRealisticSimulator.generate_pod_info()
-    # include any current live position values from Redis so client can show immediate location
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
     current_lon = rget('current_lon', tn, None)
     last_updated = shipment.last_updated.isoformat() if shipment.last_updated else None
+    stage = rget('stage', tn, 'pickup') or 'pickup'
+
+    # Compute current checkpoint index
+    current_checkpoint_index = 0
+    if checkpoints:
+        current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
 
     emit('tracking_update', {
         'tracking_number': tn, 'status': shipment.status, 'delivery_location': shipment.delivery_location,
@@ -3565,7 +3591,9 @@ def on_request(data):
         'current_location': current_location, 'current_lat': float(current_lat) if current_lat is not None else None,
         'current_lon': float(current_lon) if current_lon is not None else None,
         'last_updated': last_updated,
-        'speed_multiplier': speed, 'paused': paused, 'mode': mode, 'carrier': shipment.carrier
+        'speed_multiplier': speed, 'paused': paused, 'mode': mode, 'carrier': shipment.carrier,
+        'stage': stage,
+        'current_checkpoint_index': current_checkpoint_index
     })
 
 services_started = False
