@@ -2062,16 +2062,39 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
             pass
         return False
 
-# === BROADCAST UPDATE (UPDATED with stage + current_checkpoint_index + lock_stage) ===
+# === BROADCAST UPDATE (with fallback for route) ===
 def broadcast_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
         return
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
-    lock_stage = rget("lock_stage", tn, "false") == "true"  # added
+    lock_stage = rget("lock_stage", tn, "false") == "true"
     try:
         coords = geocode_locations((shipment.checkpoints or "").split(";"))
+        # --- FALLBACK: if checkpoint geocoding fails, use origin/destination ---
+        if len(coords) < 2:
+            origin_coords = None
+            dest_coords = None
+            if shipment.origin_lat is not None and shipment.origin_lon is not None:
+                origin_coords = {
+                    'lat': shipment.origin_lat,
+                    'lon': shipment.origin_lon,
+                    'desc': shipment.origin_location or 'Origin'
+                }
+            if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
+                dest_coords = {
+                    'lat': shipment.delivery_lat,
+                    'lon': shipment.delivery_lon,
+                    'desc': shipment.delivery_location or 'Destination'
+                }
+            if origin_coords and dest_coords:
+                coords = [origin_coords, dest_coords]
+            elif origin_coords:
+                coords = [origin_coords]
+            elif dest_coords:
+                coords = [dest_coords]
+        # --- end fallback ---
         route_coords = build_route_from_checkpoints(coords, mode='drive')
         try:
             dens_km = float(os.getenv('SIM_ROUTE_DENSIFY_KM', '1.0') or '1.0')
@@ -2116,7 +2139,7 @@ def broadcast_update(tn):
         "paused": paused,
         "carrier": shipment.carrier,
         "stage": stage,
-        "lock_stage": lock_stage,  # added
+        "lock_stage": lock_stage,
         "current_checkpoint_index": current_checkpoint_index
     }
     try:
@@ -2284,6 +2307,29 @@ def track_direct(tracking_number):
         return render_template('tracking_result.html', error='Not found', coords=[])
     checkpoints = (shipment.checkpoints or "").split(";")
     coords = geocode_locations(checkpoints)
+    # --- FALLBACK: use origin/destination if checkpoints fail ---
+    if len(coords) < 2:
+        origin_coords = None
+        dest_coords = None
+        if shipment.origin_lat is not None and shipment.origin_lon is not None:
+            origin_coords = {
+                'lat': shipment.origin_lat,
+                'lon': shipment.origin_lon,
+                'desc': shipment.origin_location or 'Origin'
+            }
+        if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
+            dest_coords = {
+                'lat': shipment.delivery_lat,
+                'lon': shipment.delivery_lon,
+                'desc': shipment.delivery_location or 'Destination'
+            }
+        if origin_coords and dest_coords:
+            coords = [origin_coords, dest_coords]
+        elif origin_coords:
+            coords = [origin_coords]
+        elif dest_coords:
+            coords = [dest_coords]
+    # --- end fallback ---
     coords_list = [{'lat': c['lat'], 'lon': c['lon'], 'desc': c['desc']} for c in coords]
     route_coords = build_route_from_checkpoints(coords_list, mode='drive')
     try:
@@ -3552,7 +3598,7 @@ def admin_client_error():
     return jsonify({'success': True})
 
 # ============================================================
-# SOCKET.IO REQUEST_TRACKING (UPDATED with stage + current_checkpoint_index)
+# SOCKET.IO REQUEST_TRACKING (UPDATED with stage + current_checkpoint_index + route fallback)
 # ============================================================
 @socketio.on('request_tracking')
 def on_request(data):
@@ -3567,6 +3613,29 @@ def on_request(data):
     add_client(tn, request.sid)
     checkpoints = (shipment.checkpoints or "").split(";")
     coords = geocode_locations(checkpoints)
+    # --- FALLBACK: use origin/destination if checkpoints fail ---
+    if len(coords) < 2:
+        origin_coords = None
+        dest_coords = None
+        if shipment.origin_lat is not None and shipment.origin_lon is not None:
+            origin_coords = {
+                'lat': shipment.origin_lat,
+                'lon': shipment.origin_lon,
+                'desc': shipment.origin_location or 'Origin'
+            }
+        if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
+            dest_coords = {
+                'lat': shipment.delivery_lat,
+                'lon': shipment.delivery_lon,
+                'desc': shipment.delivery_location or 'Destination'
+            }
+        if origin_coords and dest_coords:
+            coords = [origin_coords, dest_coords]
+        elif origin_coords:
+            coords = [origin_coords]
+        elif dest_coords:
+            coords = [dest_coords]
+    # --- end fallback ---
     route_coords = build_route_from_checkpoints(coords, mode='drive')
     try:
         dens_km = float(os.getenv('SIM_ROUTE_DENSIFY_KM', '1.0') or '1.0')
