@@ -111,7 +111,7 @@
     }
     .stage-badge.pickup { background: #dbeafe; color: #1e40af; }
     .stage-badge.transit { background: #fef3c7; color: #92400e; }
-    .stage-badge.customs { background: #fce7f3; color: #be185d; }  /* added */
+    .stage-badge.customs { background: #fce7f3; color: #be185d; }
     .stage-badge.delivery { background: #fce7f3; color: #be185d; }
     .stage-badge.delivered { background: #dcfce7; color: #16a34a; }
     .stage-badge.exception { background: #fee2e2; color: #dc2626; }
@@ -605,6 +605,24 @@
       .btn-outline-secondary { color: #94a3b8; border-color: #334155; }
       .btn-outline-secondary:hover { background: #334155; color: white; }
     }
+
+    /* Checkpoint editor */
+    .checkpoint-editor .checkpoint-item {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 6px;
+      align-items: center;
+    }
+    .checkpoint-editor .checkpoint-item input {
+      flex: 1;
+    }
+    .checkpoint-editor .checkpoint-item .btn-remove {
+      flex-shrink: 0;
+      padding: 2px 8px;
+    }
+    .checkpoint-editor .add-checkpoint-btn {
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -957,30 +975,7 @@
     </div>
   </div>
 
-  <!-- REST OF MODALS AND SCRIPTS (unchanged except stage dropdown) -->
-  
-  <script>
-    // Compact stats toggle: persist in localStorage
-    (function() {
-      function setCompact(enabled) {
-        if (enabled) document.body.classList.add('compact-stats');
-        else document.body.classList.remove('compact-stats');
-        try { localStorage.setItem('compactStats', enabled ? '1' : '0'); } catch (e) {}
-      }
-      const btn = document.getElementById('compactToggle');
-      if (btn) {
-        btn.addEventListener('click', function() {
-          const enabled = document.body.classList.toggle('compact-stats');
-          setCompact(enabled);
-        });
-      }
-      try {
-        const val = localStorage.getItem('compactStats');
-        if (val === '1') document.body.classList.add('compact-stats');
-      } catch (e) {}
-    })();
-  </script>
-  <datalist id="citiesList"></datalist>
+  <!-- === MODALS === -->
 
   <!-- EMAIL SEND MODAL (unchanged) -->
   <div class="modal fade" id="emailModal" tabindex="-1">
@@ -1143,7 +1138,7 @@
     </div>
   </div>
 
-  <!-- Edit Shipment Modal (UPDATED: added customs to stage dropdown) -->
+  <!-- Edit Shipment Modal - improved -->
   <div class="modal fade" id="editModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1173,11 +1168,17 @@
                 <select class="form-select" id="editStage">
                   <option value="pickup">Pickup</option>
                   <option value="transit">Transit</option>
-                  <option value="customs">Customs</option>  <!-- added -->
+                  <option value="customs">Customs</option>
                   <option value="delivery">Delivery</option>
                   <option value="delivered">Delivered</option>
                   <option value="exception">Exception</option>
                 </select>
+                <div class="form-check mt-2">
+                  <input class="form-check-input" type="checkbox" id="editLockStage">
+                  <label class="form-check-label" for="editLockStage">
+                    <strong>Lock Stage</strong> (prevents simulation from changing it)
+                  </label>
+                </div>
               </div>
               <div class="col-md-6">
                 <label class="form-label fw-bold">Service Level</label>
@@ -1213,6 +1214,16 @@
               <div class="col-12">
                 <label class="form-label fw-bold">Delivery Location</label>
                 <input class="form-control" id="editDeliveryLocation" />
+              </div>
+              <!-- Checkpoint editor (replaces single text input) -->
+              <div class="col-12">
+                <label class="form-label fw-bold">Checkpoints <small class="text-muted">(one per line)</small></label>
+                <div id="checkpointEditor" class="checkpoint-editor">
+                  <!-- Dynamic list will be rendered here -->
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary add-checkpoint-btn" onclick="addCheckpointField()">
+                  <i class="bi bi-plus-circle"></i> Add Checkpoint
+                </button>
               </div>
             </div>
           </form>
@@ -1288,6 +1299,7 @@
     const createModal = new bootstrap.Modal(document.getElementById('createModal'));
     const detailModal = new bootstrap.Modal(document.getElementById('detailModal'));
     const emailModal = new bootstrap.Modal(document.getElementById('emailModal'));
+    const editModal = new bootstrap.Modal(document.getElementById('editModal'));
     const socket = io({ transports: ['polling'] });
     let currentEmailTn = null;
 
@@ -2064,12 +2076,16 @@
       location.reload();
     }
 
+    // ============================================================
+    // EDIT MODAL – improved checkpoint editor + lock stage
+    // ============================================================
     function showEditModal(tn) {
       fetch(`/admin/api/shipment/${tn}`)
         .then(r => r.json())
         .then(data => {
           document.getElementById('editStatus').value = data.status || 'Pending';
           document.getElementById('editStage').value = data.stage || 'pickup';
+          document.getElementById('editLockStage').checked = data.lock_stage || false;
           document.getElementById('editServiceLevel').value = data.service_level || '';
           document.getElementById('editDeliveryWindow').value = data.delivery_window || '';
           document.getElementById('editRecipientEmail').value = data.recipient_email || '';
@@ -2079,12 +2095,45 @@
           document.getElementById('editPaused').checked = !!data.paused;
           document.getElementById('editDeliveryLocation').value = data.delivery_location || '';
           document.getElementById('editForm').dataset.tn = tn;
-          const editModal = new bootstrap.Modal(document.getElementById('editModal'));
+
+          // Populate checkpoints
+          const checkpoints = data.checkpoints || [];
+          renderCheckpoints(checkpoints);
+
           editModal.show();
         })
         .catch(err => {
           showToast('Failed to load shipment for editing', 'error');
         });
+    }
+
+    function renderCheckpoints(checkpoints) {
+      const container = document.getElementById('checkpointEditor');
+      container.innerHTML = '';
+      if (!checkpoints || checkpoints.length === 0) {
+        // Add one empty field
+        addCheckpointField('');
+      } else {
+        checkpoints.forEach(cp => addCheckpointField(cp));
+      }
+    }
+
+    function addCheckpointField(value = '') {
+      const container = document.getElementById('checkpointEditor');
+      const div = document.createElement('div');
+      div.className = 'checkpoint-item';
+      div.innerHTML = `
+        <input type="text" class="form-control form-control-sm" placeholder="Enter checkpoint" value="${escapeHtml(value)}">
+        <button type="button" class="btn btn-sm btn-outline-danger btn-remove" onclick="this.closest('.checkpoint-item').remove()">
+          <i class="bi bi-x"></i>
+        </button>
+      `;
+      container.appendChild(div);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     function confirmDeleteShipment() {
@@ -2121,13 +2170,19 @@
       });
     }
 
-    function saveShipmentEdits(){
+    function saveShipmentEdits() {
       const frm = document.getElementById('editForm');
       const tn = frm.dataset.tn;
       if (!tn) { showToast('No shipment selected', 'error'); return; }
+
+      // Collect checkpoints from editor
+      const checkpointInputs = document.querySelectorAll('#checkpointEditor .checkpoint-item input');
+      const checkpoints = Array.from(checkpointInputs).map(inp => inp.value.trim()).filter(v => v !== '');
+
       const payload = {
         status: document.getElementById('editStatus').value,
         stage: document.getElementById('editStage').value,
+        lock_stage: document.getElementById('editLockStage').checked,
         service_level: document.getElementById('editServiceLevel').value,
         delivery_window: document.getElementById('editDeliveryWindow').value,
         recipient_email: document.getElementById('editRecipientEmail').value,
@@ -2135,8 +2190,10 @@
         speed: parseFloat(document.getElementById('editSpeed').value) || 1.0,
         days: parseFloat(document.getElementById('editDays').value) || 10,
         paused: document.getElementById('editPaused').checked,
-        delivery_location: document.getElementById('editDeliveryLocation').value
+        delivery_location: document.getElementById('editDeliveryLocation').value,
+        checkpoints: checkpoints
       };
+
       const saveBtn = document.getElementById('saveEditBtn');
       saveBtn.disabled = true;
       saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving';
