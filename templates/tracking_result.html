@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DHL Live Tracking{% if shipment %} - {{ shipment.tracking_number }}{% endif %}</title>
-    <meta name="description" content="Real‑time DHL shipment tracking with live map, route animation, and instant updates.">
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DHL Live Tracking - Real‑time Shipment Monitor</title>
+    <meta name="description" content="Real‑time DHL shipment tracking with live map, route animation, and instant updates." />
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+
+    <!-- Leaflet CSS (loaded early for map styling) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         /* ---------- Variables ---------- */
         :root {
@@ -16,8 +19,12 @@
         }
 
         /* ---------- Reset & Base ---------- */
-        * { box-sizing: border-box; }
-        html { scroll-behavior: smooth; }
+        * {
+            box-sizing: border-box;
+        }
+        html {
+            scroll-behavior: smooth;
+        }
         body {
             font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
             margin: 0;
@@ -40,14 +47,26 @@
             position: sticky;
             top: 0;
             z-index: 1000;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
             flex-wrap: wrap;
             gap: 8px;
         }
-        .header img {
-            height: 40px;
-            max-width: 100%;
-            object-fit: contain;
+        .header .logo-placeholder {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--dhl-red);
+            letter-spacing: -0.5px;
+        }
+        .header .logo-placeholder span {
+            background: var(--dhl-red);
+            color: #fff;
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
         }
         .menu-btn {
             border: none;
@@ -66,7 +85,7 @@
         }
         .menu-btn:hover,
         .menu-btn:focus-visible {
-            background: rgba(0,0,0,0.05);
+            background: rgba(0, 0, 0, 0.05);
             outline: 2px solid var(--dhl-red);
             outline-offset: 2px;
         }
@@ -79,11 +98,13 @@
             border: 1px solid #ccc;
             border-radius: 8px;
             padding: 8px 0;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             min-width: 160px;
             z-index: 1000;
         }
-        .menu-content.show { display: block; }
+        .menu-content.show {
+            display: block;
+        }
         .menu-content a {
             display: block;
             padding: 10px 16px;
@@ -128,7 +149,7 @@
             padding: 0 15px;
             border-radius: 16px;
             overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
             position: relative;
             background: #e9ecef;
         }
@@ -148,7 +169,9 @@
             font-weight: 500;
             pointer-events: none;
         }
-        .map-loading-hint.hide { display: none; }
+        .map-loading-hint.hide {
+            display: none;
+        }
         /* fullscreen mode */
         .map-container.fullscreen {
             position: fixed;
@@ -170,7 +193,7 @@
             padding: 28px 30px;
             border-radius: 16px;
             margin: 0 auto 20px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
             border: 1px solid #eee;
             flex: 1;
         }
@@ -196,13 +219,34 @@
             letter-spacing: 0.3px;
             white-space: nowrap;
         }
-        .status-badge-header.delivered { background: #dcfce7; color: #16a34a; }
-        .status-badge-header.in-transit { background: #dbeafe; color: #1e40af; }
-        .status-badge-header.out-for-delivery { background: #fef3c7; color: #92400e; }
-        .status-badge-header.delayed { background: #fef3c7; color: #d97706; }
-        .status-badge-header.exception { background: #fef2f2; color: #dc2626; }
-        .status-badge-header.pending { background: #f3f4f6; color: #6b7280; }
-        .status-badge-header.on-hold { background: #fef3c7; color: #b45309; }
+        .status-badge-header.delivered {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+        .status-badge-header.in-transit {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .status-badge-header.out-for-delivery {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .status-badge-header.delayed {
+            background: #fef3c7;
+            color: #d97706;
+        }
+        .status-badge-header.exception {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+        .status-badge-header.pending {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+        .status-badge-header.on-hold {
+            background: #fef3c7;
+            color: #b45309;
+        }
 
         .live-indicator {
             display: inline-block;
@@ -219,8 +263,15 @@
             animation: none;
         }
         @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(0.85); }
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.4;
+                transform: scale(0.85);
+            }
         }
 
         .connection-dot {
@@ -230,8 +281,12 @@
             border-radius: 50%;
             margin-right: 4px;
         }
-        .connection-dot.connected { background: #22c55e; }
-        .connection-dot.disconnected { background: #dc2626; }
+        .connection-dot.connected {
+            background: #22c55e;
+        }
+        .connection-dot.disconnected {
+            background: #dc2626;
+        }
 
         /* ---------- Paused Banner ---------- */
         .paused-banner {
@@ -247,7 +302,9 @@
             font-size: 0.86rem;
             font-weight: 600;
         }
-        .paused-banner.show { display: flex; }
+        .paused-banner.show {
+            display: flex;
+        }
 
         /* ---------- Speed / Mode Badges ---------- */
         .meta-badges {
@@ -268,7 +325,9 @@
             color: #4b5563;
             border: 1px solid #e5e7eb;
         }
-        .meta-badge.show { display: inline-flex; }
+        .meta-badge.show {
+            display: inline-flex;
+        }
 
         /* ---------- Progress ---------- */
         .progress-container {
@@ -302,7 +361,7 @@
             border: 1px solid #f1d8d9;
             background: linear-gradient(135deg, #fff8f8 0%, #ffffff 100%);
             border-radius: 14px;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
         }
         .position-header {
             display: flex;
@@ -391,7 +450,9 @@
             gap: 12px;
             transition: all 0.3s ease;
         }
-        .checkpoint:last-child { border-bottom: none; }
+        .checkpoint:last-child {
+            border-bottom: none;
+        }
         .checkpoint .dot {
             width: 10px;
             height: 10px;
@@ -400,8 +461,12 @@
             margin-top: 5px;
             flex-shrink: 0;
         }
-        .checkpoint .dot.delivered { background: #22c55e; }
-        .checkpoint .dot.pending { background: #94a3b8; }
+        .checkpoint .dot.delivered {
+            background: #22c55e;
+        }
+        .checkpoint .dot.pending {
+            background: #94a3b8;
+        }
         .checkpoint .time {
             color: #666;
             font-size: 0.8rem;
@@ -419,8 +484,14 @@
             animation: slideIn 0.5s ease;
         }
         @keyframes slideIn {
-            from { opacity: 0; transform: translateX(-12px); }
-            to { opacity: 1; transform: translateX(0); }
+            from {
+                opacity: 0;
+                transform: translateX(-12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
         /* ---------- Details Grid ---------- */
@@ -505,7 +576,9 @@
             outline: 2px solid var(--dhl-red);
             outline-offset: 2px;
         }
-        .back-button:active { transform: scale(0.97); }
+        .back-button:active {
+            transform: scale(0.97);
+        }
 
         .refresh-btn {
             padding: 6px 16px;
@@ -549,7 +622,7 @@
             padding: 14px 18px;
             border-radius: 10px;
             color: #fff;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
             font-weight: 500;
             animation: slideInToast 0.3s ease;
             display: flex;
@@ -558,9 +631,15 @@
             gap: 12px;
             background: #1a1a1a;
         }
-        .toast.error { background: #dc2626; }
-        .toast.success { background: #16a34a; }
-        .toast.info { background: #2563eb; }
+        .toast.error {
+            background: #dc2626;
+        }
+        .toast.success {
+            background: #16a34a;
+        }
+        .toast.info {
+            background: #2563eb;
+        }
         .toast .close-toast {
             background: none;
             border: none;
@@ -570,10 +649,18 @@
             padding: 0 4px;
             opacity: 0.7;
         }
-        .toast .close-toast:hover { opacity: 1; }
+        .toast .close-toast:hover {
+            opacity: 1;
+        }
         @keyframes slideInToast {
-            from { opacity: 0; transform: translateX(40px); }
-            to { opacity: 1; transform: translateX(0); }
+            from {
+                opacity: 0;
+                transform: translateX(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
         /* ---------- Loading Spinner ---------- */
@@ -581,30 +668,15 @@
             display: inline-block;
             width: 32px;
             height: 32px;
-            border: 4px solid rgba(212,5,17,0.2);
+            border: 4px solid rgba(212, 5, 17, 0.2);
             border-top-color: var(--dhl-red);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* ---------- Error ---------- */
-        .error-message {
-            max-width: 760px;
-            margin: 30px auto;
-            padding: 22px;
-            border: 1px solid #f5c2c7;
-            background: #fef2f2;
-            color: #842029;
-            border-radius: 14px;
-            box-shadow: 0 6px 16px rgba(0,0,0,0.04);
-            font-size: 1rem;
-            line-height: 1.6;
-        }
-        .error-message a {
-            color: var(--dhl-red);
-            text-decoration: underline;
-            font-weight: 500;
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         /* ---------- Footer ---------- */
@@ -665,14 +737,14 @@
         /* ---------- Map Controls (Leaflet override) ---------- */
         .leaflet-control-custom {
             background: white;
-            border: 2px solid rgba(0,0,0,0.2);
+            border: 2px solid rgba(0, 0, 0, 0.2);
             border-radius: 4px;
             padding: 6px 12px;
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
             color: #333;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
             transition: all 0.2s ease;
             margin: 4px;
             min-width: 44px;
@@ -700,19 +772,45 @@
 
         /* ---------- Responsive ---------- */
         @media (max-width: 1024px) {
-            .details { padding: 24px 22px; }
-            #map { height: 360px; }
+            .details {
+                padding: 24px 22px;
+            }
+            #map {
+                height: 360px;
+            }
         }
         @media (max-width: 768px) {
-            .title { font-size: 1.7em; margin: 18px 0 8px; }
-            .title-sub { font-size: 0.95rem; }
-            .details { padding: 20px 18px; }
-            #map { height: 320px; }
-            .details-grid { grid-template-columns: 1fr; gap: 14px; }
-            .checkpoint { flex-direction: column; align-items: stretch; }
-            .checkpoint .time { min-width: auto; margin-bottom: 4px; }
-            .position-grid { grid-template-columns: 1fr; }
-            .header { gap: 8px; }
+            .title {
+                font-size: 1.7em;
+                margin: 18px 0 8px;
+            }
+            .title-sub {
+                font-size: 0.95rem;
+            }
+            .details {
+                padding: 20px 18px;
+            }
+            #map {
+                height: 320px;
+            }
+            .details-grid {
+                grid-template-columns: 1fr;
+                gap: 14px;
+            }
+            .checkpoint {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .checkpoint .time {
+                min-width: auto;
+                margin-bottom: 4px;
+            }
+            .position-grid {
+                grid-template-columns: 1fr;
+            }
+            .header {
+                gap: 8px;
+            }
             .flex.items-center.justify-between.flex-wrap.gap-3 {
                 flex-wrap: wrap !important;
                 gap: 6px !important;
@@ -738,10 +836,19 @@
             }
         }
         @media (max-width: 480px) {
-            #map { height: 260px; }
-            .details { padding: 16px 14px; }
-            .position-pill { font-size: 0.7rem !important; padding: 4px 8px; }
-            .refresh-hint { display: none; }
+            #map {
+                height: 260px;
+            }
+            .details {
+                padding: 16px 14px;
+            }
+            .position-pill {
+                font-size: 0.7rem !important;
+                padding: 4px 8px;
+            }
+            .refresh-hint {
+                display: none;
+            }
             .parcel-grid {
                 grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
                 gap: 8px;
@@ -755,7 +862,9 @@
             }
         }
         @media (max-width: 380px) {
-            #map { height: 200px; }
+            #map {
+                height: 200px;
+            }
             .tracking-number-display {
                 font-size: 0.7rem !important;
                 padding: 2px 6px !important;
@@ -774,40 +883,28 @@
 
         /* ---------- Reduced motion ---------- */
         @media (prefers-reduced-motion: reduce) {
-            .live-indicator { animation: none; }
-            .progress-bar .fill { transition: none; }
-            .checkpoint-new { animation: none; }
+            .live-indicator {
+                animation: none;
+            }
+            .progress-bar .fill {
+                transition: none;
+            }
+            .checkpoint-new {
+                animation: none;
+            }
         }
     </style>
-
-    <!--
-        NOTE ON LEAFLET LOADING:
-        Leaflet's CSS and JS are intentionally NOT loaded via static
-        <link>/<script> tags with integrity="..." (SRI) attributes here.
-        A previous version pinned an SRI hash that did not match the
-        actual file served by the CDN, which caused the browser to
-        silently block the script - Leaflet never loaded, and the map
-        stayed a blank gray box with no console error beyond a blocked-
-        resource warning. Worse, the fallback loader's guard clause
-        checked "is there already a <script> tag mentioning leaflet in
-        the DOM" to decide whether to skip loading - which was always
-        true (the blocked tag was still present), so the fallback never
-        actually ran either.
-        Both resources are now loaded dynamically at runtime (see
-        loadLeaflet() in the script below), with no guessed SRI hash to
-        get wrong and no tag-presence guard to falsely trip.
-    -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
-            integrity="sha384-2iD2sSxOOsF8bh3X9bLlTGNlbWtQhJcHhPcZ+VAoZkC3XxgdRCpM9vB2M/6OVPr"
-            crossorigin="anonymous"></script>
 </head>
 <body>
+
     <!-- ====== HEADER ====== -->
     <header class="header">
-        <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL Logo">
+        <div class="logo-placeholder">
+            📦 <span>DHL</span>
+        </div>
         <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="menuContent" type="button">☰</button>
         <div id="menuContent" class="menu-content" role="menu" aria-labelledby="menuBtn">
-            <a role="menuitem" href="{{ url_for('index') }}">Home</a>
+            <a role="menuitem" href="#">Home</a>
             <a role="menuitem" href="#">Contact</a>
             <a role="menuitem" href="#">Support</a>
         </div>
@@ -821,942 +918,162 @@
     <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
 
     <!-- ============================================================ -->
-    <!--  MAIN CONTENT – conditional on error                          -->
+    <!--  MAIN TRACKING CONTENT                                       -->
     <!-- ============================================================ -->
-    {% if error %}
-        <!-- ====== ERROR STATE ====== -->
-        <div class="error-message">
-            <span>📦</span> {{ error }}<br>
-            <a href="{{ url_for('index') }}">Try again →</a>
-        </div>
-    {% else %}
-        <!-- ====== TRACKING CONTENT (shipment exists) ====== -->
-        <div class="tracking-result" id="trackingResult">
-            <!-- Loading Spinner (shown while initial data loads) -->
-            <div id="loadingSpinner" class="text-center py-8">
-                <div class="spinner" role="status" aria-label="Loading tracking data"></div>
-                <p class="mt-2 text-gray-500">Fetching live data…</p>
-            </div>
+    <div class="tracking-result" id="trackingResult">
 
-            <div id="resultContent" style="display:none;">
-                <!-- ====== MAP ====== -->
-                <div class="map-container" id="mapContainer">
-                    <div id="map"></div>
-                    <div class="map-loading-hint" id="mapLoadingHint">Loading map…</div>
-                </div>
-
-                <!-- ====== DETAILS ====== -->
-                <div class="details" id="details">
-                    <!-- Tracking Number & Status -->
-                    <div class="flex items-center justify-between flex-wrap gap-3">
-                        <div class="flex items-center gap-2">
-                            <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
-                            <span class="tracking-number-display" id="trackingNumberDisplay">{{ shipment.tracking_number }}</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="text-sm text-gray-400 font-medium hidden sm:inline mr-1">Status</span>
-                            <span id="status" class="status-badge-header 
-                                {% if shipment.status == 'Delivered' %}delivered
-                                {% elif shipment.status == 'In_Transit' %}in-transit
-                                {% elif shipment.status == 'Out_for_Delivery' %}out-for-delivery
-                                {% elif shipment.status == 'Delayed' %}delayed
-                                {% elif shipment.status == 'Exception' %}exception
-                                {% elif shipment.status == 'On_Hold' %}on-hold
-                                {% else %}pending{% endif %}">
-                                {{ shipment.status }}
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- Live Controls -->
-                    <div class="flex items-center gap-3 mt-4 flex-wrap">
-                        <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
-                        <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
-                        <span class="connection-dot connected" id="connectionDot" aria-hidden="true"></span>
-                        <span id="connectionStatus" class="text-xs text-gray-500">Connected</span>
-                        <button class="refresh-btn" id="refreshBtn" disabled aria-label="Refresh tracking data">Refresh</button>
-                        <span id="refreshHint" class="refresh-hint">Live connection active</span>
-                        <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection">Reconnect</button>
-                    </div>
-
-                    <!-- Simulator state badges (speed / transport mode) -->
-                    <div class="meta-badges" id="metaBadges">
-                        <span class="meta-badge" id="modeBadge">🚚 Ground</span>
-                        <span class="meta-badge" id="speedBadge">1.0x speed</span>
-                    </div>
-
-                    <!-- Paused banner (shown when the simulator is paused) -->
-                    <div class="paused-banner" id="pausedBanner" role="status">
-                        <span>⏸</span>
-                        <span>This shipment's simulation is currently paused — position will resume updating once it's restarted.</span>
-                    </div>
-
-                    <!-- Position Card -->
-                    <div class="position-card" id="positionCard">
-                        <div class="position-header">
-                            <div>
-                                <div class="position-title">Live Shipment Position</div>
-                                <div class="position-subtitle">Current location</div>
-                            </div>
-                            <div class="position-pill">
-                                <span class="live-indicator" style="width:6px;height:6px;margin-right:4px;" aria-hidden="true"></span>
-                                <span id="positionStatusText">Tracking live</span>
-                            </div>
-                        </div>
-                        <div class="position-grid">
-                            <div>
-                                <div class="detail-label">Current City</div>
-                                <div class="detail-value" id="currentLocation">{{ current_location | default('Calculating...') }}</div>
-                            </div>
-                            <div>
-                                <div class="detail-label">Coordinates</div>
-                                <div class="detail-value" id="currentCoordinates">
-                                    {% if current_lat is not none and current_lon is not none %}
-                                        {{ current_lat }}, {{ current_lon }}
-                                    {% else %}
-                                        Pending
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Arrival & Checkpoint -->
-                    <div class="arrival-card">
-                        <div class="arrival-title">Estimated Arrival</div>
-                        <div class="arrival-value" id="estimatedArrival">{{ delivery_window | default('Calculating...') }}</div>
-                    </div>
-                    <div class="arrival-card">
-                        <div class="arrival-title">Last Checkpoint</div>
-                        <div class="arrival-value" id="lastCheckpoint">{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}</div>
-                    </div>
-                    <div class="next-checkpoint" id="nextCheckpointCard">
-                        <div class="label">Next Checkpoint</div>
-                        <div class="value" id="nextCheckpoint">{{ checkpoints[1] if checkpoints and checkpoints|length > 1 else 'Next scan pending' }}</div>
-                    </div>
-
-                    <!-- Progress -->
-                    <div class="progress-container">
-                        <div class="progress-label">
-                            <span>Delivery Progress</span>
-                            <span id="progressPercent">0%</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="fill" id="progressFill" style="width:0%;"></div>
-                        </div>
-                    </div>
-
-                    <!-- Checkpoints -->
-                    <h3 class="text-lg font-semibold mt-2 mb-2 text-gray-700">Tracking History</h3>
-                    <div id="checkpoints">
-                        {% if checkpoints %}
-                            {% for checkpoint in checkpoints %}
-                                <div class="checkpoint">
-                                    <div class="dot {% if 'Delivered' in checkpoint or 'delivered' in checkpoint|lower %}delivered{% endif %}"></div>
-                                    <div>
-                                        <div class="time">{{ checkpoint.split(' - ')[0] if ' - ' in checkpoint else '' }}</div>
-                                        <div class="location">{{ checkpoint.split(' - ')[1] if (' - ' in checkpoint and checkpoint.split(' - ')|length > 1) else '' }}</div>
-                                        <div class="event">{{ checkpoint.split(' - ')[2:]|join(' - ') if ' - ' in checkpoint and checkpoint.split(' - ')|length > 2 else checkpoint }}</div>
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <div class="checkpoint">
-                                <div class="dot pending"></div>
-                                <div>
-                                    <div class="location">No checkpoints available</div>
-                                    <div class="event">Tracking information will appear here</div>
-                                </div>
-                            </div>
-                        {% endif %}
-                    </div>
-
-                    <!-- Details Grid -->
-                    <div class="details-grid">
-                        <div class="detail-item">
-                            <div class="detail-label">Origin</div>
-                            <div class="detail-value">{{ shipment.origin_location or 'N/A' }}</div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Destination</div>
-                            <div class="detail-value" id="deliveryLocation">{{ shipment.delivery_location }}</div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Service Level</div>
-                            <div class="detail-value" id="serviceLevel">{{ service_level | default('DHL Express') }}</div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Estimated Delivery</div>
-                            <div class="detail-value" id="deliveryWindow">{{ delivery_window | default('Calculating...') }}</div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Proof of Delivery</div>
-                            <div class="detail-value" id="proofOfDelivery">{{ proof_of_delivery | default('Pending') }}</div>
-                        </div>
-                        <div class="detail-item">
-                            <div class="detail-label">Carrier</div>
-                            <div class="detail-value">{{ shipment.carrier or 'DHL' }}</div>
-                        </div>
-                    </div>
-
-                    <!-- Last Updated -->
-                    <div class="last-updated" id="lastUpdated">
-                        Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
-                    </div>
-
-                    <!-- ====== PARCEL PHOTOS – only one image ====== -->
-                    <div class="parcel-photos-section">
-                        <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
-                        <div class="parcel-grid">
-                            <div class="grid-item">
-                                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel photo">
-                                <div class="grid-label">Parcel #1</div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- ====== END PARCEL PHOTOS ====== -->
-
-                    <!-- Back Button -->
-                    <a href="{{ url_for('index') }}" class="back-button">← Back to home</a>
-                </div>
-            </div>
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" class="text-center py-8">
+            <div class="spinner" role="status" aria-label="Loading tracking data"></div>
+            <p class="mt-2 text-gray-500">Fetching live data…</p>
         </div>
 
-        <!-- ============================================================ -->
-        <!--  SCRIPT – inside the "else" block, so shipment is guaranteed  -->
-        <!-- ============================================================ -->
-        <script>
-            // ============================================================
-            //  GLOBAL ERROR HANDLER – catches any uncaught error
-            // ============================================================
-            window.onerror = function(message, source, lineno, colno, error) {
-                console.error('Global error caught:', message, error);
-                const spinner = document.getElementById('loadingSpinner');
-                if (spinner) {
-                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${message}</p>`;
-                }
-                return true;
-            };
-
-            console.log('📦 Tracking page script started (inside else block)');
-
-            // ============================================================
-            //  SHOW CONTENT IMMEDIATELY (hides spinner)
-            // ============================================================
-            function showContent() {
-                try {
-                    document.getElementById('loadingSpinner').style.display = 'none';
-                    document.getElementById('resultContent').style.display = 'block';
-                    console.log('✅ Content shown – spinner hidden');
-                } catch (e) {
-                    console.error('Error showing content:', e);
-                }
-            }
-            showContent();
-
-            // ============================================================
-            //  CONSTANTS & CONFIGURATION
-            // ============================================================
-            const SOCKET_URL = window.location.origin;
-            const REFRESH_INTERVAL_MS = 30000;
-            const MARKER_TWEEN_MS = 900;
-            const DEBUG = true;
-
-            function debugLog(...args) {
-                if (DEBUG) console.log(...args);
-            }
-
-            function sanitizeArray(arr) {
-                return Array.isArray(arr) ? arr : [];
-            }
-
-            function updateElement(id, value) {
-                const el = document.getElementById(id);
-                if (el && value !== undefined && value !== null && value !== '') {
-                    el.textContent = value;
-                }
-            }
-
-            function toNum(v) {
-                if (v === null || v === undefined) return null;
-                const n = parseFloat(v);
-                return isNaN(n) ? null : n;
-            }
-
-            // ============================================================
-            //  TOAST NOTIFICATIONS
-            // ============================================================
-            function showToast(message, type = 'info', duration = 5000) {
-                const container = document.getElementById('toastContainer');
-                if (!container) return;
-                const toast = document.createElement('div');
-                toast.className = `toast ${type}`;
-                toast.setAttribute('role', 'alert');
-                toast.innerHTML = `
-                    <span>${message}</span>
-                    <button class="close-toast" aria-label="Dismiss notification">&times;</button>
-                `;
-                container.appendChild(toast);
-                const closeBtn = toast.querySelector('.close-toast');
-                closeBtn.addEventListener('click', () => {
-                    toast.remove();
-                });
-                setTimeout(() => {
-                    if (toast.parentNode) toast.remove();
-                }, duration);
-            }
-
-            // ============================================================
-            //  MENU TOGGLE
-            // ============================================================
-            const menuBtn = document.getElementById('menuBtn');
-            const menuContent = document.getElementById('menuContent');
-            menuBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const expanded = menuBtn.getAttribute('aria-expanded') === 'true';
-                menuBtn.setAttribute('aria-expanded', !expanded);
-                menuContent.classList.toggle('show');
-            });
-            document.addEventListener('click', (e) => {
-                if (!menuContent.contains(e.target) && e.target !== menuBtn) {
-                    menuContent.classList.remove('show');
-                    menuBtn.setAttribute('aria-expanded', 'false');
-                }
-            });
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape' && menuContent.classList.contains('show')) {
-                    menuContent.classList.remove('show');
-                    menuBtn.setAttribute('aria-expanded', 'false');
-                    menuBtn.focus();
-                }
-            });
-
-            // ============================================================
-            //  SOCKET.IO SETUP
-            // ============================================================
-            const socket = io(SOCKET_URL, {
-                transports: ['polling', 'websocket'],
-                reconnection: true,
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
-                auth: {
-                    // token: localStorage.getItem('dhl_token') // uncomment if you use auth
-                }
-            });
-
-            let trackingInterval = null;
-
-            function updateConnectionStatus(connected) {
-                const dot = document.getElementById('connectionDot');
-                const statusText = document.getElementById('connectionStatus');
-                const refreshBtn = document.getElementById('refreshBtn');
-                const refreshHint = document.getElementById('refreshHint');
-                const retryBtn = document.getElementById('retryBtn');
-
-                if (dot) dot.className = `connection-dot ${connected ? 'connected' : 'disconnected'}`;
-                if (statusText) {
-                    statusText.textContent = connected ? 'Connected' : 'Disconnected';
-                    statusText.className = `text-xs ${connected ? 'text-green-600' : 'text-red-600'}`;
-                }
-                if (refreshBtn) {
-                    refreshBtn.disabled = !connected;
-                    refreshBtn.title = connected ? 'Refresh live tracking data' : 'Waiting for connection...';
-                }
-                if (refreshHint) refreshHint.textContent = connected ? 'Live connection active' : 'Waiting for connection...';
-                if (retryBtn) {
-                    retryBtn.style.display = connected ? 'none' : 'inline-block';
-                }
-            }
-
-            socket.on('connect', () => {
-                debugLog('Socket.IO connected');
-                updateConnectionStatus(true);
-                requestTracking();
-                if (trackingInterval) clearInterval(trackingInterval);
-                trackingInterval = setInterval(() => {
-                    if (socket.connected) requestTracking();
-                }, REFRESH_INTERVAL_MS);
-            });
-
-            socket.on('disconnect', () => {
-                debugLog('Socket.IO disconnected');
-                updateConnectionStatus(false);
-                if (trackingInterval) {
-                    clearInterval(trackingInterval);
-                    trackingInterval = null;
-                }
-            });
-
-            socket.on('connect_error', (err) => {
-                console.error('Socket.IO connection error:', err);
-                updateConnectionStatus(false);
-                showToast('Connection error – retrying…', 'error', 4000);
-            });
-
-            document.getElementById('retryBtn')?.addEventListener('click', () => {
-                socket.connect();
-                showToast('Reconnecting…', 'info', 2000);
-            });
-
-            // ============================================================
-            //  TRACKING REQUEST
-            // ============================================================
-            const trackingNumber = "{{ shipment.tracking_number }}";
-
-            function requestTracking() {
-                if (!trackingNumber) {
-                    console.warn('No tracking number – skipping request');
-                    return;
-                }
-                debugLog('Requesting tracking update');
-                socket.emit('request_tracking', { tracking_number: trackingNumber });
-            }
-
-            function refreshTracking() {
-                const btn = document.getElementById('refreshBtn');
-                if (!btn || btn.disabled) return;
-                btn.disabled = true;
-                btn.textContent = 'Updating…';
-                requestTracking();
-                setTimeout(() => {
-                    btn.disabled = !socket.connected;
-                    btn.textContent = 'Refresh';
-                }, 3000);
-            }
-            document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
-
-            // ============================================================
-            //  LEAFLET LOADING (dynamic — see <head> comment for why)
-            //  No SRI hash to guess wrong, no tag-presence guard to trip.
-            //  loadLeaflet() is idempotent: safe to call more than once,
-            //  every caller's callback still fires once Leaflet is ready.
-            // ============================================================
-            let leafletState = 'unloaded'; // 'unloaded' | 'loading' | 'ready' | 'failed'
-            let leafletCallbacks = [];
-
-            function loadLeaflet(callback) {
-                if (leafletState === 'ready') {
-                    callback();
-                    return;
-                }
-                leafletCallbacks.push(callback);
-                if (leafletState === 'loading') return;
-                leafletState = 'loading';
-
-                const cssLink = document.createElement('link');
-                cssLink.rel = 'stylesheet';
-                cssLink.href = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.css';
-                document.head.appendChild(cssLink);
-
-                const script = document.createElement('script');
-                script.src = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.js';
-                script.onload = function() {
-                    if (typeof L === 'undefined') {
-                        console.error('Leaflet script loaded but L is undefined - trying fallback CDN');
-                        loadLeafletFromFallbackCdn();
-                        return;
-                    }
-                    console.log('✅ Leaflet loaded');
-                    leafletState = 'ready';
-                    leafletCallbacks.forEach(cb => cb());
-                    leafletCallbacks = [];
-                };
-                script.onerror = function() {
-                    console.warn('Primary Leaflet CDN failed, trying fallback CDN...');
-                    loadLeafletFromFallbackCdn();
-                };
-                document.head.appendChild(script);
-            }
-
-            function loadLeafletFromFallbackCdn() {
-                const cssLink = document.createElement('link');
-                cssLink.rel = 'stylesheet';
-                cssLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css';
-                document.head.appendChild(cssLink);
-
-                const script = document.createElement('script');
-                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js';
-                script.onload = function() {
-                    if (typeof L === 'undefined') {
-                        console.error('Fallback Leaflet CDN also failed to define L');
-                        leafletState = 'failed';
-                        showMapLoadError();
-                        return;
-                    }
-                    console.log('✅ Leaflet loaded from fallback CDN');
-                    leafletState = 'ready';
-                    leafletCallbacks.forEach(cb => cb());
-                    leafletCallbacks = [];
-                };
-                script.onerror = function() {
-                    console.error('Both Leaflet CDNs failed to load');
-                    leafletState = 'failed';
-                    showMapLoadError();
-                };
-                document.head.appendChild(script);
-            }
-
-            function showMapLoadError() {
-                const hint = document.getElementById('mapLoadingHint');
-                if (hint) {
-                    hint.textContent = 'Map unavailable right now — tracking data above is still live.';
-                    hint.classList.remove('hide');
-                }
-                showToast('Map failed to load. Tracking data is still updating normally.', 'error', 6000);
-            }
-
-            // ============================================================
-            //  MAP INITIALIZATION
-            // ============================================================
-            let map = null;
-            let markerGroup, polylineGroup, liveMarkerGroup;
-            let routeBounds = null;
-            let smoothMotionEnabled = true;
-
-            function initMap() {
-                try {
-                    if (typeof L === 'undefined') {
-                        console.error('initMap called before Leaflet was ready');
-                        return;
-                    }
-
-                    const mapContainer = document.getElementById('map');
-                    if (!mapContainer) {
-                        console.error('Map container #map not found');
-                        return;
-                    }
-
-                    console.log('Initializing map...');
-                    map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        maxZoom: 19,
-                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                    }).addTo(map);
-
-                    markerGroup = L.layerGroup().addTo(map);
-                    polylineGroup = L.layerGroup().addTo(map);
-                    liveMarkerGroup = L.layerGroup().addTo(map);
-
-                    const SmoothMotionControl = L.Control.extend({
-                        options: { position: 'topright' },
-                        onAdd: function() {
-                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                            container.id = 'toggleSmoothMotion';
-                            container.innerHTML = '▶ Smooth Motion';
-                            container.classList.add('active');
-                            container.setAttribute('aria-label', 'Toggle smooth marker movement');
-                            container.setAttribute('role', 'switch');
-                            container.setAttribute('aria-checked', 'true');
-                            container.onclick = function() {
-                                smoothMotionEnabled = !smoothMotionEnabled;
-                                container.classList.toggle('active');
-                                container.innerHTML = smoothMotionEnabled ? '▶ Smooth Motion' : '⏸ Instant Jumps';
-                                container.setAttribute('aria-checked', smoothMotionEnabled ? 'true' : 'false');
-                            };
-                            return container;
-                        }
-                    });
-
-                    const ResetViewControl = L.Control.extend({
-                        options: { position: 'topright' },
-                        onAdd: function() {
-                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                            container.id = 'resetView';
-                            container.innerHTML = '⊞ Reset View';
-                            container.setAttribute('aria-label', 'Reset map view');
-                            container.disabled = true;
-                            container.onclick = function() {
-                                if (routeBounds) {
-                                    map.fitBounds(routeBounds, { padding: [20, 20] });
-                                } else if (window._lastMarkerLatLng) {
-                                    map.setView(window._lastMarkerLatLng, 6);
-                                }
-                            };
-                            return container;
-                        }
-                    });
-
-                    const FullscreenControl = L.Control.extend({
-                        options: { position: 'topright' },
-                        onAdd: function() {
-                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                            container.id = 'fullscreenBtn';
-                            container.innerHTML = '⛶ Fullscreen';
-                            container.setAttribute('aria-label', 'Toggle fullscreen map');
-                            container.onclick = function() {
-                                const mapContainer = document.getElementById('mapContainer');
-                                mapContainer.classList.toggle('fullscreen');
-                                setTimeout(() => map.invalidateSize(), 100);
-                                container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Fullscreen';
-                            };
-                            return container;
-                        }
-                    });
-
-                    map.addControl(new SmoothMotionControl());
-                    map.addControl(new ResetViewControl());
-                    map.addControl(new FullscreenControl());
-
-                    document.getElementById('mapLoadingHint')?.classList.add('hide');
-                    console.log('✅ Map initialized successfully');
-
-                    if (window._pendingRoute) {
-                        maybeRedrawRoute(window._pendingRoute);
-                        window._pendingRoute = null;
-                    }
-                    if (window._pendingMarker) {
-                        moveLiveMarker(window._pendingMarker.lat, window._pendingMarker.lon, window._pendingMarker.label, true);
-                        window._pendingMarker = null;
-                    }
-                } catch (e) {
-                    console.error('Map initialization failed:', e);
-                    showMapLoadError();
-                }
-            }
-
-            // ============================================================
-            //  ROUTE DRAWING (checkpoints markers + polyline)
-            // ============================================================
-            function routeSignature(coords) {
-                if (!coords || !coords.length) return '';
-                const first = coords[0];
-                const last = coords[coords.length - 1];
-                return `${coords.length}:${first.lat},${first.lon}:${last.lat},${last.lon}`;
-            }
-
-            function maybeRedrawRoute(coords) {
-                if (!map) {
-                    window._pendingRoute = coords;
-                    return;
-                }
-                if (!coords || !coords.length) {
-                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
-                    return;
-                }
-
-                const sig = routeSignature(coords);
-                if (sig === window._routeSignature) {
-                    return;
-                }
-                window._routeSignature = sig;
-
-                markerGroup.clearLayers();
-                polylineGroup.clearLayers();
-
-                coords.forEach(c => {
-                    if (c.desc) {
-                        L.marker([c.lat, c.lon]).bindPopup(c.desc).addTo(markerGroup);
-                    }
-                });
-
-                const latlngs = coords.map(c => [c.lat, c.lon]);
-                L.polyline(latlngs, {
-                    color: '#d32f2f',
-                    weight: 4,
-                    dashArray: '6, 10',
-                    opacity: 0.7
-                }).addTo(polylineGroup);
-
-                routeBounds = L.latLngBounds(latlngs);
-                map.fitBounds(routeBounds, { padding: [20, 20] });
-                document.getElementById('resetView')?.removeAttribute('disabled');
-                debugLog('Route redrawn:', coords.length, 'points');
-            }
-
-            // ============================================================
-            //  LIVE MARKER MOVEMENT
-            // ============================================================
-            let markerTweenFrame = null;
-
-            function buildMarkerIcon() {
-                return L.divIcon({
-                    html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
-                    className: '',
-                    iconSize: [20, 20],
-                    iconAnchor: [10, 10]
-                });
-            }
-
-            function moveLiveMarker(lat, lon, label, skipTween) {
-                if (lat === null || lon === null) return;
-                if (!map || !liveMarkerGroup) {
-                    window._pendingMarker = { lat, lon, label };
-                    return;
-                }
-
-                const newLatLng = L.latLng(lat, lon);
-
-                if (!window._liveMarker) {
-                    const icon = buildMarkerIcon();
-                    window._liveMarker = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(liveMarkerGroup);
-                    window._livePulse = L.circle(newLatLng, {
-                        color: '#d40511',
-                        fillColor: '#d40511',
-                        fillOpacity: 0.15,
-                        radius: 1200,
-                        interactive: false
-                    }).addTo(liveMarkerGroup);
-                    window._liveMarker.bindPopup(`Current location: ${label || 'Live position'}`);
-                    window._lastMarkerLatLng = newLatLng;
-                    if (!routeBounds) {
-                        map.setView(newLatLng, 6);
-                    }
-                    return;
-                }
-
-                window._liveMarker.setPopupContent(`Current location: ${label || 'Live position'}`);
-
-                if (markerTweenFrame) {
-                    cancelAnimationFrame(markerTweenFrame);
-                    markerTweenFrame = null;
-                }
-
-                if (skipTween || !smoothMotionEnabled) {
-                    window._liveMarker.setLatLng(newLatLng);
-                    window._livePulse.setLatLng(newLatLng);
-                    window._lastMarkerLatLng = newLatLng;
-                    return;
-                }
-
-                const startLatLng = window._lastMarkerLatLng || newLatLng;
-                const startTime = performance.now();
-
-                function step(now) {
-                    const t = Math.min((now - startTime) / MARKER_TWEEN_MS, 1);
-                    const curLat = startLatLng.lat + (newLatLng.lat - startLatLng.lat) * t;
-                    const curLon = startLatLng.lng + (newLatLng.lng - startLatLng.lng) * t;
-                    const curLatLng = L.latLng(curLat, curLon);
-                    window._liveMarker.setLatLng(curLatLng);
-                    window._livePulse.setLatLng(curLatLng);
-                    if (t < 1) {
-                        markerTweenFrame = requestAnimationFrame(step);
-                    } else {
-                        window._lastMarkerLatLng = newLatLng;
-                        markerTweenFrame = null;
-                    }
-                }
-                markerTweenFrame = requestAnimationFrame(step);
-            }
-
-            // ============================================================
-            //  SIMULATOR STATE INDICATORS
-            // ============================================================
-            function applyPausedState(paused) {
-                const banner = document.getElementById('pausedBanner');
-                const dot = document.getElementById('liveIndicator');
-                const label = document.getElementById('liveIndicatorLabel');
-                if (paused === undefined || paused === null) return;
-                if (banner) banner.classList.toggle('show', !!paused);
-                if (dot) dot.classList.toggle('paused-dot', !!paused);
-                if (label) label.textContent = paused ? 'Paused' : 'Live';
-            }
-
-            function applySpeedBadge(speed) {
-                const badge = document.getElementById('speedBadge');
-                if (!badge || speed === undefined || speed === null) return;
-                const n = toNum(speed);
-                if (n === null) return;
-                badge.textContent = `⚡ ${n.toFixed(1)}x speed`;
-                badge.classList.add('show');
-            }
-
-            function applyModeBadge(mode) {
-                const badge = document.getElementById('modeBadge');
-                if (!badge || !mode) return;
-                const isAir = String(mode).toLowerCase() === 'air';
-                badge.textContent = isAir ? '✈️ Air' : '🚚 Ground';
-                badge.classList.add('show');
-            }
-
-            // ============================================================
-            //  UNIFIED UPDATE HANDLER
-            // ============================================================
-            function applyTrackingUpdate(data) {
-                if (!data) return;
-
-                if (data.status) {
-                    const statusEl = document.getElementById('status');
-                    statusEl.textContent = data.status;
-                    const cls = {
-                        'Delivered': 'delivered',
-                        'In_Transit': 'in-transit',
-                        'Out_for_Delivery': 'out-for-delivery',
-                        'Delayed': 'delayed',
-                        'Exception': 'exception',
-                        'On_Hold': 'on-hold'
-                    }[data.status] || 'pending';
-                    statusEl.className = `status-badge-header ${cls}`;
-                }
-
-                if (data.progress !== undefined) {
-                    const progress = toNum(data.progress) || 0;
-                    const percent = Math.round(progress * 100);
-                    document.getElementById('progressPercent').textContent = `${percent}%`;
-                    document.getElementById('progressFill').style.width = `${percent}%`;
-                }
-
-                if (data.current_location) {
-                    document.getElementById('currentLocation').textContent = data.current_location;
-                }
-
-                const lat = toNum(data.current_lat);
-                const lon = toNum(data.current_lon);
-                if (lat !== null && lon !== null) {
-                    document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
-                    document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
-                    moveLiveMarker(lat, lon, data.current_location);
-                }
-
-                applyPausedState(data.paused);
-                applySpeedBadge(data.speed_multiplier);
-                applyModeBadge(data.mode);
-
-                updateElement('estimatedArrival', data.delivery_window);
-                if (data.checkpoints && data.checkpoints.length) {
-                    const checkpoints = data.checkpoints;
-                    updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
-                    const container = document.getElementById('checkpoints');
-                    const oldCount = container.querySelectorAll('.checkpoint').length;
-                    container.innerHTML = '';
-                    checkpoints.forEach((cp, idx) => {
-                        const parts = cp.split(' - ');
-                        const div = document.createElement('div');
-                        div.className = `checkpoint${idx >= oldCount ? ' checkpoint-new' : ''}`;
-                        const isDelivered = cp.toLowerCase().includes('delivered');
-                        div.innerHTML = `
-                            <div class="dot ${isDelivered ? 'delivered' : ''}"></div>
-                            <div>
-                                <div class="time">${parts[0] || ''}</div>
-                                <div class="location">${parts[1] || ''}</div>
-                                <div class="event">${parts.slice(2).join(' - ') || ''}</div>
-                            </div>
-                        `;
-                        container.appendChild(div);
-                    });
-                    const progress = toNum(data.progress) || 0;
-                    if (checkpoints.length > 1) {
-                        const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
-                        updateElement('nextCheckpoint', checkpoints[idx]);
-                    } else {
-                        updateElement('nextCheckpoint', 'Next scan pending');
-                    }
-                }
-
-                updateElement('deliveryLocation', data.delivery_location);
-                updateElement('serviceLevel', data.service_level);
-                updateElement('deliveryWindow', data.delivery_window);
-                updateElement('proofOfDelivery', data.proof_of_delivery);
-                if (data.last_updated) {
-                    const date = new Date(data.last_updated);
-                    if (!isNaN(date.getTime())) {
-                        document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
-                    }
-                }
-
-                const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
-                if (routeData && routeData.length) {
-                    maybeRedrawRoute(routeData);
-                }
-            }
-
-            // ============================================================
-            //  INITIAL DATA LOAD (server-rendered values from Flask/Jinja)
-            // ============================================================
-            function setInitialPageState() {
-                try {
-                    const initialData = {
-                        status: "{{ shipment.status }}",
-                        progress: {{ progress | default(0) }},
-                        current_lat: {{ current_lat | default('null') }},
-                        current_lon: {{ current_lon | default('null') }},
-                        current_location: "{{ current_location | default('Calculating...') }}",
-                        delivery_window: "{{ delivery_window | default('Calculating...') }}",
-                        delivery_location: "{{ shipment.delivery_location }}",
-                        service_level: "{{ service_level | default('DHL Express') }}",
-                        proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
-                        checkpoints: sanitizeArray({{ checkpoints | tojson }}),
-                        last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}"
-                    };
-
-                    // moveLiveMarker() and maybeRedrawRoute() both queue
-                    // themselves via window._pendingMarker/_pendingRoute if
-                    // the map isn't ready yet, so this is safe to call before
-                    // Leaflet has loaded.
-                    applyTrackingUpdate(initialData);
-
-                    const coords = sanitizeArray({{ coords | tojson }});
-                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
-                    const mapCoords = routeCoords.length ? routeCoords : coords;
-                    if (mapCoords.length) {
-                        maybeRedrawRoute(mapCoords);
-                    }
-                } catch (e) {
-                    console.error('Error in setInitialPageState:', e);
-                }
-            }
-
-            // ============================================================
-            //  START
-            // ============================================================
-            try {
-                setInitialPageState();
-                loadLeaflet(initMap);
-                debugLog('Tracking page fully loaded');
-            } catch (e) {
-                console.error('Fatal error during startup:', e);
-                const spinner = document.getElementById('loadingSpinner');
-                if (spinner) {
-                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${e.message}</p>`;
-                }
-            }
-
-            // ============================================================
-            //  SOCKET.IO TRACKING UPDATES
-            // ============================================================
-            socket.on('tracking_update', (data) => {
-                debugLog('Received tracking update:', data);
-                if (data.error) {
-                    showToast(data.error, 'error', 5000);
-                    return;
-                }
-                updateConnectionStatus(true);
-                applyTrackingUpdate(data);
-            });
-
-            // ============================================================
-            //  KEYBOARD SHORTCUTS
-            // ============================================================
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'r' && e.ctrlKey) {
-                    e.preventDefault();
-                    refreshTracking();
-                }
-                if (e.key === 'Escape') {
-                    const mapContainer = document.getElementById('mapContainer');
-                    if (mapContainer.classList.contains('fullscreen')) {
-                        mapContainer.classList.remove('fullscreen');
-                        document.getElementById('fullscreenBtn').innerHTML = '⛶ Fullscreen';
-                        setTimeout(() => {
-                            if (map) map.invalidateSize();
-                        }, 100);
-                    }
-                }
-            });
-
-            // ============================================================
-            //  INITIAL CONNECTION STATUS
-            // ============================================================
-            updateConnectionStatus(socket.connected);
-            if (!socket.connected) {
-                showToast('Connecting to live server…', 'info', 3000);
-            }
-
-            console.log('✅ Tracking page fully loaded – all systems go');
-        </script>
-    {% endif %}
-    <!-- =================== END OF SHIPMENT BLOCK =================== -->
-
-    <!-- ====== FOOTER (common to all pages) ====== -->
+        <div id="resultContent" style="display:none;">
+            <!-- ====== MAP ====== -->
+            <div class="map-container" id="mapContainer">
+                <div id="map"></div>
+                <div class="map-loading-hint" id="mapLoadingHint">Loading map…</div>
+            </div>
+
+            <!-- ====== DETAILS ====== -->
+            <div class="details" id="details">
+                <!-- Tracking Number & Status -->
+                <div class="flex items-center justify-between flex-wrap gap-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
+                        <span class="tracking-number-display" id="trackingNumberDisplay">JD1234567890</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-gray-400 font-medium hidden sm:inline mr-1">Status</span>
+                        <span id="status" class="status-badge-header in-transit">In Transit</span>
+                    </div>
+                </div>
+
+                <!-- Live Controls -->
+                <div class="flex items-center gap-3 mt-4 flex-wrap">
+                    <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
+                    <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
+                    <span class="connection-dot connected" id="connectionDot" aria-hidden="true"></span>
+                    <span id="connectionStatus" class="text-xs text-gray-500">Connected</span>
+                    <button class="refresh-btn" id="refreshBtn" aria-label="Refresh tracking data">Refresh</button>
+                    <span id="refreshHint" class="refresh-hint">Live connection active</span>
+                    <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection">Reconnect</button>
+                </div>
+
+                <!-- Simulator state badges -->
+                <div class="meta-badges" id="metaBadges">
+                    <span class="meta-badge" id="modeBadge">🚚 Ground</span>
+                    <span class="meta-badge" id="speedBadge">1.0x speed</span>
+                </div>
+
+                <!-- Paused banner -->
+                <div class="paused-banner" id="pausedBanner" role="status">
+                    <span>⏸</span>
+                    <span>This shipment's simulation is currently paused — position will resume updating once it's restarted.</span>
+                </div>
+
+                <!-- Position Card -->
+                <div class="position-card" id="positionCard">
+                    <div class="position-header">
+                        <div>
+                            <div class="position-title">Live Shipment Position</div>
+                            <div class="position-subtitle">Current location</div>
+                        </div>
+                        <div class="position-pill">
+                            <span class="live-indicator" style="width:6px;height:6px;margin-right:4px;" aria-hidden="true"></span>
+                            <span id="positionStatusText">Tracking live</span>
+                        </div>
+                    </div>
+                    <div class="position-grid">
+                        <div>
+                            <div class="detail-label">Current City</div>
+                            <div class="detail-value" id="currentLocation">Chicago, IL</div>
+                        </div>
+                        <div>
+                            <div class="detail-label">Coordinates</div>
+                            <div class="detail-value" id="currentCoordinates">41.8781, -87.6298</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Arrival & Checkpoint -->
+                <div class="arrival-card">
+                    <div class="arrival-title">Estimated Arrival</div>
+                    <div class="arrival-value" id="estimatedArrival">2026-08-28 14:30</div>
+                </div>
+                <div class="arrival-card">
+                    <div class="arrival-title">Last Checkpoint</div>
+                    <div class="arrival-value" id="lastCheckpoint">2026-08-26 18:15 - Chicago, IL - Arrived at hub</div>
+                </div>
+                <div class="next-checkpoint" id="nextCheckpointCard">
+                    <div class="label">Next Checkpoint</div>
+                    <div class="value" id="nextCheckpoint">2026-08-27 08:00 - Indianapolis, IN - Departure scan</div>
+                </div>
+
+                <!-- Progress -->
+                <div class="progress-container">
+                    <div class="progress-label">
+                        <span>Delivery Progress</span>
+                        <span id="progressPercent">34%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="fill" id="progressFill" style="width:34%;"></div>
+                    </div>
+                </div>
+
+                <!-- Checkpoints -->
+                <h3 class="text-lg font-semibold mt-2 mb-2 text-gray-700">Tracking History</h3>
+                <div id="checkpoints"></div>
+
+                <!-- Details Grid -->
+                <div class="details-grid">
+                    <div class="detail-item">
+                        <div class="detail-label">Origin</div>
+                        <div class="detail-value" id="originValue">Los Angeles, CA</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Destination</div>
+                        <div class="detail-value" id="deliveryLocation">New York, NY</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Service Level</div>
+                        <div class="detail-value" id="serviceLevel">DHL Express</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Estimated Delivery</div>
+                        <div class="detail-value" id="deliveryWindow">2026-08-28 14:30</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Proof of Delivery</div>
+                        <div class="detail-value" id="proofOfDelivery">Pending</div>
+                    </div>
+                    <div class="detail-item">
+                        <div class="detail-label">Carrier</div>
+                        <div class="detail-value" id="carrierValue">DHL</div>
+                    </div>
+                </div>
+
+                <!-- Last Updated -->
+                <div class="last-updated" id="lastUpdated">Last updated: Loading…</div>
+
+                <!-- Parcel Photos -->
+                <div class="parcel-photos-section">
+                    <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
+                    <div class="parcel-grid">
+                        <div class="grid-item">
+                            <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel photo" />
+                            <div class="grid-label">Parcel #1</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Back Button -->
+                <a href="#" class="back-button">← Back to home</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== FOOTER ====== -->
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-section">
@@ -1767,9 +1084,9 @@
             </div>
             <div class="footer-section">
                 <h3>Follow Us</h3>
-                <a href="https://x.com/dhl" target="_blank" rel="noopener noreferrer">X (Twitter)</a>
-                <a href="https://facebook.com/dhl" target="_blank" rel="noopener noreferrer">Facebook</a>
-                <a href="https://instagram.com/dhl" target="_blank" rel="noopener noreferrer">Instagram</a>
+                <a href="#" target="_blank" rel="noopener noreferrer">X (Twitter)</a>
+                <a href="#" target="_blank" rel="noopener noreferrer">Facebook</a>
+                <a href="#" target="_blank" rel="noopener noreferrer">Instagram</a>
             </div>
             <div class="footer-section">
                 <h3>Legal</h3>
@@ -1784,9 +1101,563 @@
                 <a href="#">Contact</a>
             </div>
         </div>
-        <div class="copyright">
-            &copy; 2026 DHL International. All rights reserved.
-        </div>
+        <div class="copyright">&copy; 2026 DHL International. All rights reserved.</div>
     </footer>
+
+    <!-- ============================================================ -->
+    <!--  SCRIPTS                                                     -->
+    <!-- ============================================================ -->
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+    </script>
+
+    <script>
+        // ============================================================
+        //  TOAST SYSTEM
+        // ============================================================
+        function showToast(message, type = 'info', duration = 5000) {
+            const container = document.getElementById('toastContainer');
+            if (!container) return;
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML = `
+                    <span>${message}</span>
+                    <button class="close-toast" aria-label="Dismiss notification">&times;</button>
+                `;
+            container.appendChild(toast);
+            toast.querySelector('.close-toast').addEventListener('click', () => toast.remove());
+            setTimeout(() => { if (toast.parentNode) toast.remove(); }, duration);
+        }
+
+        // ============================================================
+        //  MENU TOGGLE
+        // ============================================================
+        const menuBtn = document.getElementById('menuBtn');
+        const menuContent = document.getElementById('menuContent');
+        menuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const expanded = menuBtn.getAttribute('aria-expanded') === 'true';
+            menuBtn.setAttribute('aria-expanded', !expanded);
+            menuContent.classList.toggle('show');
+        });
+        document.addEventListener('click', (e) => {
+            if (!menuContent.contains(e.target) && e.target !== menuBtn) {
+                menuContent.classList.remove('show');
+                menuBtn.setAttribute('aria-expanded', 'false');
+            }
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && menuContent.classList.contains('show')) {
+                menuContent.classList.remove('show');
+                menuBtn.setAttribute('aria-expanded', 'false');
+                menuBtn.focus();
+            }
+        });
+
+        // ============================================================
+        //  SIMULATED TRACKING ENGINE
+        // ============================================================
+        // A realistic route from Los Angeles to New York via major cities
+        const ROUTE_COORDS = [
+            { lat: 34.0522, lon: -118.2437, desc: 'Los Angeles, CA - Origin' },
+            { lat: 34.1478, lon: -118.1445, desc: 'Los Angeles, CA - Departure scan' },
+            { lat: 35.1495, lon: -119.4834, desc: 'Bakersfield, CA - In transit' },
+            { lat: 36.1699, lon: -119.4470, desc: 'Fresno, CA - Hub processing' },
+            { lat: 37.3382, lon: -121.8863, desc: 'San Jose, CA - Arrived at hub' },
+            { lat: 37.7749, lon: -122.4194, desc: 'San Francisco, CA - In transit' },
+            { lat: 38.6270, lon: -121.4946, desc: 'Sacramento, CA - Departure scan' },
+            { lat: 39.7392, lon: -104.9903, desc: 'Denver, CO - Regional hub' },
+            { lat: 41.2565, lon: -95.9345, desc: 'Omaha, NE - In transit' },
+            { lat: 41.8781, lon: -87.6298, desc: 'Chicago, IL - Arrived at hub' },
+            { lat: 42.3601, lon: -71.0589, desc: 'Boston, MA - Departure scan' },
+            { lat: 40.7128, lon: -74.0060, desc: 'New York, NY - Destination' },
+        ];
+
+        // Checkpoint history with timestamps (relative to now)
+        function buildCheckpoints(progress) {
+            const total = ROUTE_COORDS.length;
+            const visible = Math.max(2, Math.floor(progress * total) + 1);
+            const now = new Date();
+            const checkpoints = [];
+            for (let i = 0; i < Math.min(visible, total); i++) {
+                const c = ROUTE_COORDS[i];
+                const d = new Date(now);
+                d.setHours(d.getHours() - (total - i) * 2);
+                const ts = d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                const status = i < visible - 1 ? 'Completed' : (i === visible - 1 ? 'Current' : 'Pending');
+                checkpoints.push(`${ts} - ${c.desc} (${status})`);
+            }
+            return checkpoints;
+        }
+
+        // Current position along the route
+        function getCurrentPosition(progress) {
+            const total = ROUTE_COORDS.length;
+            const idx = Math.min(Math.floor(progress * (total - 1)), total - 2);
+            const frac = (progress * (total - 1)) - idx;
+            const a = ROUTE_COORDS[idx];
+            const b = ROUTE_COORDS[Math.min(idx + 1, total - 1)];
+            const lat = a.lat + (b.lat - a.lat) * frac;
+            const lon = a.lon + (b.lon - a.lon) * frac;
+            return { lat, lon, label: a.desc };
+        }
+
+        function getStatus(progress) {
+            if (progress >= 0.99) return 'Delivered';
+            if (progress >= 0.80) return 'Out_for_Delivery';
+            if (progress >= 0.40) return 'In_Transit';
+            if (progress >= 0.10) return 'In_Transit';
+            return 'Pending';
+        }
+
+        function getDeliveryWindow(progress) {
+            const now = new Date();
+            const days = Math.max(1, Math.round((1 - progress) * 5));
+            const d = new Date(now);
+            d.setDate(d.getDate() + days);
+            return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // ============================================================
+        //  MAP SETUP
+        // ============================================================
+        let map = null;
+        let markerGroup, polylineGroup, liveMarkerGroup;
+        let routeBounds = null;
+        let smoothMotionEnabled = true;
+        let liveMarker = null;
+        let livePulse = null;
+        let lastMarkerLatLng = null;
+        let markerTweenId = null;
+        let routeSignature = '';
+        let initialLoadDone = false;
+
+        function initMap() {
+            if (typeof L === 'undefined') {
+                console.warn('Leaflet not loaded yet, retrying...');
+                setTimeout(initMap, 500);
+                return;
+            }
+            const container = document.getElementById('map');
+            if (!container) return;
+
+            map = L.map('map', { zoomControl: true }).setView([39.5, -98.0], 4);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }).addTo(map);
+
+            markerGroup = L.layerGroup().addTo(map);
+            polylineGroup = L.layerGroup().addTo(map);
+            liveMarkerGroup = L.layerGroup().addTo(map);
+
+            // Custom controls
+            const SmoothControl = L.Control.extend({
+                options: { position: 'topright' },
+                onAdd: function() {
+                    const btn = L.DomUtil.create('button', 'leaflet-control-custom');
+                    btn.id = 'toggleSmooth';
+                    btn.innerHTML = '▶ Smooth';
+                    btn.classList.add('active');
+                    btn.setAttribute('aria-label', 'Toggle smooth marker movement');
+                    btn.onclick = function() {
+                        smoothMotionEnabled = !smoothMotionEnabled;
+                        btn.classList.toggle('active');
+                        btn.innerHTML = smoothMotionEnabled ? '▶ Smooth' : '⏸ Instant';
+                    };
+                    return btn;
+                }
+            });
+            const ResetControl = L.Control.extend({
+                options: { position: 'topright' },
+                onAdd: function() {
+                    const btn = L.DomUtil.create('button', 'leaflet-control-custom');
+                    btn.id = 'resetView';
+                    btn.innerHTML = '⊞ Reset';
+                    btn.disabled = true;
+                    btn.onclick = function() {
+                        if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
+                        else if (lastMarkerLatLng) map.setView(lastMarkerLatLng, 6);
+                    };
+                    return btn;
+                }
+            });
+            const FullscreenControl = L.Control.extend({
+                options: { position: 'topright' },
+                onAdd: function() {
+                    const btn = L.DomUtil.create('button', 'leaflet-control-custom');
+                    btn.id = 'fullscreenBtn';
+                    btn.innerHTML = '⛶ Full';
+                    btn.onclick = function() {
+                        const mc = document.getElementById('mapContainer');
+                        mc.classList.toggle('fullscreen');
+                        setTimeout(() => map && map.invalidateSize(), 120);
+                        btn.innerHTML = mc.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Full';
+                    };
+                    return btn;
+                }
+            });
+
+            map.addControl(new SmoothControl());
+            map.addControl(new ResetControl());
+            map.addControl(new FullscreenControl());
+
+            document.getElementById('mapLoadingHint')?.classList.add('hide');
+            console.log('✅ Map initialized');
+
+            // If we have pending data, draw it
+            if (window._pendingRoute) drawRoute(window._pendingRoute);
+            if (window._pendingMarker) placeMarker(window._pendingMarker);
+            initialLoadDone = true;
+        }
+
+        // ============================================================
+        //  ROUTE DRAWING
+        // ============================================================
+        function drawRoute(coords) {
+            if (!map) { window._pendingRoute = coords; return; }
+            if (!coords || !coords.length) return;
+            const sig = coords.map(c => `${c.lat},${c.lon}`).join('|');
+            if (sig === routeSignature) return;
+            routeSignature = sig;
+
+            markerGroup.clearLayers();
+            polylineGroup.clearLayers();
+
+            coords.forEach(c => {
+                if (c.desc) {
+                    L.marker([c.lat, c.lon]).bindPopup(c.desc).addTo(markerGroup);
+                }
+            });
+
+            const latlngs = coords.map(c => [c.lat, c.lon]);
+            L.polyline(latlngs, { color: '#d32f2f', weight: 4, dashArray: '6, 10', opacity: 0.7 })
+                .addTo(polylineGroup);
+
+            routeBounds = L.latLngBounds(latlngs);
+            map.fitBounds(routeBounds, { padding: [20, 20] });
+            document.getElementById('resetView')?.removeAttribute('disabled');
+        }
+
+        // ============================================================
+        //  LIVE MARKER
+        // ============================================================
+        function buildIcon() {
+            return L.divIcon({
+                html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
+                className: '',
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+        }
+
+        function placeMarker(pos) {
+            if (!map) { window._pendingMarker = pos; return; }
+            const { lat, lon, label } = pos;
+            const ll = L.latLng(lat, lon);
+
+            if (!liveMarker) {
+                liveMarker = L.marker(ll, { icon: buildIcon(), zIndexOffset: 1000 }).addTo(liveMarkerGroup);
+                livePulse = L.circle(ll, {
+                    color: '#d40511',
+                    fillColor: '#d40511',
+                    fillOpacity: 0.15,
+                    radius: 1200,
+                    interactive: false
+                }).addTo(liveMarkerGroup);
+                liveMarker.bindPopup(`Current location: ${label || 'Live position'}`);
+                lastMarkerLatLng = ll;
+                if (!routeBounds) map.setView(ll, 6);
+                return;
+            }
+
+            liveMarker.setPopupContent(`Current location: ${label || 'Live position'}`);
+
+            if (markerTweenId) { cancelAnimationFrame(markerTweenId);
+                markerTweenId = null; }
+
+            if (!smoothMotionEnabled) {
+                liveMarker.setLatLng(ll);
+                livePulse.setLatLng(ll);
+                lastMarkerLatLng = ll;
+                return;
+            }
+
+            const start = lastMarkerLatLng || ll;
+            const startTime = performance.now();
+            const duration = 800;
+
+            function step(now) {
+                const t = Math.min((now - startTime) / duration, 1);
+                const curLat = start.lat + (ll.lat - start.lat) * t;
+                const curLon = start.lng + (ll.lng - start.lng) * t;
+                const cur = L.latLng(curLat, curLon);
+                liveMarker.setLatLng(cur);
+                livePulse.setLatLng(cur);
+                if (t < 1) {
+                    markerTweenId = requestAnimationFrame(step);
+                } else {
+                    lastMarkerLatLng = ll;
+                    markerTweenId = null;
+                }
+            }
+            markerTweenId = requestAnimationFrame(step);
+        }
+
+        // ============================================================
+        //  UI UPDATE ENGINE
+        // ============================================================
+        function updateUI(data) {
+            // Status
+            const statusEl = document.getElementById('status');
+            const statusMap = {
+                'Delivered': 'delivered',
+                'In_Transit': 'in-transit',
+                'Out_for_Delivery': 'out-for-delivery',
+                'Delayed': 'delayed',
+                'Exception': 'exception',
+                'On_Hold': 'on-hold',
+                'Pending': 'pending'
+            };
+            const cls = statusMap[data.status] || 'pending';
+            statusEl.textContent = data.status.replace(/_/g, ' ');
+            statusEl.className = `status-badge-header ${cls}`;
+
+            // Progress
+            const pct = Math.round(data.progress * 100);
+            document.getElementById('progressPercent').textContent = pct + '%';
+            document.getElementById('progressFill').style.width = pct + '%';
+
+            // Location
+            document.getElementById('currentLocation').textContent = data.current_location || 'Calculating...';
+            document.getElementById('currentCoordinates').textContent =
+                `${data.current_lat?.toFixed(4) || '--'}, ${data.current_lon?.toFixed(4) || '--'}`;
+
+            // Position status
+            document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
+
+            // Paused banner
+            const banner = document.getElementById('pausedBanner');
+            const dot = document.getElementById('liveIndicator');
+            const label = document.getElementById('liveIndicatorLabel');
+            if (data.paused) {
+                banner.classList.add('show');
+                dot.classList.add('paused-dot');
+                label.textContent = 'Paused';
+            } else {
+                banner.classList.remove('show');
+                dot.classList.remove('paused-dot');
+                label.textContent = 'Live';
+            }
+
+            // Speed & mode badges
+            const speedBadge = document.getElementById('speedBadge');
+            if (data.speed_multiplier !== undefined) {
+                speedBadge.textContent = `⚡ ${data.speed_multiplier.toFixed(1)}x speed`;
+                speedBadge.classList.add('show');
+            }
+            const modeBadge = document.getElementById('modeBadge');
+            if (data.mode) {
+                modeBadge.textContent = data.mode === 'air' ? '✈️ Air' : '🚚 Ground';
+                modeBadge.classList.add('show');
+            }
+
+            // Arrival / checkpoint
+            document.getElementById('estimatedArrival').textContent = data.delivery_window || 'Calculating...';
+            if (data.checkpoints && data.checkpoints.length) {
+                const last = data.checkpoints[data.checkpoints.length - 1];
+                document.getElementById('lastCheckpoint').textContent = last || 'Waiting for first scan';
+                const nextIdx = Math.min(data.checkpoints.length, Math.round(data.progress * (data.checkpoints.length -
+                1)) + 1);
+                document.getElementById('nextCheckpoint').textContent =
+                    data.checkpoints[nextIdx] || 'Next scan pending';
+
+                // Render checkpoint list
+                const container = document.getElementById('checkpoints');
+                const oldCount = container.querySelectorAll('.checkpoint').length;
+                container.innerHTML = '';
+                data.checkpoints.forEach((cp, i) => {
+                    const parts = cp.split(' - ');
+                    const div = document.createElement('div');
+                    div.className = `checkpoint${i >= oldCount ? ' checkpoint-new' : ''}`;
+                    const isDelivered = cp.toLowerCase().includes('delivered') || cp.toLowerCase().includes(
+                    'completed');
+                    div.innerHTML = `
+                            <div class="dot ${isDelivered ? 'delivered' : ''}"></div>
+                            <div>
+                                <div class="time">${parts[0] || ''}</div>
+                                <div class="location">${parts[1] || ''}</div>
+                                <div class="event">${parts.slice(2).join(' - ') || ''}</div>
+                            </div>
+                        `;
+                    container.appendChild(div);
+                });
+            }
+
+            // Details grid
+            document.getElementById('deliveryLocation').textContent = data.delivery_location || 'N/A';
+            document.getElementById('serviceLevel').textContent = data.service_level || 'DHL Express';
+            document.getElementById('deliveryWindow').textContent = data.delivery_window || 'Calculating...';
+            document.getElementById('proofOfDelivery').textContent = data.proof_of_delivery || 'Pending';
+
+            // Last updated
+            if (data.last_updated) {
+                const d = new Date(data.last_updated);
+                if (!isNaN(d.getTime())) {
+                    document.getElementById('lastUpdated').textContent = `Last updated: ${d.toLocaleString()}`;
+                }
+            }
+
+            // Map: route & marker
+            const routeCoords = data.route_coords || data.coords || ROUTE_COORDS;
+            if (routeCoords && routeCoords.length) drawRoute(routeCoords);
+            if (data.current_lat !== undefined && data.current_lon !== undefined) {
+                placeMarker({ lat: data.current_lat, lon: data.current_lon, label: data.current_location });
+            }
+
+            // Tracking number
+            document.getElementById('trackingNumberDisplay').textContent = data.tracking_number || 'JD1234567890';
+        }
+
+        // ============================================================
+        //  SIMULATOR – generates realistic tracking data
+        // ============================================================
+        let simProgress = 0.34;
+        let simSpeed = 0.0015;
+        let simPaused = false;
+        let simMode = 'ground';
+        let simInterval = null;
+        let lastSimUpdate = Date.now();
+
+        function generateSimData() {
+            const now = new Date();
+            const progress = Math.min(simProgress, 0.995);
+            const pos = getCurrentPosition(progress);
+            const status = getStatus(progress);
+            const checkpoints = buildCheckpoints(progress);
+            const deliveryWindow = getDeliveryWindow(progress);
+
+            return {
+                tracking_number: 'JD1234567890',
+                status: status,
+                progress: progress,
+                current_lat: pos.lat,
+                current_lon: pos.lon,
+                current_location: pos.label || 'In transit',
+                delivery_window: deliveryWindow,
+                delivery_location: 'New York, NY',
+                service_level: 'DHL Express',
+                proof_of_delivery: progress > 0.98 ? 'Signed by J. Smith' : 'Pending',
+                checkpoints: checkpoints,
+                coords: ROUTE_COORDS,
+                route_coords: ROUTE_COORDS,
+                paused: simPaused,
+                speed_multiplier: simSpeed / 0.0015,
+                mode: simMode,
+                last_updated: now.toISOString()
+            };
+        }
+
+        function stepSimulation() {
+            if (simPaused) return;
+            const now = Date.now();
+            const delta = (now - lastSimUpdate) / 1000;
+            lastSimUpdate = now;
+            simProgress = Math.min(simProgress + simSpeed * delta * 0.5, 0.995);
+            const data = generateSimData();
+            updateUI(data);
+            // Update connection status (simulated)
+            document.getElementById('connectionDot').className = 'connection-dot connected';
+            document.getElementById('connectionStatus').textContent = 'Connected';
+            document.getElementById('connectionStatus').className = 'text-xs text-green-600';
+            document.getElementById('refreshBtn').disabled = false;
+            document.getElementById('refreshHint').textContent = 'Live connection active';
+            document.getElementById('retryBtn').style.display = 'none';
+        }
+
+        // ============================================================
+        //  CONTROLS
+        // ============================================================
+        document.getElementById('refreshBtn').addEventListener('click', function() {
+            this.disabled = true;
+            this.textContent = 'Updating…';
+            showToast('Refreshing tracking data…', 'info', 1500);
+            stepSimulation();
+            setTimeout(() => {
+                this.disabled = false;
+                this.textContent = 'Refresh';
+            }, 600);
+        });
+
+        document.getElementById('retryBtn').addEventListener('click', function() {
+            showToast('Reconnecting…', 'info', 1500);
+            document.getElementById('connectionDot').className = 'connection-dot connected';
+            document.getElementById('connectionStatus').textContent = 'Connected';
+            document.getElementById('connectionStatus').className = 'text-xs text-green-600';
+            this.style.display = 'none';
+            document.getElementById('refreshBtn').disabled = false;
+            document.getElementById('refreshHint').textContent = 'Live connection active';
+            if (!simInterval) {
+                lastSimUpdate = Date.now();
+                simInterval = setInterval(stepSimulation, 2200);
+            }
+        });
+
+        // Keyboard shortcut: Ctrl+R to refresh
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'r' && e.ctrlKey) {
+                e.preventDefault();
+                document.getElementById('refreshBtn').click();
+            }
+            if (e.key === 'Escape') {
+                const mc = document.getElementById('mapContainer');
+                if (mc.classList.contains('fullscreen')) {
+                    mc.classList.remove('fullscreen');
+                    document.getElementById('fullscreenBtn').innerHTML = '⛶ Full';
+                    setTimeout(() => map && map.invalidateSize(), 120);
+                }
+            }
+        });
+
+        // ============================================================
+        //  BOOT
+        // ============================================================
+        function boot() {
+            // Show content
+            document.getElementById('loadingSpinner').style.display = 'none';
+            document.getElementById('resultContent').style.display = 'block';
+
+            // Initialize map
+            initMap();
+
+            // Set initial data
+            const initial = generateSimData();
+            updateUI(initial);
+
+            // Start simulation
+            lastSimUpdate = Date.now();
+            simInterval = setInterval(stepSimulation, 2200);
+
+            showToast('📦 Live tracking started', 'success', 2500);
+            console.log('✅ DHL Tracking live');
+        }
+
+        // Boot when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', boot);
+        } else {
+            boot();
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (simInterval) clearInterval(simInterval);
+            if (markerTweenId) cancelAnimationFrame(markerTweenId);
+        });
+
+        console.log('🚚 DHL Live Tracking loaded');
+    </script>
+
 </body>
 </html>
