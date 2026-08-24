@@ -1,415 +1,156 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DHL Live Tracking{% if shipment %} – {{ shipment.tracking_number }}{% endif %}</title>
-
-    <!-- Tailwind (minimal) + custom styles -->
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DHL Live Tracking{% if shipment %} - {{ shipment.tracking_number }}{% endif %}</title>
+    <meta name="description" content="Real‑time DHL shipment tracking with live map, route animation, and instant updates.">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
-        /* ---- DHL variables & reset ---- */
+        /* ---------- Variables ---------- */
         :root {
-            --ink: #151a24;
-            --navy: #1c2a4a;
-            --amber: #e8a33d;
-            --gray-600: #6b7280;
-            --gray-400: #9aa3b0;
-            --gray-300: #c7ccd4;
-            --gray-200: #e6e9ee;
-            --gray-100: #f4f5f7;
-            --paper: #ffffff;
-            --canvas: #eef0f3;
-            --green: #1f9d55;
-            --red: #d84a4a;
-            --line: #e5e8ed;
+            --dhl-red: #D40511;
+            --dhl-yellow: #FFCC00;
+            --dhl-dark: #1a1a1a;
+            --transition-speed: 0.25s;
         }
 
+        /* ---------- Reset & Base ---------- */
         * { box-sizing: border-box; }
-        html, body {
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
             margin: 0;
             padding: 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--gray-100);
-            color: var(--ink);
-            -webkit-font-smoothing: antialiased;
-            height: 100%;
-        }
-
-        .app {
-            max-width: 1400px;
-            margin: 20px auto;
-            background: var(--paper);
-            border-radius: 20px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(20,22,26,0.06), 0 12px 32px rgba(20,22,26,0.06);
+            line-height: 1.6;
+            background: #f8f9fa;
+            color: #1a1a1a;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
-            min-height: 90vh;
         }
 
-        /* ---- Navbar ---- */
-        .navbar {
+        /* ---------- Header ---------- */
+        .header {
+            background: linear-gradient(to right, var(--dhl-yellow), #fff);
+            padding: 10px 20px;
             display: flex;
-            align-items: center;
             justify-content: space-between;
-            padding: 14px 24px;
-            border-bottom: 1px solid var(--line);
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             flex-wrap: wrap;
-            gap: 12px;
-        }
-        .navbar .brand {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            font-weight: 800;
-            font-size: 15px;
-            letter-spacing: -0.01em;
-            color: var(--navy);
-        }
-        .navbar .brand .dot {
-            width: 9px;
-            height: 9px;
-            border-radius: 50%;
-            background: var(--amber);
-        }
-        .navbar nav {
-            display: flex;
-            gap: 28px;
-        }
-        .navbar nav a {
-            font-size: 13.5px;
-            color: var(--gray-600);
-            text-decoration: none;
-            font-weight: 500;
-            transition: color 0.2s;
-        }
-        .navbar nav a:hover { color: var(--navy); }
-        .navbar nav a.active {
-            color: var(--ink);
-            position: relative;
-        }
-        .navbar nav a.active::after {
-            content: '';
-            position: absolute;
-            left: 0;
-            right: 0;
-            bottom: -19px;
-            height: 2px;
-            background: var(--navy);
-        }
-        .search-box {
-            display: flex;
-            align-items: center;
             gap: 8px;
-            background: var(--gray-100);
-            border-radius: 10px;
-            padding: 8px 14px;
-            font-size: 12.5px;
-            color: var(--gray-400);
-            min-width: 200px;
         }
-        .search-box input {
+        .header img {
+            height: 40px;
+            max-width: 100%;
+            object-fit: contain;
+        }
+        .menu-btn {
             border: none;
             background: transparent;
-            outline: none;
-            font-size: 12.5px;
-            color: var(--ink);
-            width: 100%;
-        }
-        .search-box input::placeholder { color: var(--gray-400); }
-        .search-box svg {
-            width: 14px;
-            height: 14px;
-            flex-shrink: 0;
-        }
-        .track-btn {
-            background: var(--navy);
-            color: #fff;
-            border: none;
-            border-radius: 10px;
-            padding: 8px 18px;
-            font-size: 13px;
-            font-weight: 600;
+            font-size: 24px;
             cursor: pointer;
-            transition: opacity 0.2s;
-        }
-        .track-btn:disabled {
-            opacity: 0.5;
-            cursor: default;
-        }
-        .track-btn:hover:not(:disabled) { opacity: 0.85; }
-
-        /* ---- Body (sidebar + map) ---- */
-        .body {
-            display: flex;
-            flex: 1;
-            min-height: 600px;
-        }
-
-        /* ---- Sidebar ---- */
-        .sidebar {
-            width: 380px;
-            flex-shrink: 0;
-            padding: 24px 26px 22px;
-            border-right: 1px solid var(--line);
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto;
-            background: var(--paper);
-        }
-        .back-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 14px;
-            font-weight: 700;
-            margin-bottom: 18px;
-        }
-        .back-row a {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            color: var(--ink);
-            text-decoration: none;
-        }
-        .back-row a:hover { color: var(--navy); }
-        .back-row svg {
-            width: 16px;
-            height: 16px;
-        }
-
-        /* Connection / fetch state */
-        .fetch-state {
-            font-size: 12px;
-            color: var(--gray-400);
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .fetch-state .led {
-            width: 7px;
-            height: 7px;
+            padding: 10px;
             border-radius: 50%;
-            background: var(--gray-300);
-            flex-shrink: 0;
+            transition: background var(--transition-speed);
+            line-height: 1;
+            min-width: 44px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        .fetch-state.ok .led { background: var(--green); }
-        .fetch-state.err .led { background: var(--red); }
-        .fetch-state.loading .led {
-            background: var(--amber);
-            animation: blink 1s infinite;
+        .menu-btn:hover,
+        .menu-btn:focus-visible {
+            background: rgba(0,0,0,0.05);
+            outline: 2px solid var(--dhl-red);
+            outline-offset: 2px;
         }
-        @keyframes blink { 50% { opacity: 0.3; } }
-
-        /* Meta grid */
-        .meta-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-        .meta-grid .label {
-            font-size: 10.5px;
-            color: var(--gray-400);
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            margin-bottom: 5px;
-        }
-        .meta-grid .value {
-            font-size: 13px;
-            font-weight: 700;
-            color: var(--ink);
-            word-break: break-word;
-        }
-        .meta-grid .value.accent { color: var(--navy); }
-        .meta-grid .value .status-badge {
-            display: inline-block;
-            padding: 2px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            background: var(--gray-200);
-            color: var(--gray-600);
-        }
-        .meta-grid .value .status-badge.delivered {
-            background: #dcfce7; color: #16a34a;
-        }
-        .meta-grid .value .status-badge.in-transit {
-            background: #dbeafe; color: #1e40af;
-        }
-        .meta-grid .value .status-badge.out-for-delivery {
-            background: #fef3c7; color: #92400e;
-        }
-        .meta-grid .value .status-badge.delayed {
-            background: #fef3c7; color: #d97706;
-        }
-        .meta-grid .value .status-badge.exception {
-            background: #fef2f2; color: #dc2626;
-        }
-        .meta-grid .value .status-badge.pending {
-            background: #f3f4f6; color: #6b7280;
-        }
-        .meta-grid .value .status-badge.on-hold {
-            background: #fef3c7; color: #b45309;
-        }
-
-        /* Timeline */
-        .timeline {
-            position: relative;
-            padding-left: 26px;
-            flex: 1;
-            overflow-y: auto;
-            margin-bottom: 16px;
-            min-height: 120px;
-        }
-        .timeline::before {
-            content: '';
+        .menu-content {
+            display: none;
             position: absolute;
-            left: 5px;
-            top: 6px;
-            bottom: 6px;
-            width: 2px;
-            background: var(--gray-200);
-        }
-        .timeline .rail-fill {
-            position: absolute;
-            left: 5px;
-            top: 6px;
-            width: 2px;
-            background: var(--navy);
-            z-index: 1;
-            transition: height 0.5s ease;
-        }
-        .step {
-            position: relative;
-            margin-bottom: 24px;
-            border-radius: 10px;
-            padding: 6px 8px;
-            margin-left: -8px;
-        }
-        .step:last-child { margin-bottom: 0; }
-        .step .dot {
-            position: absolute;
-            left: -18px;
-            top: 8px;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
+            right: 10px;
+            top: 60px;
             background: #fff;
-            border: 2px solid var(--gray-300);
-            z-index: 2;
-            transition: border-color 0.3s, background 0.3s;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 8px 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 160px;
+            z-index: 1000;
         }
-        .step.done .dot { border-color: var(--navy); }
-        .step.done .dot::after {
-            content: '';
-            position: absolute;
-            inset: 2px;
-            border-radius: 50%;
-            background: var(--navy);
+        .menu-content.show { display: block; }
+        .menu-content a {
+            display: block;
+            padding: 10px 16px;
+            color: #333;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background var(--transition-speed);
         }
-        .step.current .dot {
-            border-color: var(--amber);
-            box-shadow: 0 0 0 4px rgba(232,163,61,0.2);
-        }
-        .step.current .dot::after {
-            content: '';
-            position: absolute;
-            inset: 2px;
-            border-radius: 50%;
-            background: var(--amber);
-        }
-        .step.pending .dot { border-color: var(--gray-200); }
-        .step .time {
-            font-size: 11.5px;
-            color: var(--gray-400);
-            font-weight: 600;
-            margin-bottom: 3px;
-        }
-        .step .title {
-            font-size: 13.5px;
-            font-weight: 700;
-            color: var(--ink);
-            margin-bottom: 3px;
-        }
-        .step .loc {
-            font-size: 12.5px;
-            color: var(--gray-600);
-        }
-        .step .note {
-            font-size: 11.5px;
-            color: var(--red);
-            font-weight: 700;
-            margin-top: 5px;
+        .menu-content a:hover,
+        .menu-content a:focus-visible {
+            background: #f5f5f5;
+            color: var(--dhl-red);
+            outline: none;
         }
 
-        .empty-state {
-            font-size: 13px;
-            color: var(--gray-400);
-            padding: 20px 0;
-        }
-
-        /* Badges */
-        .badges {
-            margin-top: 16px;
-            padding-top: 18px;
-            border-top: 1px solid var(--line);
-            display: flex;
-            justify-content: space-between;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .badge {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
-            font-size: 11px;
-            color: var(--gray-600);
-            font-weight: 600;
+        /* ---------- Titles ---------- */
+        .title {
             text-align: center;
-            flex: 1 1 30%;
-            min-width: 70px;
+            color: var(--dhl-red);
+            font-size: clamp(1.8rem, 3.5vw, 2.5rem);
+            margin: 25px 0 8px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
         }
-        .badge svg {
-            width: 20px;
-            height: 20px;
-            color: var(--navy);
+        .title-sub {
+            text-align: center;
+            color: #666;
+            font-size: 1rem;
+            margin-bottom: 20px;
         }
 
-        /* ---- Map Pane ---- */
-        .map-pane {
+        /* ---------- Layout Containers ---------- */
+        .tracking-result,
+        .map-container,
+        .details {
+            width: min(100%, 980px);
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .map-container {
+            margin: 0 auto 20px;
+            padding: 0 15px;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
             position: relative;
-            flex: 1;
-            background: var(--canvas);
-            min-height: 500px;
+            background: #e9ecef;
         }
         #map {
-            position: absolute;
-            inset: 0;
-            height: 100%;
+            height: 420px;
             width: 100%;
+            z-index: 1;
+            transition: height 0.3s ease;
         }
-        .map-tag {
+        .map-loading-hint {
             position: absolute;
-            top: 18px;
-            left: 18px;
-            width: 6px;
-            border-radius: 4px;
-            height: 34px;
-            background: var(--navy);
-            z-index: 500;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.85rem;
+            color: #9ca3af;
+            font-weight: 500;
+            pointer-events: none;
         }
-
-        /* Fullscreen map */
-        .map-pane.fullscreen {
+        .map-loading-hint.hide { display: none; }
+        /* fullscreen mode */
+        .map-container.fullscreen {
             position: fixed;
             top: 0;
             left: 0;
@@ -420,159 +161,379 @@
             border-radius: 0;
             margin: 0;
         }
-        .map-pane.fullscreen #map { height: 100vh; }
-
-        /* Custom markers */
-        .stop-marker {
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            border: 3px solid #fff;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.25);
-        }
-        .stop-marker.done { background: var(--navy); }
-        .stop-marker.current { background: var(--amber); }
-        .stop-marker.pending { background: #3a3f47; }
-        .truck-marker {
-            width: 26px;
-            height: 26px;
-            border-radius: 50%;
-            background: var(--amber);
-            border: 3px solid #fff;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .truck-marker svg {
-            width: 13px;
-            height: 13px;
-            color: #1c1c1c;
+        .map-container.fullscreen #map {
+            height: 100vh;
         }
 
-        .leaflet-popup-content-wrapper { border-radius: 10px; }
-        .leaflet-popup-content {
-            font-family: inherit;
-            font-size: 12.5px;
-            margin: 10px 12px;
+        .details {
+            background: #fff;
+            padding: 28px 30px;
+            border-radius: 16px;
+            margin: 0 auto 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            border: 1px solid #eee;
+            flex: 1;
         }
-        .leaflet-control-custom {
-            background: white;
-            border: 2px solid rgba(0,0,0,0.12);
+
+        /* ---------- Badges & Labels ---------- */
+        .tracking-number-display {
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+            color: var(--dhl-red);
+            font-size: 1.1rem;
+            background: #fef2f2;
+            padding: 4px 14px;
             border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 13px;
+            display: inline-block;
+            letter-spacing: 0.5px;
+        }
+        .status-badge-header {
+            display: inline-block;
+            padding: 6px 18px;
+            border-radius: 20px;
             font-weight: 600;
-            cursor: pointer;
-            color: #333;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.10);
-            transition: all 0.2s ease;
-            margin: 4px;
-            min-width: 44px;
-            min-height: 44px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            font-size: 0.85rem;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
         }
-        .leaflet-control-custom:hover:not(:disabled) {
-            background: #f5f5f5;
-            border-color: var(--navy);
-        }
-        .leaflet-control-custom:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-        .leaflet-control-custom.active {
-            background: var(--navy);
-            color: white;
-            border-color: var(--navy);
-        }
-        .leaflet-control-custom.active:hover { background: #15203a; }
+        .status-badge-header.delivered { background: #dcfce7; color: #16a34a; }
+        .status-badge-header.in-transit { background: #dbeafe; color: #1e40af; }
+        .status-badge-header.out-for-delivery { background: #fef3c7; color: #92400e; }
+        .status-badge-header.delayed { background: #fef3c7; color: #d97706; }
+        .status-badge-header.exception { background: #fef2f2; color: #dc2626; }
+        .status-badge-header.pending { background: #f3f4f6; color: #6b7280; }
+        .status-badge-header.on-hold { background: #fef3c7; color: #b45309; }
 
-        /* ---- Footer ---- */
-        .footer {
-            background: var(--navy);
-            color: #c7ccd4;
-            padding: 14px 24px;
+        .live-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #22c55e;
+            border-radius: 50%;
+            margin-right: 6px;
+            animation: pulse 2s ease-in-out infinite;
+            will-change: transform, opacity;
+        }
+        .live-indicator.paused-dot {
+            background: #f59e0b;
+            animation: none;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+
+        .connection-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 4px;
+        }
+        .connection-dot.connected { background: #22c55e; }
+        .connection-dot.disconnected { background: #dc2626; }
+
+        /* ---------- Paused Banner ---------- */
+        .paused-banner {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            margin: 12px 0 0;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            color: #92400e;
+            font-size: 0.86rem;
+            font-weight: 600;
+        }
+        .paused-banner.show { display: flex; }
+
+        /* ---------- Speed / Mode Badges ---------- */
+        .meta-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .meta-badge {
+            display: none;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            color: #4b5563;
+            border: 1px solid #e5e7eb;
+        }
+        .meta-badge.show { display: inline-flex; }
+
+        /* ---------- Progress ---------- */
+        .progress-container {
+            margin: 16px 0 20px;
+        }
+        .progress-label {
             display: flex;
             justify-content: space-between;
-            font-size: 12.5px;
-            flex-wrap: wrap;
-            gap: 8px;
+            font-size: 0.85rem;
+            color: #666;
+            margin-bottom: 6px;
         }
-        .footer a {
-            color: #c7ccd4;
+        .progress-bar {
+            height: 6px;
+            background: #e8e8e8;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar .fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, var(--dhl-red), #ef4444);
+            border-radius: 4px;
+            transition: width 0.6s ease;
+        }
+
+        /* ---------- Position Card ---------- */
+        .position-card {
+            margin: 16px 0 18px;
+            padding: 16px 18px;
+            border: 1px solid #f1d8d9;
+            background: linear-gradient(135deg, #fff8f8 0%, #ffffff 100%);
+            border-radius: 14px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+        }
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .position-title {
+            font-weight: 700;
+            color: var(--dhl-dark);
+            font-size: 1rem;
+        }
+        .position-subtitle {
+            font-size: 0.84rem;
+            color: #6b7280;
+        }
+        .position-pill {
+            display: inline-flex;
+            align-items: center;
+            background: #fef2f2;
+            color: var(--dhl-red);
+            border: 1px solid #f5c2c7;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .position-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .position-grid .detail-label {
+            margin-bottom: 2px;
+        }
+
+        /* ---------- Arrival & Checkpoint Cards ---------- */
+        .arrival-card {
+            margin: 14px 0 18px;
+            padding: 14px 16px;
+            border-radius: 12px;
+            background: #fcfcfd;
+            border: 1px solid #ececec;
+        }
+        .arrival-card .arrival-title {
+            font-size: 0.82rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #6b7280;
+            margin-bottom: 6px;
+        }
+        .arrival-card .arrival-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--dhl-dark);
+        }
+        .next-checkpoint {
+            margin: 10px 0 12px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #fff7ef;
+            border: 1px solid #fde3c7;
+        }
+        .next-checkpoint .label {
+            font-size: 0.78rem;
+            color: #92400e;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .next-checkpoint .value {
+            font-size: 0.98rem;
+            color: #7c2d12;
+            font-weight: 600;
+        }
+
+        /* ---------- Checkpoints ---------- */
+        .checkpoint {
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            transition: all 0.3s ease;
+        }
+        .checkpoint:last-child { border-bottom: none; }
+        .checkpoint .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--dhl-red);
+            margin-top: 5px;
+            flex-shrink: 0;
+        }
+        .checkpoint .dot.delivered { background: #22c55e; }
+        .checkpoint .dot.pending { background: #94a3b8; }
+        .checkpoint .time {
+            color: #666;
+            font-size: 0.8rem;
+            min-width: 140px;
+        }
+        .checkpoint .location {
+            font-weight: 500;
+            color: var(--dhl-dark);
+        }
+        .checkpoint .event {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        .checkpoint-new {
+            animation: slideIn 0.5s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-12px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        /* ---------- Details Grid ---------- */
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 20px;
+            margin: 16px 0 12px;
+            padding: 12px 0;
+            border-top: 1px solid #f0f0f0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .details-grid .detail-item {
+            padding: 4px 0;
+        }
+        .details-grid .detail-label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+        .details-grid .detail-value {
+            font-weight: 500;
+        }
+
+        /* ---------- Parcel Photos Grid ---------- */
+        .parcel-photos-section {
+            margin-top: 20px;
+            border-top: 1px solid #f0f0f0;
+            padding-top: 16px;
+        }
+        .parcel-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 16px;
+            margin-top: 8px;
+        }
+        .grid-item {
+            background: #fff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            cursor: pointer;
+        }
+        .grid-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+        }
+        .grid-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            display: block;
+        }
+        .grid-label {
+            padding: 8px 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #1a1a1a;
+            text-align: center;
+            background: #fafafa;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        /* ---------- Buttons ---------- */
+        .back-button {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 24px;
+            background: var(--dhl-red);
+            color: white;
+            border-radius: 8px;
             text-decoration: none;
-            margin-right: 22px;
-            transition: color 0.2s;
+            font-weight: 600;
+            transition: background var(--transition-speed) ease, transform 0.1s;
         }
-        .footer a:hover { color: #fff; }
-
-        /* ---- Responsive ---- */
-        @media (max-width: 820px) {
-            .body { flex-direction: column; }
-            .sidebar {
-                width: 100%;
-                border-right: none;
-                border-bottom: 1px solid var(--line);
-                max-height: 500px;
-            }
-            .map-pane { height: 400px; min-height: 300px; }
-            .navbar nav { display: none; }
-            .search-box { min-width: 120px; }
-            .meta-grid { grid-template-columns: 1fr 1fr; }
+        .back-button:hover,
+        .back-button:focus-visible {
+            background: #b0040e;
+            outline: 2px solid var(--dhl-red);
+            outline-offset: 2px;
         }
+        .back-button:active { transform: scale(0.97); }
 
-        @media (max-width: 600px) {
-            .sidebar { padding: 16px 18px; }
-            .meta-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
-            .meta-grid .value { font-size: 12px; }
-            .step .title { font-size: 12.5px; }
-            .step .loc { font-size: 11.5px; }
-            .badge { font-size: 10px; min-width: 60px; }
-            .badge svg { width: 18px; height: 18px; }
-            .map-pane { height: 320px; min-height: 250px; }
-            .navbar { padding: 10px 16px; }
-            .search-box { min-width: 100px; padding: 6px 10px; }
-            .track-btn { padding: 6px 14px; font-size: 12px; }
+        .refresh-btn {
+            padding: 6px 16px;
+            background: var(--dhl-red);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all var(--transition-speed) ease;
+            min-height: 36px;
         }
-
-        @media (max-width: 480px) {
-            .navbar { flex-direction: column; align-items: stretch; }
-            .search-box { width: 100%; }
-            .track-btn { width: 100%; }
-            .sidebar { padding: 12px 14px; max-height: 400px; }
-            .meta-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
-            .meta-grid .label { font-size: 9px; }
-            .meta-grid .value { font-size: 11px; }
-            .timeline { padding-left: 20px; }
-            .step { padding: 4px 6px; margin-bottom: 18px; }
-            .step .dot { width: 10px; height: 10px; left: -15px; top: 6px; }
-            .step .time { font-size: 10px; }
-            .step .title { font-size: 12px; }
-            .step .loc { font-size: 11px; }
-            .badge { font-size: 9px; min-width: 50px; }
-            .badge svg { width: 16px; height: 16px; }
-            .map-pane { height: 260px; min-height: 200px; }
-            .footer { font-size: 11px; padding: 10px 16px; flex-direction: column; align-items: center; gap: 6px; }
-            .footer a { margin-right: 12px; }
+        .refresh-btn:hover:not(:disabled) {
+            background: #b0040e;
+            transform: scale(1.02);
+        }
+        .refresh-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .refresh-hint {
+            font-size: 0.8rem;
+            color: #94a3b8;
         }
 
-        @media (max-width: 380px) {
-            .sidebar { padding: 10px 12px; max-height: 350px; }
-            .meta-grid { grid-template-columns: 1fr; }
-            .map-pane { height: 200px; min-height: 180px; }
-            .step .title { font-size: 11px; }
-            .step .loc { font-size: 10px; }
-            .badges { flex-direction: column; align-items: stretch; gap: 6px; }
-            .badge { flex-direction: row; justify-content: center; gap: 6px; width: 100%; font-size: 10px; }
-            .badge svg { width: 14px; height: 14px; }
-            .navbar .brand { font-size: 13px; }
-            .search-box input { font-size: 11px; }
-            .track-btn { font-size: 11px; padding: 6px 10px; }
-        }
-
-        /* ---- Toast ---- */
+        /* ---------- Toast ---------- */
         .toast-container {
             position: fixed;
             top: 80px;
@@ -615,774 +576,1217 @@
             to { opacity: 1; transform: translateX(0); }
         }
 
-        /* ---- Spinner (legacy) ---- */
+        /* ---------- Loading Spinner ---------- */
         .spinner {
             display: inline-block;
             width: 32px;
             height: 32px;
-            border: 4px solid rgba(28,42,74,0.15);
-            border-top-color: var(--navy);
+            border: 4px solid rgba(212,5,17,0.2);
+            border-top-color: var(--dhl-red);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ---- Scrollbar ---- */
-        .sidebar::-webkit-scrollbar { width: 4px; }
-        .sidebar::-webkit-scrollbar-track { background: transparent; }
-        .sidebar::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 4px; }
-        .sidebar::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
+        /* ---------- Error ---------- */
+        .error-message {
+            max-width: 760px;
+            margin: 30px auto;
+            padding: 22px;
+            border: 1px solid #f5c2c7;
+            background: #fef2f2;
+            color: #842029;
+            border-radius: 14px;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.04);
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+        .error-message a {
+            color: var(--dhl-red);
+            text-decoration: underline;
+            font-weight: 500;
+        }
+
+        /* ---------- Footer ---------- */
+        .footer {
+            background: linear-gradient(to right, var(--dhl-yellow), #fff);
+            padding: 30px 20px;
+            color: #333;
+            text-align: center;
+            margin-top: 40px;
+            border-top: 1px solid #e5e5e5;
+        }
+        .footer .footer-content {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            max-width: 1200px;
+            margin: 0 auto 20px;
+        }
+        .footer-section {
+            margin: 0 15px 20px;
+            flex: 1;
+            min-width: 150px;
+            text-align: left;
+        }
+        .footer-section h3 {
+            color: var(--dhl-red);
+            font-size: 1.05rem;
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+        .footer-section p,
+        .footer-section a {
+            color: #333;
+            text-decoration: none;
+            display: block;
+            margin: 6px 0;
+            font-size: 0.92rem;
+        }
+        .footer-section a:hover,
+        .footer-section a:focus-visible {
+            color: var(--dhl-red);
+            text-decoration: underline;
+            outline: none;
+        }
+        .footer .copyright {
+            font-size: 0.82rem;
+            color: #666;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+        .last-updated {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 12px;
+        }
+
+        /* ---------- Map Controls (Leaflet override) ---------- */
+        .leaflet-control-custom {
+            background: white;
+            border: 2px solid rgba(0,0,0,0.2);
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #333;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            transition: all 0.2s ease;
+            margin: 4px;
+            min-width: 44px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .leaflet-control-custom:hover:not(:disabled) {
+            background: #f0f0f0;
+            border-color: var(--dhl-red);
+        }
+        .leaflet-control-custom:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .leaflet-control-custom.active {
+            background: var(--dhl-red);
+            color: white;
+            border-color: var(--dhl-red);
+        }
+        .leaflet-control-custom.active:hover {
+            background: #b0040e;
+        }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 1024px) {
+            .details { padding: 24px 22px; }
+            #map { height: 360px; }
+        }
+        @media (max-width: 768px) {
+            .title { font-size: 1.7em; margin: 18px 0 8px; }
+            .title-sub { font-size: 0.95rem; }
+            .details { padding: 20px 18px; }
+            #map { height: 320px; }
+            .details-grid { grid-template-columns: 1fr; gap: 14px; }
+            .checkpoint { flex-direction: column; align-items: stretch; }
+            .checkpoint .time { min-width: auto; margin-bottom: 4px; }
+            .position-grid { grid-template-columns: 1fr; }
+            .header { gap: 8px; }
+            .flex.items-center.justify-between.flex-wrap.gap-3 {
+                flex-wrap: wrap !important;
+                gap: 6px !important;
+            }
+            .flex.items-center.gap-3.mt-4.flex-wrap {
+                flex-wrap: wrap !important;
+                gap: 6px !important;
+            }
+            .status-badge-header {
+                font-size: 0.75rem !important;
+                padding: 4px 12px !important;
+            }
+            .tracking-number-display {
+                font-size: 0.85rem !important;
+                padding: 2px 10px !important;
+            }
+            .parcel-grid {
+                grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+                gap: 12px;
+            }
+            .grid-item img {
+                height: 120px;
+            }
+        }
+        @media (max-width: 480px) {
+            #map { height: 260px; }
+            .details { padding: 16px 14px; }
+            .position-pill { font-size: 0.7rem !important; padding: 4px 8px; }
+            .refresh-hint { display: none; }
+            .parcel-grid {
+                grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+                gap: 8px;
+            }
+            .grid-item img {
+                height: 100px;
+            }
+            .grid-label {
+                font-size: 0.65rem;
+                padding: 4px 6px;
+            }
+        }
+        @media (max-width: 380px) {
+            #map { height: 200px; }
+            .tracking-number-display {
+                font-size: 0.7rem !important;
+                padding: 2px 6px !important;
+            }
+            .status-badge-header {
+                font-size: 0.6rem !important;
+                padding: 2px 8px !important;
+            }
+            .parcel-grid {
+                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            }
+            .grid-item img {
+                height: 80px;
+            }
+        }
+
+        /* ---------- Reduced motion ---------- */
+        @media (prefers-reduced-motion: reduce) {
+            .live-indicator { animation: none; }
+            .progress-bar .fill { transition: none; }
+            .checkpoint-new { animation: none; }
+        }
     </style>
 
-    <!-- Socket.IO + Leaflet JS -->
+    <!--
+        NOTE ON LEAFLET LOADING:
+        Leaflet's CSS and JS are intentionally NOT loaded via static
+        <link>/<script> tags with integrity="..." (SRI) attributes here.
+        A previous version pinned an SRI hash that did not match the
+        actual file served by the CDN, which caused the browser to
+        silently block the script - Leaflet never loaded, and the map
+        stayed a blank gray box with no console error beyond a blocked-
+        resource warning. Worse, the fallback loader's guard clause
+        checked "is there already a <script> tag mentioning leaflet in
+        the DOM" to decide whether to skip loading - which was always
+        true (the blocked tag was still present), so the fallback never
+        actually ran either.
+        Both resources are now loaded dynamically at runtime (see
+        loadLeaflet() in the script below), with no guessed SRI hash to
+        get wrong and no tag-presence guard to falsely trip.
+    -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"
             integrity="sha384-2iD2sSxOOsF8bh3X9bLlTGNlbWtQhJcHhPcZ+VAoZkC3XxgdRCpM9vB2M/6OVPr"
             crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin="anonymous"></script>
 </head>
 <body>
-
-<div class="app">
-
-    <!-- ===== NAVBAR ===== -->
-    <div class="navbar">
-        <div class="brand">
-            <span class="dot"></span>
-            <span>DHL Track</span>
+    <!-- ====== HEADER ====== -->
+    <header class="header">
+        <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL Logo">
+        <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="menuContent" type="button">☰</button>
+        <div id="menuContent" class="menu-content" role="menu" aria-labelledby="menuBtn">
+            <a role="menuitem" href="{{ url_for('index') }}">Home</a>
+            <a role="menuitem" href="#">Contact</a>
+            <a role="menuitem" href="#">Support</a>
         </div>
-        <nav>
-            <a href="{{ url_for('index') }}">Home</a>
-            <a href="#" class="active">Tracking</a>
-            <a href="#">Support</a>
-        </nav>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <div class="search-box">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="11" cy="11" r="7" />
-                    <path d="M21 21l-4.35-4.35" />
-                </svg>
-                <input id="trackingInput" placeholder="Track another shipment" value="{% if shipment %}{{ shipment.tracking_number }}{% endif %}">
-            </div>
-            <button class="track-btn" id="trackBtn">Track</button>
+    </header>
+
+    <!-- ====== TITLE ====== -->
+    <h1 class="title">Tracking Details</h1>
+    <p class="title-sub">Real‑time tracking for your DHL shipment</p>
+
+    <!-- ====== TOAST CONTAINER ====== -->
+    <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
+
+    <!-- ============================================================ -->
+    <!--  MAIN CONTENT – conditional on error                          -->
+    <!-- ============================================================ -->
+    {% if error %}
+        <!-- ====== ERROR STATE ====== -->
+        <div class="error-message">
+            <span>📦</span> {{ error }}<br>
+            <a href="{{ url_for('index') }}">Try again →</a>
         </div>
-    </div>
-
-    <!-- ===== BODY ===== -->
-    <div class="body">
-
-        <!-- SIDEBAR -->
-        <div class="sidebar" id="sidebar">
-
-            <!-- Back / home link -->
-            <div class="back-row">
-                <a href="{{ url_for('index') }}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 18l-6-6 6-6" /></svg>
-                    Shipment Details
-                </a>
+    {% else %}
+        <!-- ====== TRACKING CONTENT (shipment exists) ====== -->
+        <div class="tracking-result" id="trackingResult">
+            <!-- Loading Spinner (shown while initial data loads) -->
+            <div id="loadingSpinner" class="text-center py-8">
+                <div class="spinner" role="status" aria-label="Loading tracking data"></div>
+                <p class="mt-2 text-gray-500">Fetching live data…</p>
             </div>
 
-            <!-- Connection status -->
-            <div class="fetch-state" id="fetchState">
-                <span class="led" id="fetchLed"></span>
-                <span id="fetchStateLabel">Loading…</span>
-            </div>
+            <div id="resultContent" style="display:none;">
+                <!-- ====== MAP ====== -->
+                <div class="map-container" id="mapContainer">
+                    <div id="map"></div>
+                    <div class="map-loading-hint" id="mapLoadingHint">Loading map…</div>
+                </div>
 
-            <!-- Meta grid -->
-            <div class="meta-grid">
-                <div>
-                    <div class="label">Tracking ID</div>
-                    <div class="value" id="metaTrackingId">—</div>
-                </div>
-                <div>
-                    <div class="label">Status</div>
-                    <div class="value" id="metaStatus">—</div>
-                </div>
-                <div>
-                    <div class="label">Est. Arrival</div>
-                    <div class="value accent" id="metaEta">—</div>
+                <!-- ====== DETAILS ====== -->
+                <div class="details" id="details">
+                    <!-- Tracking Number & Status -->
+                    <div class="flex items-center justify-between flex-wrap gap-3">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
+                            <span class="tracking-number-display" id="trackingNumberDisplay">{{ shipment.tracking_number }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm text-gray-400 font-medium hidden sm:inline mr-1">Status</span>
+                            <span id="status" class="status-badge-header 
+                                {% if shipment.status == 'Delivered' %}delivered
+                                {% elif shipment.status == 'In_Transit' %}in-transit
+                                {% elif shipment.status == 'Out_for_Delivery' %}out-for-delivery
+                                {% elif shipment.status == 'Delayed' %}delayed
+                                {% elif shipment.status == 'Exception' %}exception
+                                {% elif shipment.status == 'On_Hold' %}on-hold
+                                {% else %}pending{% endif %}">
+                                {{ shipment.status }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Live Controls -->
+                    <div class="flex items-center gap-3 mt-4 flex-wrap">
+                        <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
+                        <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
+                        <span class="connection-dot connected" id="connectionDot" aria-hidden="true"></span>
+                        <span id="connectionStatus" class="text-xs text-gray-500">Connected</span>
+                        <button class="refresh-btn" id="refreshBtn" disabled aria-label="Refresh tracking data">Refresh</button>
+                        <span id="refreshHint" class="refresh-hint">Live connection active</span>
+                        <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection">Reconnect</button>
+                    </div>
+
+                    <!-- Simulator state badges (speed / transport mode) -->
+                    <div class="meta-badges" id="metaBadges">
+                        <span class="meta-badge" id="modeBadge">🚚 Ground</span>
+                        <span class="meta-badge" id="speedBadge">1.0x speed</span>
+                    </div>
+
+                    <!-- Paused banner (shown when the simulator is paused) -->
+                    <div class="paused-banner" id="pausedBanner" role="status">
+                        <span>⏸</span>
+                        <span>This shipment's simulation is currently paused — position will resume updating once it's restarted.</span>
+                    </div>
+
+                    <!-- Position Card -->
+                    <div class="position-card" id="positionCard">
+                        <div class="position-header">
+                            <div>
+                                <div class="position-title">Live Shipment Position</div>
+                                <div class="position-subtitle">Current location</div>
+                            </div>
+                            <div class="position-pill">
+                                <span class="live-indicator" style="width:6px;height:6px;margin-right:4px;" aria-hidden="true"></span>
+                                <span id="positionStatusText">Tracking live</span>
+                            </div>
+                        </div>
+                        <div class="position-grid">
+                            <div>
+                                <div class="detail-label">Current City</div>
+                                <div class="detail-value" id="currentLocation">{{ current_location | default('Calculating...') }}</div>
+                            </div>
+                            <div>
+                                <div class="detail-label">Coordinates</div>
+                                <div class="detail-value" id="currentCoordinates">
+                                    {% if current_lat is not none and current_lon is not none %}
+                                        {{ current_lat }}, {{ current_lon }}
+                                    {% else %}
+                                        Pending
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Arrival & Checkpoint -->
+                    <div class="arrival-card">
+                        <div class="arrival-title">Estimated Arrival</div>
+                        <div class="arrival-value" id="estimatedArrival">{{ delivery_window | default('Calculating...') }}</div>
+                    </div>
+                    <div class="arrival-card">
+                        <div class="arrival-title">Last Checkpoint</div>
+                        <div class="arrival-value" id="lastCheckpoint">{{ checkpoints[-1] if checkpoints else 'Waiting for first scan' }}</div>
+                    </div>
+                    <div class="next-checkpoint" id="nextCheckpointCard">
+                        <div class="label">Next Checkpoint</div>
+                        <div class="value" id="nextCheckpoint">{{ checkpoints[1] if checkpoints and checkpoints|length > 1 else 'Next scan pending' }}</div>
+                    </div>
+
+                    <!-- Progress -->
+                    <div class="progress-container">
+                        <div class="progress-label">
+                            <span>Delivery Progress</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="fill" id="progressFill" style="width:0%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Checkpoints -->
+                    <h3 class="text-lg font-semibold mt-2 mb-2 text-gray-700">Tracking History</h3>
+                    <div id="checkpoints">
+                        {% if checkpoints %}
+                            {% for checkpoint in checkpoints %}
+                                <div class="checkpoint">
+                                    <div class="dot {% if 'Delivered' in checkpoint or 'delivered' in checkpoint|lower %}delivered{% endif %}"></div>
+                                    <div>
+                                        <div class="time">{{ checkpoint.split(' - ')[0] if ' - ' in checkpoint else '' }}</div>
+                                        <div class="location">{{ checkpoint.split(' - ')[1] if (' - ' in checkpoint and checkpoint.split(' - ')|length > 1) else '' }}</div>
+                                        <div class="event">{{ checkpoint.split(' - ')[2:]|join(' - ') if ' - ' in checkpoint and checkpoint.split(' - ')|length > 2 else checkpoint }}</div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="checkpoint">
+                                <div class="dot pending"></div>
+                                <div>
+                                    <div class="location">No checkpoints available</div>
+                                    <div class="event">Tracking information will appear here</div>
+                                </div>
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Details Grid -->
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <div class="detail-label">Origin</div>
+                            <div class="detail-value">{{ shipment.origin_location or 'N/A' }}</div>
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Destination</div>
+                            <div class="detail-value" id="deliveryLocation">{{ shipment.delivery_location }}</div>
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Service Level</div>
+                            <div class="detail-value" id="serviceLevel">{{ service_level | default('DHL Express') }}</div>
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Estimated Delivery</div>
+                            <div class="detail-value" id="deliveryWindow">{{ delivery_window | default('Calculating...') }}</div>
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Proof of Delivery</div>
+                            <div class="detail-value" id="proofOfDelivery">{{ proof_of_delivery | default('Pending') }}</div>
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Carrier</div>
+                            <div class="detail-value">{{ shipment.carrier or 'DHL' }}</div>
+                        </div>
+                    </div>
+
+                    <!-- Last Updated -->
+                    <div class="last-updated" id="lastUpdated">
+                        Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
+                    </div>
+
+                    <!-- ====== PARCEL PHOTOS – only one image ====== -->
+                    <div class="parcel-photos-section">
+                        <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
+                        <div class="parcel-grid">
+                            <div class="grid-item">
+                                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel photo">
+                                <div class="grid-label">Parcel #1</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- ====== END PARCEL PHOTOS ====== -->
+
+                    <!-- Back Button -->
+                    <a href="{{ url_for('index') }}" class="back-button">← Back to home</a>
                 </div>
             </div>
-
-            <!-- Timeline -->
-            <div class="timeline" id="timeline">
-                <div class="empty-state">Loading checkpoint data…</div>
-            </div>
-
-            <!-- Badges -->
-            <div class="badges" id="badges">
-                <div class="badge">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" /></svg>
-                    <span id="badgeService">Service</span>
-                </div>
-                <div class="badge">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" /></svg>
-                    <span id="badgeCarrier">Carrier</span>
-                </div>
-                <div class="badge">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
-                    <span id="badgeMode">Mode</span>
-                </div>
-            </div>
-
-            <!-- Hidden legacy elements (kept for compatibility) -->
-            <div style="display:none;" id="legacyDetails">
-                <span id="status"></span>
-                <span id="progressPercent"></span>
-                <span id="progressFill"></span>
-                <span id="currentLocation"></span>
-                <span id="currentCoordinates"></span>
-                <span id="positionStatusText"></span>
-                <span id="estimatedArrival"></span>
-                <span id="lastCheckpoint"></span>
-                <span id="nextCheckpoint"></span>
-                <span id="deliveryLocation"></span>
-                <span id="serviceLevel"></span>
-                <span id="deliveryWindow"></span>
-                <span id="proofOfDelivery"></span>
-                <span id="lastUpdated"></span>
-                <span id="trackingNumberDisplay"></span>
-                <span id="liveIndicator"></span>
-                <span id="liveIndicatorLabel"></span>
-                <span id="connectionDot"></span>
-                <span id="connectionStatus"></span>
-                <span id="refreshHint"></span>
-                <span id="retryBtn"></span>
-                <span id="modeBadge"></span>
-                <span id="speedBadge"></span>
-                <span id="pausedBanner"></span>
-            </div>
-
         </div>
 
-        <!-- MAP PANE -->
-        <div class="map-pane" id="mapContainer">
-            <div class="map-tag"></div>
-            <div id="map"></div>
-        </div>
-
-    </div>
-
-    <!-- ===== FOOTER ===== -->
-    <div class="footer">
-        <div>
-            <a href="#">Help</a>
-            <a href="#">FAQ</a>
-            <a href="#">Contact</a>
-        </div>
-        <div>&copy; 2026 DHL International</div>
-    </div>
-
-</div>
-
-<!-- ===== TOAST CONTAINER ===== -->
-<div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
-
-<!-- ============================================================ -->
-<!--  SCRIPTS – full tracking logic                               -->
-<!-- ============================================================ -->
-<script>
-    // --------------------------------------------------------------
-    //  GLOBALS & HELPERS
-    // --------------------------------------------------------------
-    const SOCKET_URL = window.location.origin;
-    const REFRESH_INTERVAL_MS = 30000;
-    const MARKER_TWEEN_MS = 900;
-    const DEBUG = true;   // set to false in production
-
-    function debugLog(...args) { if (DEBUG) console.log(...args); }
-
-    function sanitizeArray(arr) { return Array.isArray(arr) ? arr : []; }
-
-    function toNum(v) {
-        if (v === null || v === undefined) return null;
-        const n = parseFloat(v);
-        return isNaN(n) ? null : n;
-    }
-
-    function fmtDate(iso) {
-        if (!iso) return '—';
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return iso;
-        return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    }
-
-    // Status badge CSS class mapping
-    function statusBadgeClass(status) {
-        const map = {
-            'Delivered': 'delivered',
-            'In_Transit': 'in-transit',
-            'Out_for_Delivery': 'out-for-delivery',
-            'Delayed': 'delayed',
-            'Exception': 'exception',
-            'On_Hold': 'on-hold'
-        };
-        return map[status] || 'pending';
-    }
-
-    // --------------------------------------------------------------
-    //  TOAST
-    // --------------------------------------------------------------
-    function showToast(message, type = 'info', duration = 5000) {
-        const container = document.getElementById('toastContainer');
-        if (!container) return;
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.setAttribute('role', 'alert');
-        toast.innerHTML = `
-            <span>${message}</span>
-            <button class="close-toast" aria-label="Dismiss notification">&times;</button>
-        `;
-        container.appendChild(toast);
-        const closeBtn = toast.querySelector('.close-toast');
-        closeBtn.addEventListener('click', () => toast.remove());
-        setTimeout(() => { if (toast.parentNode) toast.remove(); }, duration);
-    }
-
-    // --------------------------------------------------------------
-    //  SOCKET.IO SETUP
-    // --------------------------------------------------------------
-    const socket = io(SOCKET_URL, {
-        transports: ['polling', 'websocket'],
-        reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-        auth: {}
-    });
-
-    let trackingInterval = null;
-
-    function updateConnectionStatus(connected) {
-        const dot = document.getElementById('fetchLed');
-        const label = document.getElementById('fetchStateLabel');
-        const stateEl = document.getElementById('fetchState');
-        if (dot) dot.className = 'led';
-        if (stateEl) {
-            stateEl.className = `fetch-state ${connected ? 'ok' : 'err'}`;
-        }
-        if (label) label.textContent = connected ? 'Connected' : 'Disconnected';
-    }
-
-    socket.on('connect', () => {
-        debugLog('Socket.IO connected');
-        updateConnectionStatus(true);
-        requestTracking();
-        if (trackingInterval) clearInterval(trackingInterval);
-        trackingInterval = setInterval(() => {
-            if (socket.connected) requestTracking();
-        }, REFRESH_INTERVAL_MS);
-    });
-
-    socket.on('disconnect', () => {
-        debugLog('Socket.IO disconnected');
-        updateConnectionStatus(false);
-        if (trackingInterval) {
-            clearInterval(trackingInterval);
-            trackingInterval = null;
-        }
-    });
-
-    socket.on('connect_error', (err) => {
-        console.error('Socket.IO connection error:', err);
-        updateConnectionStatus(false);
-        showToast('Connection error – retrying…', 'error', 4000);
-    });
-
-    // --------------------------------------------------------------
-    //  TRACKING REQUEST
-    // --------------------------------------------------------------
-    const trackingNumber = "{{ shipment.tracking_number if shipment else '' }}";
-
-    function requestTracking() {
-        if (!trackingNumber) { debugLog('No tracking number – skipping'); return; }
-        debugLog('Requesting tracking update');
-        socket.emit('request_tracking', { tracking_number: trackingNumber });
-    }
-
-    // Track another shipment via input
-    document.getElementById('trackBtn').addEventListener('click', () => {
-        const id = document.getElementById('trackingInput').value.trim();
-        if (id) window.location.href = `/track/${id}`;
-    });
-    document.getElementById('trackingInput').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            const id = e.target.value.trim();
-            if (id) window.location.href = `/track/${id}`;
-        }
-    });
-
-    // --------------------------------------------------------------
-    //  MAP INITIALIZATION
-    // --------------------------------------------------------------
-    let map = null;
-    let markerGroup, polylineGroup, liveMarkerGroup;
-    let routeBounds = null;
-    let smoothMotionEnabled = true;
-
-    function initMap() {
-        try {
-            if (typeof L === 'undefined') {
-                console.warn('Leaflet library not loaded – map will not be available');
-                return;
-            }
-            const container = document.getElementById('map');
-            if (!container) { console.error('Map container missing'); return; }
-
-            map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO',
-                subdomains: 'abcd',
-                maxZoom: 19
-            }).addTo(map);
-
-            markerGroup = L.layerGroup().addTo(map);
-            polylineGroup = L.layerGroup().addTo(map);
-            liveMarkerGroup = L.layerGroup().addTo(map);
-
-            // Custom controls
-            const SmoothMotionControl = L.Control.extend({
-                options: { position: 'topright' },
-                onAdd: function() {
-                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                    container.id = 'toggleSmoothMotion';
-                    container.innerHTML = '▶ Smooth';
-                    container.classList.add('active');
-                    container.setAttribute('aria-label', 'Toggle smooth marker movement');
-                    container.setAttribute('role', 'switch');
-                    container.setAttribute('aria-checked', 'true');
-                    container.onclick = function() {
-                        smoothMotionEnabled = !smoothMotionEnabled;
-                        container.classList.toggle('active');
-                        container.innerHTML = smoothMotionEnabled ? '▶ Smooth' : '⏸ Instant';
-                        container.setAttribute('aria-checked', smoothMotionEnabled ? 'true' : 'false');
-                    };
-                    return container;
+        <!-- ============================================================ -->
+        <!--  SCRIPT – inside the "else" block, so shipment is guaranteed  -->
+        <!-- ============================================================ -->
+        <script>
+            // ============================================================
+            //  GLOBAL ERROR HANDLER – catches any uncaught error
+            // ============================================================
+            window.onerror = function(message, source, lineno, colno, error) {
+                console.error('Global error caught:', message, error);
+                const spinner = document.getElementById('loadingSpinner');
+                if (spinner) {
+                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${message}</p>`;
                 }
-            });
+                return true;
+            };
 
-            const ResetViewControl = L.Control.extend({
-                options: { position: 'topright' },
-                onAdd: function() {
-                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                    container.id = 'resetView';
-                    container.innerHTML = '⊞ Reset';
-                    container.setAttribute('aria-label', 'Reset map view');
-                    container.disabled = true;
-                    container.onclick = function() {
-                        if (routeBounds) map.fitBounds(routeBounds, { padding: [20, 20] });
-                        else if (window._lastMarkerLatLng) map.setView(window._lastMarkerLatLng, 6);
-                    };
-                    return container;
+            console.log('📦 Tracking page script started (inside else block)');
+
+            // ============================================================
+            //  SHOW CONTENT IMMEDIATELY (hides spinner)
+            // ============================================================
+            function showContent() {
+                try {
+                    document.getElementById('loadingSpinner').style.display = 'none';
+                    document.getElementById('resultContent').style.display = 'block';
+                    console.log('✅ Content shown – spinner hidden');
+                } catch (e) {
+                    console.error('Error showing content:', e);
                 }
-            });
+            }
+            showContent();
 
-            const FullscreenControl = L.Control.extend({
-                options: { position: 'topright' },
-                onAdd: function() {
-                    const container = L.DomUtil.create('button', 'leaflet-control-custom');
-                    container.id = 'fullscreenBtn';
-                    container.innerHTML = '⛶ Full';
-                    container.setAttribute('aria-label', 'Toggle fullscreen map');
-                    container.onclick = function() {
-                        const mapContainer = document.getElementById('mapContainer');
-                        if (!mapContainer) return;
-                        mapContainer.classList.toggle('fullscreen');
-                        setTimeout(() => map.invalidateSize(), 100);
-                        container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Full';
-                    };
-                    return container;
+            // ============================================================
+            //  CONSTANTS & CONFIGURATION
+            // ============================================================
+            const SOCKET_URL = window.location.origin;
+            const REFRESH_INTERVAL_MS = 30000;
+            const MARKER_TWEEN_MS = 900;
+            const DEBUG = true;
+
+            function debugLog(...args) {
+                if (DEBUG) console.log(...args);
+            }
+
+            function sanitizeArray(arr) {
+                return Array.isArray(arr) ? arr : [];
+            }
+
+            function updateElement(id, value) {
+                const el = document.getElementById(id);
+                if (el && value !== undefined && value !== null && value !== '') {
+                    el.textContent = value;
                 }
-            });
-
-            map.addControl(new SmoothMotionControl());
-            map.addControl(new ResetViewControl());
-            map.addControl(new FullscreenControl());
-
-            debugLog('Map initialized');
-
-            // Process any pending route/marker
-            if (window._pendingRoute) {
-                maybeRedrawRoute(window._pendingRoute);
-                window._pendingRoute = null;
             }
-            if (window._pendingMarker) {
-                moveLiveMarker(window._pendingMarker.lat, window._pendingMarker.lon, window._pendingMarker.label, true);
-                window._pendingMarker = null;
+
+            function toNum(v) {
+                if (v === null || v === undefined) return null;
+                const n = parseFloat(v);
+                return isNaN(n) ? null : n;
             }
-        } catch (e) {
-            console.error('Map init error:', e);
-        }
-    }
 
-    // --------------------------------------------------------------
-    //  ROUTE DRAWING
-    // --------------------------------------------------------------
-    function routeSignature(coords) {
-        if (!coords || !coords.length) return '';
-        const first = coords[0];
-        const last = coords[coords.length - 1];
-        return `${coords.length}:${first.lat},${first.lon}:${last.lat},${last.lon}`;
-    }
-
-    function maybeRedrawRoute(coords) {
-        if (!map) { window._pendingRoute = coords; return; }
-        if (!coords || !coords.length) {
-            document.getElementById('resetView')?.setAttribute('disabled', 'true');
-            return;
-        }
-
-        const sig = routeSignature(coords);
-        if (sig === window._routeSignature) return;
-        window._routeSignature = sig;
-
-        markerGroup.clearLayers();
-        polylineGroup.clearLayers();
-
-        // Draw checkpoint markers (only those with description)
-        coords.forEach(c => {
-            if (c.desc) {
-                const icon = L.divIcon({
-                    className: '',
-                    html: `<div class="stop-marker done"></div>`,
-                    iconSize: [14, 14],
-                    iconAnchor: [7, 7]
+            // ============================================================
+            //  TOAST NOTIFICATIONS
+            // ============================================================
+            function showToast(message, type = 'info', duration = 5000) {
+                const container = document.getElementById('toastContainer');
+                if (!container) return;
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.setAttribute('role', 'alert');
+                toast.innerHTML = `
+                    <span>${message}</span>
+                    <button class="close-toast" aria-label="Dismiss notification">&times;</button>
+                `;
+                container.appendChild(toast);
+                const closeBtn = toast.querySelector('.close-toast');
+                closeBtn.addEventListener('click', () => {
+                    toast.remove();
                 });
-                L.marker([c.lat, c.lon], { icon })
-                    .bindPopup(c.desc)
-                    .addTo(markerGroup);
+                setTimeout(() => {
+                    if (toast.parentNode) toast.remove();
+                }, duration);
             }
-        });
 
-        const latlngs = coords.map(c => [c.lat, c.lon]);
-        L.polyline(latlngs, {
-            color: '#1c2a4a',
-            weight: 4,
-            lineCap: 'round',
-            opacity: 0.6
-        }).addTo(polylineGroup);
+            // ============================================================
+            //  MENU TOGGLE
+            // ============================================================
+            const menuBtn = document.getElementById('menuBtn');
+            const menuContent = document.getElementById('menuContent');
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const expanded = menuBtn.getAttribute('aria-expanded') === 'true';
+                menuBtn.setAttribute('aria-expanded', !expanded);
+                menuContent.classList.toggle('show');
+            });
+            document.addEventListener('click', (e) => {
+                if (!menuContent.contains(e.target) && e.target !== menuBtn) {
+                    menuContent.classList.remove('show');
+                    menuBtn.setAttribute('aria-expanded', 'false');
+                }
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && menuContent.classList.contains('show')) {
+                    menuContent.classList.remove('show');
+                    menuBtn.setAttribute('aria-expanded', 'false');
+                    menuBtn.focus();
+                }
+            });
 
-        routeBounds = L.latLngBounds(latlngs);
-        map.fitBounds(routeBounds, { padding: [20, 20] });
-        document.getElementById('resetView')?.removeAttribute('disabled');
-        debugLog('Route redrawn');
-    }
+            // ============================================================
+            //  SOCKET.IO SETUP
+            // ============================================================
+            const socket = io(SOCKET_URL, {
+                transports: ['polling', 'websocket'],
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                auth: {
+                    // token: localStorage.getItem('dhl_token') // uncomment if you use auth
+                }
+            });
 
-    // --------------------------------------------------------------
-    //  LIVE MARKER MOVEMENT
-    // --------------------------------------------------------------
-    let markerTweenFrame = null;
+            let trackingInterval = null;
 
-    function buildTruckIcon() {
-        return L.divIcon({
-            className: '',
-            html: `<div class="truck-marker"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2l1-5h9l3 5h3v5h-2a2 2 0 11-4 0H9a2 2 0 11-4 0H3v-5z"/></svg></div>`,
-            iconSize: [26, 26],
-            iconAnchor: [13, 13]
-        });
-    }
+            function updateConnectionStatus(connected) {
+                const dot = document.getElementById('connectionDot');
+                const statusText = document.getElementById('connectionStatus');
+                const refreshBtn = document.getElementById('refreshBtn');
+                const refreshHint = document.getElementById('refreshHint');
+                const retryBtn = document.getElementById('retryBtn');
 
-    function moveLiveMarker(lat, lon, label, skipTween) {
-        if (lat === null || lon === null) return;
-        if (!map || !liveMarkerGroup) {
-            window._pendingMarker = { lat, lon, label };
-            return;
-        }
+                if (dot) dot.className = `connection-dot ${connected ? 'connected' : 'disconnected'}`;
+                if (statusText) {
+                    statusText.textContent = connected ? 'Connected' : 'Disconnected';
+                    statusText.className = `text-xs ${connected ? 'text-green-600' : 'text-red-600'}`;
+                }
+                if (refreshBtn) {
+                    refreshBtn.disabled = !connected;
+                    refreshBtn.title = connected ? 'Refresh live tracking data' : 'Waiting for connection...';
+                }
+                if (refreshHint) refreshHint.textContent = connected ? 'Live connection active' : 'Waiting for connection...';
+                if (retryBtn) {
+                    retryBtn.style.display = connected ? 'none' : 'inline-block';
+                }
+            }
 
-        const newLatLng = L.latLng(lat, lon);
+            socket.on('connect', () => {
+                debugLog('Socket.IO connected');
+                updateConnectionStatus(true);
+                requestTracking();
+                if (trackingInterval) clearInterval(trackingInterval);
+                trackingInterval = setInterval(() => {
+                    if (socket.connected) requestTracking();
+                }, REFRESH_INTERVAL_MS);
+            });
 
-        if (!window._liveMarker) {
-            const icon = buildTruckIcon();
-            window._liveMarker = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(liveMarkerGroup);
-            window._livePulse = L.circle(newLatLng, {
-                color: '#e8a33d',
-                fillColor: '#e8a33d',
-                fillOpacity: 0.12,
-                radius: 1200,
-                interactive: false
-            }).addTo(liveMarkerGroup);
-            window._liveMarker.bindPopup(`<b>Current location</b><br>${label || 'Live position'}`);
-            window._lastMarkerLatLng = newLatLng;
-            if (!routeBounds) map.setView(newLatLng, 6);
-            return;
-        }
+            socket.on('disconnect', () => {
+                debugLog('Socket.IO disconnected');
+                updateConnectionStatus(false);
+                if (trackingInterval) {
+                    clearInterval(trackingInterval);
+                    trackingInterval = null;
+                }
+            });
 
-        window._liveMarker.setPopupContent(`<b>Current location</b><br>${label || 'Live position'}`);
+            socket.on('connect_error', (err) => {
+                console.error('Socket.IO connection error:', err);
+                updateConnectionStatus(false);
+                showToast('Connection error – retrying…', 'error', 4000);
+            });
 
-        if (markerTweenFrame) {
-            cancelAnimationFrame(markerTweenFrame);
-            markerTweenFrame = null;
-        }
+            document.getElementById('retryBtn')?.addEventListener('click', () => {
+                socket.connect();
+                showToast('Reconnecting…', 'info', 2000);
+            });
 
-        if (skipTween || !smoothMotionEnabled) {
-            window._liveMarker.setLatLng(newLatLng);
-            window._livePulse.setLatLng(newLatLng);
-            window._lastMarkerLatLng = newLatLng;
-            return;
-        }
+            // ============================================================
+            //  TRACKING REQUEST
+            // ============================================================
+            const trackingNumber = "{{ shipment.tracking_number }}";
 
-        const startLatLng = window._lastMarkerLatLng || newLatLng;
-        const startTime = performance.now();
+            function requestTracking() {
+                if (!trackingNumber) {
+                    console.warn('No tracking number – skipping request');
+                    return;
+                }
+                debugLog('Requesting tracking update');
+                socket.emit('request_tracking', { tracking_number: trackingNumber });
+            }
 
-        function step(now) {
-            const t = Math.min((now - startTime) / MARKER_TWEEN_MS, 1);
-            const curLat = startLatLng.lat + (newLatLng.lat - startLatLng.lat) * t;
-            const curLon = startLatLng.lng + (newLatLng.lng - startLatLng.lng) * t;
-            const curLatLng = L.latLng(curLat, curLon);
-            window._liveMarker.setLatLng(curLatLng);
-            window._livePulse.setLatLng(curLatLng);
-            if (t < 1) {
+            function refreshTracking() {
+                const btn = document.getElementById('refreshBtn');
+                if (!btn || btn.disabled) return;
+                btn.disabled = true;
+                btn.textContent = 'Updating…';
+                requestTracking();
+                setTimeout(() => {
+                    btn.disabled = !socket.connected;
+                    btn.textContent = 'Refresh';
+                }, 3000);
+            }
+            document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
+
+            // ============================================================
+            //  LEAFLET LOADING (dynamic — see <head> comment for why)
+            //  No SRI hash to guess wrong, no tag-presence guard to trip.
+            //  loadLeaflet() is idempotent: safe to call more than once,
+            //  every caller's callback still fires once Leaflet is ready.
+            // ============================================================
+            let leafletState = 'unloaded'; // 'unloaded' | 'loading' | 'ready' | 'failed'
+            let leafletCallbacks = [];
+
+            function loadLeaflet(callback) {
+                if (leafletState === 'ready') {
+                    callback();
+                    return;
+                }
+                leafletCallbacks.push(callback);
+                if (leafletState === 'loading') return;
+                leafletState = 'loading';
+
+                const cssLink = document.createElement('link');
+                cssLink.rel = 'stylesheet';
+                cssLink.href = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.css';
+                document.head.appendChild(cssLink);
+
+                const script = document.createElement('script');
+                script.src = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.js';
+                script.onload = function() {
+                    if (typeof L === 'undefined') {
+                        console.error('Leaflet script loaded but L is undefined - trying fallback CDN');
+                        loadLeafletFromFallbackCdn();
+                        return;
+                    }
+                    console.log('✅ Leaflet loaded');
+                    leafletState = 'ready';
+                    leafletCallbacks.forEach(cb => cb());
+                    leafletCallbacks = [];
+                };
+                script.onerror = function() {
+                    console.warn('Primary Leaflet CDN failed, trying fallback CDN...');
+                    loadLeafletFromFallbackCdn();
+                };
+                document.head.appendChild(script);
+            }
+
+            function loadLeafletFromFallbackCdn() {
+                const cssLink = document.createElement('link');
+                cssLink.rel = 'stylesheet';
+                cssLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css';
+                document.head.appendChild(cssLink);
+
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js';
+                script.onload = function() {
+                    if (typeof L === 'undefined') {
+                        console.error('Fallback Leaflet CDN also failed to define L');
+                        leafletState = 'failed';
+                        showMapLoadError();
+                        return;
+                    }
+                    console.log('✅ Leaflet loaded from fallback CDN');
+                    leafletState = 'ready';
+                    leafletCallbacks.forEach(cb => cb());
+                    leafletCallbacks = [];
+                };
+                script.onerror = function() {
+                    console.error('Both Leaflet CDNs failed to load');
+                    leafletState = 'failed';
+                    showMapLoadError();
+                };
+                document.head.appendChild(script);
+            }
+
+            function showMapLoadError() {
+                const hint = document.getElementById('mapLoadingHint');
+                if (hint) {
+                    hint.textContent = 'Map unavailable right now — tracking data above is still live.';
+                    hint.classList.remove('hide');
+                }
+                showToast('Map failed to load. Tracking data is still updating normally.', 'error', 6000);
+            }
+
+            // ============================================================
+            //  MAP INITIALIZATION
+            // ============================================================
+            let map = null;
+            let markerGroup, polylineGroup, liveMarkerGroup;
+            let routeBounds = null;
+            let smoothMotionEnabled = true;
+
+            function initMap() {
+                try {
+                    if (typeof L === 'undefined') {
+                        console.error('initMap called before Leaflet was ready');
+                        return;
+                    }
+
+                    const mapContainer = document.getElementById('map');
+                    if (!mapContainer) {
+                        console.error('Map container #map not found');
+                        return;
+                    }
+
+                    console.log('Initializing map...');
+                    map = L.map('map', { zoomControl: true }).setView([0, 0], 2);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        maxZoom: 19,
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                    }).addTo(map);
+
+                    markerGroup = L.layerGroup().addTo(map);
+                    polylineGroup = L.layerGroup().addTo(map);
+                    liveMarkerGroup = L.layerGroup().addTo(map);
+
+                    const SmoothMotionControl = L.Control.extend({
+                        options: { position: 'topright' },
+                        onAdd: function() {
+                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                            container.id = 'toggleSmoothMotion';
+                            container.innerHTML = '▶ Smooth Motion';
+                            container.classList.add('active');
+                            container.setAttribute('aria-label', 'Toggle smooth marker movement');
+                            container.setAttribute('role', 'switch');
+                            container.setAttribute('aria-checked', 'true');
+                            container.onclick = function() {
+                                smoothMotionEnabled = !smoothMotionEnabled;
+                                container.classList.toggle('active');
+                                container.innerHTML = smoothMotionEnabled ? '▶ Smooth Motion' : '⏸ Instant Jumps';
+                                container.setAttribute('aria-checked', smoothMotionEnabled ? 'true' : 'false');
+                            };
+                            return container;
+                        }
+                    });
+
+                    const ResetViewControl = L.Control.extend({
+                        options: { position: 'topright' },
+                        onAdd: function() {
+                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                            container.id = 'resetView';
+                            container.innerHTML = '⊞ Reset View';
+                            container.setAttribute('aria-label', 'Reset map view');
+                            container.disabled = true;
+                            container.onclick = function() {
+                                if (routeBounds) {
+                                    map.fitBounds(routeBounds, { padding: [20, 20] });
+                                } else if (window._lastMarkerLatLng) {
+                                    map.setView(window._lastMarkerLatLng, 6);
+                                }
+                            };
+                            return container;
+                        }
+                    });
+
+                    const FullscreenControl = L.Control.extend({
+                        options: { position: 'topright' },
+                        onAdd: function() {
+                            const container = L.DomUtil.create('button', 'leaflet-control-custom');
+                            container.id = 'fullscreenBtn';
+                            container.innerHTML = '⛶ Fullscreen';
+                            container.setAttribute('aria-label', 'Toggle fullscreen map');
+                            container.onclick = function() {
+                                const mapContainer = document.getElementById('mapContainer');
+                                mapContainer.classList.toggle('fullscreen');
+                                setTimeout(() => map.invalidateSize(), 100);
+                                container.innerHTML = mapContainer.classList.contains('fullscreen') ? '⛶ Exit' : '⛶ Fullscreen';
+                            };
+                            return container;
+                        }
+                    });
+
+                    map.addControl(new SmoothMotionControl());
+                    map.addControl(new ResetViewControl());
+                    map.addControl(new FullscreenControl());
+
+                    document.getElementById('mapLoadingHint')?.classList.add('hide');
+                    console.log('✅ Map initialized successfully');
+
+                    if (window._pendingRoute) {
+                        maybeRedrawRoute(window._pendingRoute);
+                        window._pendingRoute = null;
+                    }
+                    if (window._pendingMarker) {
+                        moveLiveMarker(window._pendingMarker.lat, window._pendingMarker.lon, window._pendingMarker.label, true);
+                        window._pendingMarker = null;
+                    }
+                } catch (e) {
+                    console.error('Map initialization failed:', e);
+                    showMapLoadError();
+                }
+            }
+
+            // ============================================================
+            //  ROUTE DRAWING (checkpoints markers + polyline)
+            // ============================================================
+            function routeSignature(coords) {
+                if (!coords || !coords.length) return '';
+                const first = coords[0];
+                const last = coords[coords.length - 1];
+                return `${coords.length}:${first.lat},${first.lon}:${last.lat},${last.lon}`;
+            }
+
+            function maybeRedrawRoute(coords) {
+                if (!map) {
+                    window._pendingRoute = coords;
+                    return;
+                }
+                if (!coords || !coords.length) {
+                    document.getElementById('resetView')?.setAttribute('disabled', 'true');
+                    return;
+                }
+
+                const sig = routeSignature(coords);
+                if (sig === window._routeSignature) {
+                    return;
+                }
+                window._routeSignature = sig;
+
+                markerGroup.clearLayers();
+                polylineGroup.clearLayers();
+
+                coords.forEach(c => {
+                    if (c.desc) {
+                        L.marker([c.lat, c.lon]).bindPopup(c.desc).addTo(markerGroup);
+                    }
+                });
+
+                const latlngs = coords.map(c => [c.lat, c.lon]);
+                L.polyline(latlngs, {
+                    color: '#d32f2f',
+                    weight: 4,
+                    dashArray: '6, 10',
+                    opacity: 0.7
+                }).addTo(polylineGroup);
+
+                routeBounds = L.latLngBounds(latlngs);
+                map.fitBounds(routeBounds, { padding: [20, 20] });
+                document.getElementById('resetView')?.removeAttribute('disabled');
+                debugLog('Route redrawn:', coords.length, 'points');
+            }
+
+            // ============================================================
+            //  LIVE MARKER MOVEMENT
+            // ============================================================
+            let markerTweenFrame = null;
+
+            function buildMarkerIcon() {
+                return L.divIcon({
+                    html: '<div style="background:#d40511;border:3px solid white;border-radius:50%;width:16px;height:16px;box-shadow:0 0 0 6px rgba(212,5,17,0.18);"></div>',
+                    className: '',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                });
+            }
+
+            function moveLiveMarker(lat, lon, label, skipTween) {
+                if (lat === null || lon === null) return;
+                if (!map || !liveMarkerGroup) {
+                    window._pendingMarker = { lat, lon, label };
+                    return;
+                }
+
+                const newLatLng = L.latLng(lat, lon);
+
+                if (!window._liveMarker) {
+                    const icon = buildMarkerIcon();
+                    window._liveMarker = L.marker(newLatLng, { icon, zIndexOffset: 1000 }).addTo(liveMarkerGroup);
+                    window._livePulse = L.circle(newLatLng, {
+                        color: '#d40511',
+                        fillColor: '#d40511',
+                        fillOpacity: 0.15,
+                        radius: 1200,
+                        interactive: false
+                    }).addTo(liveMarkerGroup);
+                    window._liveMarker.bindPopup(`Current location: ${label || 'Live position'}`);
+                    window._lastMarkerLatLng = newLatLng;
+                    if (!routeBounds) {
+                        map.setView(newLatLng, 6);
+                    }
+                    return;
+                }
+
+                window._liveMarker.setPopupContent(`Current location: ${label || 'Live position'}`);
+
+                if (markerTweenFrame) {
+                    cancelAnimationFrame(markerTweenFrame);
+                    markerTweenFrame = null;
+                }
+
+                if (skipTween || !smoothMotionEnabled) {
+                    window._liveMarker.setLatLng(newLatLng);
+                    window._livePulse.setLatLng(newLatLng);
+                    window._lastMarkerLatLng = newLatLng;
+                    return;
+                }
+
+                const startLatLng = window._lastMarkerLatLng || newLatLng;
+                const startTime = performance.now();
+
+                function step(now) {
+                    const t = Math.min((now - startTime) / MARKER_TWEEN_MS, 1);
+                    const curLat = startLatLng.lat + (newLatLng.lat - startLatLng.lat) * t;
+                    const curLon = startLatLng.lng + (newLatLng.lng - startLatLng.lng) * t;
+                    const curLatLng = L.latLng(curLat, curLon);
+                    window._liveMarker.setLatLng(curLatLng);
+                    window._livePulse.setLatLng(curLatLng);
+                    if (t < 1) {
+                        markerTweenFrame = requestAnimationFrame(step);
+                    } else {
+                        window._lastMarkerLatLng = newLatLng;
+                        markerTweenFrame = null;
+                    }
+                }
                 markerTweenFrame = requestAnimationFrame(step);
-            } else {
-                window._lastMarkerLatLng = newLatLng;
-                markerTweenFrame = null;
             }
-        }
-        markerTweenFrame = requestAnimationFrame(step);
-    }
 
-    // --------------------------------------------------------------
-    //  SIDEBAR RENDER (timeline + meta)
-    // --------------------------------------------------------------
-    function renderSidebar(data) {
-        // Meta
-        document.getElementById('metaTrackingId').textContent = data.tracking_number || '—';
-
-        // Status with badge
-        const statusEl = document.getElementById('metaStatus');
-        const statusText = data.status || '—';
-        const cls = statusBadgeClass(statusText);
-        statusEl.innerHTML = `<span class="status-badge ${cls}">${statusText}</span>`;
-
-        document.getElementById('metaEta').textContent = data.delivery_window || '—';
-
-        // Badges
-        document.getElementById('badgeService').textContent = data.service_level || 'DHL Express';
-        document.getElementById('badgeCarrier').textContent = data.carrier || 'DHL';
-        const mode = data.mode || 'ground';
-        document.getElementById('badgeMode').textContent = mode === 'air' ? '✈️ Air' : '🚚 Ground';
-
-        // Timeline
-        const timelineEl = document.getElementById('timeline');
-        timelineEl.innerHTML = '';
-
-        const checkpoints = sanitizeArray(data.checkpoints || []);
-        if (!checkpoints.length) {
-            timelineEl.innerHTML = '<div class="empty-state">No checkpoints available yet.</div>';
-            return;
-        }
-
-        // Rail fill
-        const rail = document.createElement('div');
-        rail.className = 'rail-fill';
-        const progress = toNum(data.progress) || 0;
-        const total = checkpoints.length;
-        const doneIndex = Math.round(progress * (total - 1));
-        const doneCount = doneIndex + 1;
-        rail.style.height = total > 1 ? `${(doneCount - 1) / (total - 1) * 100}%` : '0%';
-        timelineEl.appendChild(rail);
-
-        // Steps
-        checkpoints.forEach((cp, idx) => {
-            const parts = cp.split(' - ');
-            const time = parts[0] || '';
-            const location = parts[1] || '';
-            const event = parts.slice(2).join(' - ') || cp;
-
-            let stepStatus = 'pending';
-            if (idx < doneIndex) stepStatus = 'done';
-            else if (idx === doneIndex) stepStatus = 'current';
-
-            const div = document.createElement('div');
-            div.className = `step ${stepStatus}`;
-            div.innerHTML = `
-                <div class="dot"></div>
-                <div class="time">${time || 'Pending'}</div>
-                <div class="title">${event}</div>
-                <div class="loc">${location}</div>
-            `;
-            timelineEl.appendChild(div);
-        });
-    }
-
-    // --------------------------------------------------------------
-    //  UNIFIED UPDATE HANDLER
-    // --------------------------------------------------------------
-    function applyTrackingUpdate(data) {
-        if (!data) return;
-
-        // Update sidebar
-        renderSidebar(data);
-
-        // Update map
-        const lat = toNum(data.current_lat);
-        const lon = toNum(data.current_lon);
-        if (lat !== null && lon !== null) {
-            moveLiveMarker(lat, lon, data.current_location || 'Current location');
-        }
-
-        // Route data
-        const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
-        if (routeData && routeData.length) {
-            maybeRedrawRoute(routeData);
-        }
-
-        // Connection status
-        updateConnectionStatus(true);
-
-        // Update legacy elements (for compatibility with any lingering code)
-        if (data.status) {
-            const el = document.getElementById('status');
-            if (el) el.textContent = data.status;
-        }
-        if (data.progress !== undefined) {
-            const p = toNum(data.progress) || 0;
-            const percent = Math.round(p * 100);
-            const pEl = document.getElementById('progressPercent');
-            const fEl = document.getElementById('progressFill');
-            if (pEl) pEl.textContent = `${percent}%`;
-            if (fEl) fEl.style.width = `${percent}%`;
-        }
-        if (data.current_location) {
-            const el = document.getElementById('currentLocation');
-            if (el) el.textContent = data.current_location;
-        }
-        if (lat !== null && lon !== null) {
-            const el = document.getElementById('currentCoordinates');
-            if (el) el.textContent = `${lat}, ${lon}`;
-            const st = document.getElementById('positionStatusText');
-            if (st) st.textContent = data.paused ? 'Paused' : 'Moving now';
-        }
-        if (data.delivery_window) {
-            const el = document.getElementById('estimatedArrival');
-            if (el) el.textContent = data.delivery_window;
-            const el2 = document.getElementById('deliveryWindow');
-            if (el2) el2.textContent = data.delivery_window;
-        }
-        if (data.checkpoints && data.checkpoints.length) {
-            const cp = data.checkpoints;
-            const lastEl = document.getElementById('lastCheckpoint');
-            if (lastEl) lastEl.textContent = cp[cp.length - 1];
-            if (cp.length > 1) {
-                const nextEl = document.getElementById('nextCheckpoint');
-                if (nextEl) {
-                    const progress = toNum(data.progress) || 0;
-                    const idx = Math.min(Math.max(1, Math.round(progress * (cp.length - 1))), cp.length - 1);
-                    nextEl.textContent = cp[idx];
-                }
+            // ============================================================
+            //  SIMULATOR STATE INDICATORS
+            // ============================================================
+            function applyPausedState(paused) {
+                const banner = document.getElementById('pausedBanner');
+                const dot = document.getElementById('liveIndicator');
+                const label = document.getElementById('liveIndicatorLabel');
+                if (paused === undefined || paused === null) return;
+                if (banner) banner.classList.toggle('show', !!paused);
+                if (dot) dot.classList.toggle('paused-dot', !!paused);
+                if (label) label.textContent = paused ? 'Paused' : 'Live';
             }
-        }
-        if (data.delivery_location) {
-            const el = document.getElementById('deliveryLocation');
-            if (el) el.textContent = data.delivery_location;
-        }
-        if (data.service_level) {
-            const el = document.getElementById('serviceLevel');
-            if (el) el.textContent = data.service_level;
-        }
-        if (data.proof_of_delivery) {
-            const el = document.getElementById('proofOfDelivery');
-            if (el) el.textContent = data.proof_of_delivery;
-        }
-        if (data.last_updated) {
-            const el = document.getElementById('lastUpdated');
-            if (el) el.textContent = `Last updated: ${fmtDate(data.last_updated)}`;
-        }
-        if (data.tracking_number) {
-            const el = document.getElementById('trackingNumberDisplay');
-            if (el) el.textContent = data.tracking_number;
-        }
-        if (data.paused !== undefined) {
-            const dot = document.getElementById('liveIndicator');
-            const label = document.getElementById('liveIndicatorLabel');
-            if (dot) dot.classList.toggle('paused-dot', !!data.paused);
-            if (label) label.textContent = data.paused ? 'Paused' : 'Live';
-            const banner = document.getElementById('pausedBanner');
-            if (banner) banner.classList.toggle('show', !!data.paused);
-        }
-        if (data.speed_multiplier !== undefined) {
-            const badge = document.getElementById('speedBadge');
-            if (badge) {
-                const n = toNum(data.speed_multiplier);
-                if (n !== null) {
-                    badge.textContent = `⚡ ${n.toFixed(1)}× speed`;
-                    badge.classList.add('show');
-                }
+
+            function applySpeedBadge(speed) {
+                const badge = document.getElementById('speedBadge');
+                if (!badge || speed === undefined || speed === null) return;
+                const n = toNum(speed);
+                if (n === null) return;
+                badge.textContent = `⚡ ${n.toFixed(1)}x speed`;
+                badge.classList.add('show');
             }
-        }
-        if (data.mode) {
-            const badge = document.getElementById('modeBadge');
-            if (badge) {
-                const isAir = String(data.mode).toLowerCase() === 'air';
+
+            function applyModeBadge(mode) {
+                const badge = document.getElementById('modeBadge');
+                if (!badge || !mode) return;
+                const isAir = String(mode).toLowerCase() === 'air';
                 badge.textContent = isAir ? '✈️ Air' : '🚚 Ground';
                 badge.classList.add('show');
             }
-        }
-    }
 
-    // --------------------------------------------------------------
-    //  INITIAL DATA LOAD (server-rendered)
-    // --------------------------------------------------------------
-    function setInitialPageState() {
-        try {
-            const initialData = {
-                tracking_number: "{{ shipment.tracking_number }}",
-                status: "{{ shipment.status }}",
-                progress: {{ progress | default(0) }},
-                current_lat: {{ current_lat | default('null') }},
-                current_lon: {{ current_lon | default('null') }},
-                current_location: "{{ current_location | default('Calculating...') }}",
-                delivery_window: "{{ delivery_window | default('Calculating...') }}",
-                delivery_location: "{{ shipment.delivery_location }}",
-                service_level: "{{ service_level | default('DHL Express') }}",
-                proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
-                checkpoints: sanitizeArray({{ checkpoints | tojson }}),
-                carrier: "{{ shipment.carrier or 'DHL' }}",
-                mode: "{{ transport_mode | default('ground') }}",
-                last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}"
-            };
+            // ============================================================
+            //  UNIFIED UPDATE HANDLER
+            // ============================================================
+            function applyTrackingUpdate(data) {
+                if (!data) return;
 
-            applyTrackingUpdate(initialData);
+                if (data.status) {
+                    const statusEl = document.getElementById('status');
+                    statusEl.textContent = data.status;
+                    const cls = {
+                        'Delivered': 'delivered',
+                        'In_Transit': 'in-transit',
+                        'Out_for_Delivery': 'out-for-delivery',
+                        'Delayed': 'delayed',
+                        'Exception': 'exception',
+                        'On_Hold': 'on-hold'
+                    }[data.status] || 'pending';
+                    statusEl.className = `status-badge-header ${cls}`;
+                }
 
-            // If we have route coords but map not initialized, store for later
-            const coords = sanitizeArray({{ coords | tojson }});
-            const routeCoords = sanitizeArray({{ route_coords | tojson }});
-            const mapCoords = routeCoords.length ? routeCoords : coords;
-            if (mapCoords.length) {
-                setTimeout(() => maybeRedrawRoute(mapCoords), 500);
+                if (data.progress !== undefined) {
+                    const progress = toNum(data.progress) || 0;
+                    const percent = Math.round(progress * 100);
+                    document.getElementById('progressPercent').textContent = `${percent}%`;
+                    document.getElementById('progressFill').style.width = `${percent}%`;
+                }
+
+                if (data.current_location) {
+                    document.getElementById('currentLocation').textContent = data.current_location;
+                }
+
+                const lat = toNum(data.current_lat);
+                const lon = toNum(data.current_lon);
+                if (lat !== null && lon !== null) {
+                    document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
+                    document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
+                    moveLiveMarker(lat, lon, data.current_location);
+                }
+
+                applyPausedState(data.paused);
+                applySpeedBadge(data.speed_multiplier);
+                applyModeBadge(data.mode);
+
+                updateElement('estimatedArrival', data.delivery_window);
+                if (data.checkpoints && data.checkpoints.length) {
+                    const checkpoints = data.checkpoints;
+                    updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
+                    const container = document.getElementById('checkpoints');
+                    const oldCount = container.querySelectorAll('.checkpoint').length;
+                    container.innerHTML = '';
+                    checkpoints.forEach((cp, idx) => {
+                        const parts = cp.split(' - ');
+                        const div = document.createElement('div');
+                        div.className = `checkpoint${idx >= oldCount ? ' checkpoint-new' : ''}`;
+                        const isDelivered = cp.toLowerCase().includes('delivered');
+                        div.innerHTML = `
+                            <div class="dot ${isDelivered ? 'delivered' : ''}"></div>
+                            <div>
+                                <div class="time">${parts[0] || ''}</div>
+                                <div class="location">${parts[1] || ''}</div>
+                                <div class="event">${parts.slice(2).join(' - ') || ''}</div>
+                            </div>
+                        `;
+                        container.appendChild(div);
+                    });
+                    const progress = toNum(data.progress) || 0;
+                    if (checkpoints.length > 1) {
+                        const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
+                        updateElement('nextCheckpoint', checkpoints[idx]);
+                    } else {
+                        updateElement('nextCheckpoint', 'Next scan pending');
+                    }
+                }
+
+                updateElement('deliveryLocation', data.delivery_location);
+                updateElement('serviceLevel', data.service_level);
+                updateElement('deliveryWindow', data.delivery_window);
+                updateElement('proofOfDelivery', data.proof_of_delivery);
+                if (data.last_updated) {
+                    const date = new Date(data.last_updated);
+                    if (!isNaN(date.getTime())) {
+                        document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
+                    }
+                }
+
+                const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
+                if (routeData && routeData.length) {
+                    maybeRedrawRoute(routeData);
+                }
             }
-        } catch (e) {
-            console.error('Error in setInitialPageState:', e);
-        }
-    }
 
-    // --------------------------------------------------------------
-    //  START
-    // --------------------------------------------------------------
-    // Initialize map
-    initMap();
+            // ============================================================
+            //  INITIAL DATA LOAD (server-rendered values from Flask/Jinja)
+            // ============================================================
+            function setInitialPageState() {
+                try {
+                    const initialData = {
+                        status: "{{ shipment.status }}",
+                        progress: {{ progress | default(0) }},
+                        current_lat: {{ current_lat | default('null') }},
+                        current_lon: {{ current_lon | default('null') }},
+                        current_location: "{{ current_location | default('Calculating...') }}",
+                        delivery_window: "{{ delivery_window | default('Calculating...') }}",
+                        delivery_location: "{{ shipment.delivery_location }}",
+                        service_level: "{{ service_level | default('DHL Express') }}",
+                        proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
+                        checkpoints: sanitizeArray({{ checkpoints | tojson }}),
+                        last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}"
+                    };
 
-    // Load initial data
-    setInitialPageState();
+                    // moveLiveMarker() and maybeRedrawRoute() both queue
+                    // themselves via window._pendingMarker/_pendingRoute if
+                    // the map isn't ready yet, so this is safe to call before
+                    // Leaflet has loaded.
+                    applyTrackingUpdate(initialData);
 
-    // Listen for live updates
-    socket.on('tracking_update', (data) => {
-        debugLog('Received tracking update:', data);
-        if (data.error) {
-            showToast(data.error, 'error', 5000);
-            return;
-        }
-        applyTrackingUpdate(data);
-    });
+                    const coords = sanitizeArray({{ coords | tojson }});
+                    const routeCoords = sanitizeArray({{ route_coords | tojson }});
+                    const mapCoords = routeCoords.length ? routeCoords : coords;
+                    if (mapCoords.length) {
+                        maybeRedrawRoute(mapCoords);
+                    }
+                } catch (e) {
+                    console.error('Error in setInitialPageState:', e);
+                }
+            }
 
-    // Connection status initial
-    updateConnectionStatus(socket.connected);
-    if (!socket.connected) {
-        showToast('Connecting to live server…', 'info', 3000);
-    }
+            // ============================================================
+            //  START
+            // ============================================================
+            try {
+                setInitialPageState();
+                loadLeaflet(initMap);
+                debugLog('Tracking page fully loaded');
+            } catch (e) {
+                console.error('Fatal error during startup:', e);
+                const spinner = document.getElementById('loadingSpinner');
+                if (spinner) {
+                    spinner.innerHTML = `<p class="text-red-500">⚠️ Error: ${e.message}</p>`;
+                }
+            }
 
-    debugLog('DHL tracking page loaded');
-</script>
+            // ============================================================
+            //  SOCKET.IO TRACKING UPDATES
+            // ============================================================
+            socket.on('tracking_update', (data) => {
+                debugLog('Received tracking update:', data);
+                if (data.error) {
+                    showToast(data.error, 'error', 5000);
+                    return;
+                }
+                updateConnectionStatus(true);
+                applyTrackingUpdate(data);
+            });
 
+            // ============================================================
+            //  KEYBOARD SHORTCUTS
+            // ============================================================
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'r' && e.ctrlKey) {
+                    e.preventDefault();
+                    refreshTracking();
+                }
+                if (e.key === 'Escape') {
+                    const mapContainer = document.getElementById('mapContainer');
+                    if (mapContainer.classList.contains('fullscreen')) {
+                        mapContainer.classList.remove('fullscreen');
+                        document.getElementById('fullscreenBtn').innerHTML = '⛶ Fullscreen';
+                        setTimeout(() => {
+                            if (map) map.invalidateSize();
+                        }, 100);
+                    }
+                }
+            });
+
+            // ============================================================
+            //  INITIAL CONNECTION STATUS
+            // ============================================================
+            updateConnectionStatus(socket.connected);
+            if (!socket.connected) {
+                showToast('Connecting to live server…', 'info', 3000);
+            }
+
+            console.log('✅ Tracking page fully loaded – all systems go');
+        </script>
+    {% endif %}
+    <!-- =================== END OF SHIPMENT BLOCK =================== -->
+
+    <!-- ====== FOOTER (common to all pages) ====== -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3>Contact Us</h3>
+                <p>Email: support@dhl.com</p>
+                <p>Phone: +1 700 345 6789</p>
+                <p>Address: 1 DHL Way, Int</p>
+            </div>
+            <div class="footer-section">
+                <h3>Follow Us</h3>
+                <a href="https://x.com/dhl" target="_blank" rel="noopener noreferrer">X (Twitter)</a>
+                <a href="https://facebook.com/dhl" target="_blank" rel="noopener noreferrer">Facebook</a>
+                <a href="https://instagram.com/dhl" target="_blank" rel="noopener noreferrer">Instagram</a>
+            </div>
+            <div class="footer-section">
+                <h3>Legal</h3>
+                <a href="#">Terms &amp; Conditions</a>
+                <a href="#">Privacy Policy</a>
+                <a href="#">Cookies</a>
+            </div>
+            <div class="footer-section">
+                <h3>Support</h3>
+                <a href="#">Help Center</a>
+                <a href="#">FAQs</a>
+                <a href="#">Contact</a>
+            </div>
+        </div>
+        <div class="copyright">
+            &copy; 2026 DHL International. All rights reserved.
+        </div>
+    </footer>
 </body>
 </html>
