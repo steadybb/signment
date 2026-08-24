@@ -100,11 +100,9 @@ try:
     from rapidfuzz import fuzz
 except Exception:
     fuzz = None
-# RapidFuzz threshold configurable via env
 RAPIDFUZZ_THRESHOLD = int(os.getenv('RAPIDFUZZ_THRESHOLD', '70'))
 
 # Small curated transliteration map for high-value or commonly problematic cities
-# Keys should be lowercased (raw or transliterated) and map to a canonical 'City, CC' value.
 HIGH_VALUE_TRANSLITERATION_MAP = {
     'רחובות': 'Rehovot, IL',
     'rehovot': 'Rehovot, IL',
@@ -133,6 +131,9 @@ from utils import (
     should_send_email, spawn_simulation, add_socket_event, recent_socket_events, add_client_error, recent_client_errors,
     EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES
 )
+
+# Import the new simulation engine
+from simulator_engine import SimulationRunner, RunnerHooks, Stage
 
 # Initialize Flask app from utils.py
 app = utils_app
@@ -471,16 +472,19 @@ def resolve_from_known_locations_fallback(address):
                 'provider': 'known_locations'
             }
     
-    # Check DHL hubs
-    if address in DHLRealisticSimulator.DHL_HUBS:
-        hub = DHLRealisticSimulator.DHL_HUBS[address]
-        return {
-            'lat': float(hub['lat']),
-            'lon': float(hub['lon']),
-            'desc': address,
-            'formatted': address,
-            'provider': 'dhl_hubs'
-        }
+    # Check DHL hubs (use the class after it's defined)
+    try:
+        if address in DHLRealisticSimulator.DHL_HUBS:
+            hub = DHLRealisticSimulator.DHL_HUBS[address]
+            return {
+                'lat': float(hub['lat']),
+                'lon': float(hub['lon']),
+                'desc': address,
+                'formatted': address,
+                'provider': 'dhl_hubs'
+            }
+    except NameError:
+        pass
     
     # Fuzzy matching
     address_lower = address.lower()
@@ -521,7 +525,6 @@ def geocode_with_fallback(address):
     result = geoapify_geocode_fallback(address)
     if result:
         flask_logger.info(f"✅ Geoapify resolved: {address} -> {result.get('formatted')}")
-        # Cache the result
         try:
             if redis_client:
                 redis_client.setex(cache_key, 86400, json.dumps(result))
@@ -643,7 +646,7 @@ SIM_BROADCAST_INTERVAL_SEC = float(os.getenv('SIM_BROADCAST_INTERVAL_SEC', '2.0'
 def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, current_lon=None,
                    status=None, delivery_location=None, last_updated=None,
                    service_level=None, delivery_window=None, proof_of_delivery=None,
-                   checkpoints=None):
+                   checkpoints=None, stage=None):
     """Emit a lightweight tracking_update containing only coords and progress, rate-limited per-TN.
     This avoids recomputing heavy route data in `broadcast_update`.
     """
@@ -694,6 +697,8 @@ def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, c
             payload['delivery_window'] = delivery_window
         if proof_of_delivery is not None:
             payload['proof_of_delivery'] = proof_of_delivery
+        if stage is not None:
+            payload['stage'] = stage
         try:
             socketio.emit('tracking_update', payload, namespace='/')
             sim_logger.debug(f"SIM_LIGHT_EMIT|{tn}|{payload}")
@@ -1566,7 +1571,7 @@ def estimate_distance(origin, dest):
     lat2, lon2 = city_coords[dest_key]
     return haversine_distance(lat1, lon1, lat2, lon2)
 
-# === DHL REALISTIC SIMULATOR ===
+# === DHL REALISTIC SIMULATOR (kept for hub building, service level, etc.) ===
 class DHLRealisticSimulator:
     STATUS_CODES = {
         "Pending": "Shipment information received",
@@ -1811,454 +1816,68 @@ class DHLRealisticSimulator:
         locations = delivery_locations.get(destination, ["Main Street", "City Center"])
         return random.choice(locations)
 
-# === SIMULATION FUNCTIONS ===
-def track_metrics(tn, event_type, data):
-    sim_logger.info(f"SIM_METRIC|{tn}|{event_type}|{json.dumps(data)}")
-    if redis_client:
-        key = f"metrics:{tn}"
-        redis_client.lpush(key, json.dumps({
-            "timestamp": datetime.now().isoformat(),
-            "event": event_type,
-            "data": data
-        }))
-        redis_client.ltrim(key, 0, 100)
+# ============================================================
+# NEW SIMULATION ENGINE WRAPPER
+# ============================================================
 
-def handle_exception(tn, shipment, reason):
+def _save_shipment_state(tn, status, checkpoints):
+    """Update the shipment in the database and commit."""
+    shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
         return
-    exception_checkpoints = [
-        f"{datetime.now():%Y-%m-%d %H:%M} - {shipment.delivery_location} - Delivery attempted - {reason}",
-        f"{datetime.now():%Y-%m-%d %H:%M} - {shipment.delivery_location} - Address correction required",
-        f"{datetime.now():%Y-%m-%d %H:%M} - {shipment.delivery_location} - Shipment held for inspection"
-    ]
-    checkpoint = random.choice(exception_checkpoints)
-    shipment.status = "Exception"
-    existing = shipment.checkpoints or ""
-    shipment.checkpoints = f"{existing};{checkpoint}" if existing else checkpoint
+    shipment.status = status
+    shipment.checkpoints = checkpoints
     shipment.last_updated = datetime.now()
-    db.session.commit()
-    invalidate_cache(tn)
-    enqueue_dhl_email(tn, "Exception", checkpoint, shipment.delivery_location)
-    broadcast_update(tn)
-    eventlet.sleep(3600)
+    try:
+        db.session.commit()
+        invalidate_cache(tn)
+    except Exception as e:
+        flask_logger.error(f"Failed to save shipment state for {tn}: {e}")
+        db.session.rollback()
 
-def enhanced_full_simulate_tracking(tn):
-    with app.app_context():
-        shipment = Shipment.query.filter_by(tracking_number=tn).first()
-        if not shipment:
-            return
-        origin = shipment.origin_location or "Lagos, NG"
-        destination = shipment.delivery_location
-        origin_norm, origin_coords = resolve_location(origin)
-        destination_norm, dest_coords = resolve_location(destination)
-        pickup_location = DHLRealisticSimulator.generate_pickup_location(origin_norm)
-        delivery_address = DHLRealisticSimulator.generate_delivery_location(destination_norm)
-        if redis_client:
-            rset("pickup_location", tn, pickup_location)
-            rset("delivery_address", tn, delivery_address)
-        estimated_duration, _ = DHLRealisticSimulator.estimate_realistic_delivery_time(origin_norm, destination_norm)
-        speed_multiplier = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
-        speed_multiplier = max(0.1, min(5.0, speed_multiplier))
-        distance_km = estimate_distance(origin_norm, destination_norm)
-        hubs = DHLRealisticSimulator.build_route_hubs(origin_coords, dest_coords, distance_km)
-        route_template = [origin_norm] + hubs + [destination_norm]
-        checkpoints = (shipment.checkpoints or "").split(";") if shipment.checkpoints else []
-        current_status = shipment.status
-        last_route_index = -1
-        last_checkpoint_progress = 0.0
-        sim_min_checkpoint_delta = float(os.getenv('SIM_MIN_CHECKPOINT_DELTA', '0.05') or '0.05')
-        sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')) or os.getenv('SIM_DEFAULT_DAYS', '10'))
-        sim_days = max(1.0, min(365.0, sim_days))
-        start_time = datetime.now()
-        delivery_attempts = 0
-        max_attempts = 3 if random.random() < 0.15 else 1
-        stage = "pickup"
-        sim_accel = float(os.getenv('SIM_ACCEL', '1.0') or '1.0')
-        while datetime.now() - start_time < timedelta(days=sim_days):
-            latest_shipment = reload_shipment(tn)
-            if latest_shipment:
-                # ---- ADD On_Hold check ----
-                if latest_shipment.status == "On_Hold":
-                    eventlet.sleep(30)
-                    continue
-                # ---- END ADD ----
-                if latest_shipment.delivery_location != destination or latest_shipment.origin_location != origin:
-                    origin = latest_shipment.origin_location or "Lagos, NG"
-                    destination = latest_shipment.delivery_location
-                    origin_norm, origin_coords = resolve_location(origin)
-                    destination_norm, dest_coords = resolve_location(destination)
-                    distance_km = estimate_distance(origin_norm, destination_norm)
-                    transport_mode = rget("transport_mode", tn, "air" if distance_km > 1000 else "ground")
-                    transport_mode = (transport_mode or "ground").lower()
-                    hubs = DHLRealisticSimulator.build_route_hubs(origin_coords, dest_coords, distance_km)
-                    if transport_mode == "air" and hubs:
-                        route_template = [origin_norm] + hubs + [destination_norm]
-                    else:
-                        route_template = [origin_norm, destination_norm] if not hubs else [origin_norm] + hubs + [destination_norm]
-                    pickup_location = DHLRealisticSimulator.generate_pickup_location(origin_norm)
-                    delivery_address = DHLRealisticSimulator.generate_delivery_location(destination_norm)
-                if latest_shipment.status != current_status:
-                    current_status = latest_shipment.status
-                if latest_shipment.checkpoints and latest_shipment.checkpoints != ";".join(checkpoints):
-                    checkpoints = (latest_shipment.checkpoints or "").split(";")
-                    # REMOVED: current_idx = len([c for c in checkpoints if any(phrase in c for phrase in event_phrases)])
-                    # because event_phrases is not defined in this function and current_idx is never used.
-            stage = rget('stage', tn, stage) or stage
-            speed_multiplier = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
-            speed_multiplier = max(0.1, min(5.0, speed_multiplier))
-            sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')) or os.getenv('SIM_DEFAULT_DAYS', '10'))
-            sim_days = max(1.0, min(365.0, sim_days))
-            if rget("paused_simulations", tn, "false") == "true":
-                eventlet.sleep(10)
-                continue
-            try:
-                elapsed_hours = (datetime.now() - start_time).total_seconds() / 3600
-                total_hours = max(1, estimated_duration.total_seconds() / 3600)
-                progress = min(elapsed_hours * speed_multiplier * sim_accel / total_hours, 1.0)
-                if progress < 0.1:
-                    stage = "pickup"
-                    new_status = "Pending"
-                elif progress < 0.35:
-                    stage = "pickup"
-                    new_status = "In_Transit"
-                elif progress < 0.55:
-                    stage = "transit"
-                    new_status = "Customs_Clearance" if random.random() < 0.12 else "In_Transit"
-                elif progress < 0.75:
-                    stage = "transit"
-                    new_status = "In_Transit"
-                elif progress < 0.9:
-                    stage = "delivery"
-                    new_status = "Out_for_Delivery"
-                else:
-                    if delivery_attempts >= max_attempts:
-                        new_status = "Delivered"
-                        stage = "delivered"
-                    elif random.random() < 0.15:
-                        new_status = "Exception"
-                        delivery_attempts += 1
-                    else:
-                        new_status = "Delivered"
-                        stage = "delivered"
-
-                try:
-                    route_index = min(int(progress * len(route_template)), len(route_template) - 1)
-                except Exception:
-                    route_index = 0
-
-                checkpoint = None
-                if stage == "transit":
-                    if route_index != last_route_index and (progress - last_checkpoint_progress) >= sim_min_checkpoint_delta:
-                        city = route_template[route_index] if route_template else destination_norm
-                        checkpoint = DHLRealisticSimulator.generate_realistic_checkpoint(
-                            city, new_status, tn, destination=destination_norm
-                        )
-                        last_route_index = route_index
-                        last_checkpoint_progress = progress
-                    elif random.random() < 0.02 and (progress - last_checkpoint_progress) >= sim_min_checkpoint_delta:
-                        city = route_template[route_index] if route_template else destination_norm
-                        checkpoint = DHLRealisticSimulator.generate_realistic_checkpoint(
-                            city, new_status, tn, destination=destination_norm
-                        )
-                        last_checkpoint_progress = progress
-                elif new_status != current_status or random.random() < 0.12:
-                    if stage == "pickup":
-                        pickup_events = [
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {pickup_location} - Pickup request received from shipper",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {pickup_location} - DHL courier en route for pickup",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {pickup_location} - Package collected from shipper",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {origin} - Shipment processed at DHL origin facility",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {origin} - Package scanned and weighed at DHL facility"
-                        ]
-                        checkpoint = random.choice(pickup_events)
-                    elif stage == "transit":
-                        route_index = min(int(progress * len(route_template)), len(route_template) - 1)
-                        city = route_template[route_index] if route_template else destination_norm
-                        checkpoint = DHLRealisticSimulator.generate_realistic_checkpoint(
-                            city, new_status, tn, destination=destination_norm
-                        )
-                    elif stage == "delivery":
-                        delivery_events = [
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {destination} - Shipment arrived at destination DHL facility",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {destination} - Package sorted for delivery route",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {delivery_address} - Package loaded onto delivery vehicle",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {delivery_address} - Out for delivery to recipient address",
-                            f"{datetime.now():%Y-%m-%d %H:%M} - {delivery_address} - Delivery attempted - recipient not available"
-                        ]
-                        if new_status == "Delivered":
-                            delivery_events.append(
-                                f"{datetime.now():%Y-%m-%d %H:%M} - {delivery_address} - Delivered successfully - Signed by: {DHLRealisticSimulator.generate_pod_info()}"
-                            )
-                        checkpoint = random.choice(delivery_events)
-                    if checkpoint and checkpoint not in checkpoints:
-                        if (progress - last_checkpoint_progress) >= sim_min_checkpoint_delta:
-                            checkpoints.append(checkpoint)
-                            last_checkpoint_progress = progress
-                        current_status = new_status
-                        track_metrics(tn, "checkpoint_added", {
-                            "status": current_status,
-                            "stage": stage,
-                            "checkpoint": checkpoint,
-                            "progress": round(progress, 2)
-                        })
-                if current_status == "Exception":
-                    handle_exception(tn, shipment, "delivery attempt failed")
-                    track_metrics(tn, "exception", {
-                        "status": current_status,
-                        "reason": "delivery attempt failed",
-                        "distance_km": distance_km,
-                        "stage": stage
-                    })
-                    break
-                shipment.status = current_status
-                shipment.checkpoints = ";".join(checkpoints[-50:])
-                shipment.last_updated = datetime.now()
-                db.session.commit()
-
-                try:
-                    route_coords = []
-                    for city_name in route_template:
-                        hub = DHLRealisticSimulator.DHL_HUBS.get(city_name)
-                        if hub:
-                            route_coords.append({'lat': hub['lat'], 'lon': hub['lon']})
-                        else:
-                            _n, coords = resolve_location(city_name)
-                            if coords:
-                                route_coords.append(coords)
-                    if not route_coords and origin_coords and dest_coords:
-                        route_coords = [origin_coords, dest_coords]
-                    try:
-                        dens_km = float(os.getenv('SIM_ROUTE_DENSIFY_KM', '1.0') or '1.0')
-                        route_coords = densify_route_coords(route_coords, dens_km)
-                    except Exception:
-                        pass
-
-                    current_lat = None
-                    current_lon = None
-                    if route_coords and len(route_coords) >= 2:
-                        segments = len(route_coords) - 1
-                        frac = min(max(progress, 0.0), 1.0) * segments
-                        seg_idx = min(int(frac), segments - 1)
-                        local_frac = frac - seg_idx
-                        a = route_coords[seg_idx]
-                        b = route_coords[seg_idx + 1]
-                        current_lat = a['lat'] + (b['lat'] - a['lat']) * local_frac
-                        current_lon = a['lon'] + (b['lon'] - a['lon']) * local_frac
-                    else:
-                        if dest_coords:
-                            current_lat = dest_coords.get('lat')
-                            current_lon = dest_coords.get('lon')
-
-                    try:
-                        rset('progress', tn, str(progress))
-                        rset('stage', tn, stage)
-                        rset('current_location', tn, city if 'city' in locals() and city else (destination_norm or ''))
-                        if current_lat is not None and current_lon is not None:
-                            rset('current_lat', tn, str(current_lat))
-                            rset('current_lon', tn, str(current_lon))
-                            # Immediately emit a lightweight, rate-limited update (coords + progress)
-                            try:
-                                sim_emit_light(
-                                    tn,
-                                    status=current_status,
-                                    delivery_location=shipment.delivery_location,
-                                    progress=progress,
-                                    current_location=(city if 'city' in locals() and city else (destination_norm or '')),
-                                    current_lat=current_lat,
-                                    current_lon=current_lon,
-                                    checkpoints=(shipment.checkpoints or '').split(';') if shipment.checkpoints else [],
-                                    last_updated=shipment.last_updated.isoformat() if shipment.last_updated else datetime.now().isoformat(),
-                                    service_level=rget('service_level', tn, 'DHL Express'),
-                                    delivery_window=rget('delivery_window', tn, 'Calculating...'),
-                                    proof_of_delivery=rget('proof_of_delivery', tn, 'Pending')
-                                )
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-
-                    sim_logger.info(f"SIM_UPDATE|{tn}|progress={progress:.3f}|route_idx={route_index if 'route_index' in locals() else -1}|lat={current_lat}|lon={current_lon}")
-                except Exception:
-                    pass
-
-                shipment = reload_shipment(tn)
-                if shipment:
-                    checkpoints = (shipment.checkpoints or "").split(";") if shipment.checkpoints else checkpoints
-                    current_status = shipment.status
-                invalidate_cache(tn)
-                if len(checkpoints) > 1:
-                    if should_send_email(tn, current_status, checkpoints):
-                        enqueue_dhl_email(tn, current_status, checkpoints[-1], destination)
-                        track_metrics(tn, "email_sent", {
-                            "status": current_status,
-                            "checkpoint": checkpoints[-1],
-                            "stage": stage
-                        })
-                broadcast_update(tn)
-                if current_status in ["Delivered", "Returned"]:
-                    final_checkpoint = f"{datetime.now():%Y-%m-%d %H:%M} - {delivery_address} - Delivery confirmed - Signed by: {DHLRealisticSimulator.generate_pod_info()}"
-                    if final_checkpoint not in checkpoints:
-                        checkpoints.append(final_checkpoint)
-                        if shipment:
-                            shipment.checkpoints = ";".join(checkpoints[-50:])
-                            db.session.commit()
-                            reset_db_session()
-                            shipment = reload_shipment(tn)
-                    break
-                wait_seconds = random.uniform(15, 60) / speed_multiplier
-                if DHLRealisticSimulator.is_business_hours(datetime.now()):
-                    wait_seconds *= 0.7
-                if stage in ["pickup", "delivery"]:
-                    wait_seconds *= 0.5
-                eventlet.sleep(min(max(wait_seconds, 5), 120))
-            except Exception as e:
-                sim_logger.error(f"Enhanced full simulation error for {tn}: {e}")
-                reset_db_session()
-                shipment = reload_shipment(tn)
-                if not shipment:
-                    sim_logger.error(f"Shipment {tn} no longer exists after error, aborting simulation")
-                    break
-                checkpoints = (shipment.checkpoints or "").split(";") if shipment.checkpoints else checkpoints
-                current_status = shipment.status
-                eventlet.sleep(30)
-        if shipment.status not in ["Delivered", "Returned"]:
-            shipment.status = "Delivered" if delivery_attempts < max_attempts else "Exception"
-            shipment.last_updated = datetime.now()
-            try:
-                db.session.commit()
-            except Exception as e:
-                sim_logger.error(f"Final commit failed for {tn}: {e}")
-                try:
-                    db.session.rollback()
-                except Exception:
-                    pass
-                reset_db_session()
-            else:
-                reset_db_session()
-            invalidate_cache(tn)
-            broadcast_update(tn)
+def _handle_new_checkpoint(tn, checkpoint):
+    """Handle a new checkpoint: log, trigger email if needed."""
+    shipment = Shipment.query.filter_by(tracking_number=tn).first()
+    if not shipment:
+        return
+    try:
+        checkpoints = (shipment.checkpoints or "").split(";")
+        if len(checkpoints) > 1 and should_send_email(tn, shipment.status, checkpoints):
+            enqueue_dhl_email(tn, shipment.status, checkpoint, shipment.delivery_location)
+    except Exception as e:
+        flask_logger.warning(f"Email handling failed for {tn}: {e}")
 
 def simulate_tracking(tn):
+    """Run the new leg-based simulation engine for a given tracking number."""
     with app.app_context():
-        try:
-            enhanced_full_simulate_tracking(tn)
-        except Exception as e:
-            sim_logger.error(f"Enhanced full simulation failed for {tn}: {e}")
-            basic_simulate_tracking(tn)
+        # Build the hooks object
+        hooks = RunnerHooks(
+            get_live_shipment=lambda: Shipment.query.filter_by(tracking_number=tn).first(),
+            save_shipment=lambda status, checkpoints: _save_shipment_state(tn, status, checkpoints),
+            get_flag=lambda field, default: rget(field, tn, default),
+            set_flag=lambda field, value: rset(field, tn, value),
+            resolve_location=resolve_location,
+            build_route_hubs=DHLRealisticSimulator.build_route_hubs,
+            on_position_update=lambda progress, city, lat, lon, stage: (
+                # lightweight update for clients that only need coords/progress
+                sim_emit_light(tn, progress=progress, current_location=city,
+                               current_lat=lat, current_lon=lon, stage=stage)
+            ),
+            on_checkpoint_added=lambda checkpoint: _handle_new_checkpoint(tn, checkpoint),
+            on_status_changed=lambda status: None,  # handled inside _commit
+            broadcast=lambda: broadcast_update(tn),
+            sleep=eventlet.sleep,
+            now=datetime.now,
+            generate_pod=DHLRealisticSimulator.generate_pod_info
+        )
 
-def basic_simulate_tracking(tn):
-    with app.app_context():
-        shipment = Shipment.query.filter_by(tracking_number=tn).first()
-        if not shipment:
-            return
-        carrier = shipment.carrier or "DHL"
-    config = DHL_CONFIG if carrier == "DHL" else app.config.get('STATUS_TRANSITIONS', {})
-    origin = shipment.origin_location or "Lagos, NG"
-    destination = shipment.delivery_location
-    origin_norm, origin_coords = resolve_location(origin)
-    destination_norm, dest_coords = resolve_location(destination)
-    distance_km = estimate_distance(origin_norm, destination_norm)
-    default_mode = "air" if distance_km > 1000 else "ground"
-    transport_mode = rget("transport_mode", tn, default_mode)
-    transport_mode = (transport_mode or default_mode).lower()
-    hubs = DHLRealisticSimulator.build_route_hubs(origin_coords, dest_coords, distance_km)
-    if transport_mode == "air" and hubs:
-        route_template = [origin_norm] + hubs + [destination_norm]
-    else:
-        route_template = [origin_norm, destination_norm] if not hubs else [origin_norm] + hubs + [destination_norm]
-    checkpoints = (shipment.checkpoints or "").split(";") if shipment.checkpoints else []
-    event_phrases = []
-    for values in config.get("events", {}).values():
-        if isinstance(values, list):
-            event_phrases.extend(values)
-        elif isinstance(values, str):
-            event_phrases.append(values)
-    current_idx = len([c for c in checkpoints if any(phrase in c for phrase in event_phrases)])
-    sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '7')) or os.getenv('SIM_DEFAULT_DAYS', '7'))
-    sim_days = max(1.0, min(365.0, sim_days))
-    start_time = datetime.now()
-    if transport_mode == "air":
-        base_hours = max(6, min(48, distance_km / 850))
-    else:
-        base_hours = max(24, min(120, distance_km / 90))
-    speed_multiplier = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
-    speed_multiplier = max(0.1, min(10.0, speed_multiplier))
-    while datetime.now() - start_time < timedelta(days=sim_days):
-        latest_shipment = reload_shipment(tn)
-        if latest_shipment:
-            # ---- ADD On_Hold check ----
-            if latest_shipment.status == "On_Hold":
-                eventlet.sleep(30)
-                continue
-            # ---- END ADD ----
-            if latest_shipment.delivery_location != destination or latest_shipment.origin_location != origin:
-                origin = latest_shipment.origin_location or "Lagos, NG"
-                destination = latest_shipment.delivery_location
-                origin_norm, origin_coords = resolve_location(origin)
-                destination_norm, dest_coords = resolve_location(destination)
-                distance_km = estimate_distance(origin_norm, destination_norm)
-                default_mode = "air" if distance_km > 1000 else "ground"
-                transport_mode = rget("transport_mode", tn, default_mode)
-                transport_mode = (transport_mode or default_mode).lower()
-                hubs = DHLRealisticSimulator.build_route_hubs(origin_coords, dest_coords, distance_km)
-                if transport_mode == "air" and hubs:
-                    route_template = [origin_norm] + hubs + [destination_norm]
-                else:
-                    route_template = [origin_norm, destination_norm] if not hubs else [origin_norm] + hubs + [destination_norm]
-            if latest_shipment.status != shipment.status:
-                shipment = latest_shipment
-                current_status = shipment.status
-            if latest_shipment.checkpoints and latest_shipment.checkpoints != ";".join(checkpoints):
-                checkpoints = (latest_shipment.checkpoints or "").split(";")
-                current_idx = len([c for c in checkpoints if any(phrase in c for phrase in event_phrases)])
-        speed_multiplier = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
-        speed_multiplier = max(0.1, min(10.0, speed_multiplier))
-        sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '7')) or os.getenv('SIM_DEFAULT_DAYS', '7'))
-        sim_days = max(1.0, min(365.0, sim_days))
-        if rget("paused_simulations", tn, "false") == "true":
-            eventlet.sleep(10)
-            continue
-        try:
-            if current_idx < len(route_template) and current_status not in ["Delivered", "Returned"]:
-                city = route_template[current_idx]
-                event_pool = config["events"].get(current_status, ["Processed at facility"])
-                event = random.choice(event_pool)
-                delay_note = ""
-                if random.random() < 0.07:
-                    delay_note = " | " + random.choice(["Customs clearance", "Weather delay", "High volume"])
-                    eventlet.sleep(random.uniform(600, 1800) / speed_multiplier)
-                checkpoint = f"{datetime.now():%Y-%m-%d %H:%M} - {city} - {event}{delay_note}"
-                if checkpoint not in checkpoints:
-                    checkpoints.append(checkpoint)
-                    current_idx += 1
-            transition = config.get("status_flow", {}).get(current_status, {})
-            next_states = transition.get("next", [])
-            if next_states and current_status not in ["Delivered", "Returned"]:
-                probs = transition.get("probabilities", [1.0/len(next_states)]*len(next_states))
-                new_status = random.choices(next_states, probs)[0]
-                if new_status != current_status:
-                    current_status = new_status
-                    if new_status == "Delivered":
-                        checkpoints.append(f"{datetime.now():%Y-%m-%d %H:%M} - {destination} - Delivered successfully")
-                    elif new_status == "Returned":
-                        checkpoints.append(f"{datetime.now():%Y-%m-%d %H:%M} - {origin} - Returned to shipper")
-            shipment.status = current_status
-            shipment.checkpoints = ";".join(checkpoints[-50:])
-            shipment.last_updated = datetime.now()
-            db.session.commit()
-            invalidate_cache(tn)
-            if len(checkpoints) > 1:
-                if should_send_email(tn, current_status, checkpoints):
-                    enqueue_dhl_email(tn, current_status, checkpoints[-1], destination)
-            broadcast_update(tn)
-            steps = max(1, len(route_template))
-            base_sleep = base_hours * 3600 / steps / speed_multiplier
-            eventlet.sleep(base_sleep * random.uniform(0.7, 1.3))
-            if current_status in ["Delivered", "Returned"]:
-                break
-        except Exception as e:
-            sim_logger.error(f"DHL Sim error {tn}: {e}")
-            eventlet.sleep(30)
+        sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')))
+        runner = SimulationRunner(tn, hooks, sim_days_cap=sim_days)
+        runner.run()
+
+# ============================================================
+# END NEW SIMULATION ENGINE
+# ============================================================
 
 # === DHL EMAIL ===
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
