@@ -149,7 +149,22 @@ def add_client_error(payload: dict):
 
 
 def spawn_simulation(tracking_number: str):
+    """
+    Start a simulation thread for the given tracking number.
+    Uses a Redis lock to prevent multiple concurrent runs for the same TN.
+    """
+    # Acquire Redis lock to prevent duplicate runs
+    lock_key = f"sim_running:{tracking_number}"
+    if redis_client:
+        # setnx returns True if key was set (i.e., not already existing)
+        if not redis_client.setnx(lock_key, "1"):
+            bot_logger.info(f"Simulation already running for {tracking_number}")
+            return None
+        redis_client.expire(lock_key, 3600)  # 1 hour max
+
     if not register_simulation_start():
+        if redis_client:
+            redis_client.delete(lock_key)
         return None
 
     def _runner():
@@ -162,6 +177,8 @@ def spawn_simulation(tracking_number: str):
             if app_module and hasattr(app_module, 'simulate_tracking'):
                 app_module.simulate_tracking(tracking_number)
         finally:
+            if redis_client:
+                redis_client.delete(lock_key)
             register_simulation_stop()
 
     try:
@@ -170,6 +187,8 @@ def spawn_simulation(tracking_number: str):
         thread.start()
         return thread
     except Exception:
+        if redis_client:
+            redis_client.delete(lock_key)
         register_simulation_stop()
         pass
     return None
@@ -847,6 +866,8 @@ def rate_limit(func):
         user_id = str(message.from_user.id)
         key = f"rate_limit:{user_id}"
         count = safe_redis_operation(redis_client.incr, key) if redis_client else 0
+        if count is None:
+            count = 0
         if count == 1:
             safe_redis_operation(redis_client.expire, key, RATE_LIMIT_WINDOW)
         if count > RATE_LIMIT_MAX:
