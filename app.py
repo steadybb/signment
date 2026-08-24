@@ -2062,13 +2062,14 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
             pass
         return False
 
-# === BROADCAST UPDATE (UPDATED to include stage + current_checkpoint_index) ===
+# === BROADCAST UPDATE (UPDATED with stage + current_checkpoint_index + lock_stage) ===
 def broadcast_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
         return
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
+    lock_stage = rget("lock_stage", tn, "false") == "true"  # added
     try:
         coords = geocode_locations((shipment.checkpoints or "").split(";"))
         route_coords = build_route_from_checkpoints(coords, mode='drive')
@@ -2115,6 +2116,7 @@ def broadcast_update(tn):
         "paused": paused,
         "carrier": shipment.carrier,
         "stage": stage,
+        "lock_stage": lock_stage,  # added
         "current_checkpoint_index": current_checkpoint_index
     }
     try:
@@ -2695,6 +2697,7 @@ def api_shipment_detail(tn):
     
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
+    lock_stage = rget("lock_stage", tn, "false") == "true"   # added
     mode = rget("transport_mode", tn, "ground") or "ground"
     delivery_attempt = int(rget("delivery_attempts", tn, "0") or "0")
     max_attempts = int(rget("max_attempts", tn, "3") or "3")
@@ -2724,6 +2727,7 @@ def api_shipment_detail(tn):
         'last_updated': shipment.last_updated.isoformat(),
         'speed_multiplier': speed,
         'paused': paused,
+        'lock_stage': lock_stage,   # added
         'mode': mode,
         'delivery_attempt': delivery_attempt,
         'max_attempts': max_attempts,
@@ -2752,7 +2756,8 @@ def purge_shipment_cache(tn):
             'stage', tn,
             'delivery_window', tn,
             'proof_of_delivery', tn,
-            'service_level', tn
+            'service_level', tn,
+            'lock_stage', tn   # added
         )
         redis_client.delete(f'email_history:{tn}', f'clients:{tn}')
     except Exception:
@@ -2789,7 +2794,8 @@ def api_shipment_update(tn):
     data = request.get_json() or {}
     editable = {
         'status', 'stage', 'service_level', 'delivery_window', 'proof_of_delivery',
-        'recipient_email', 'delivery_location', 'paused', 'speed', 'days', 'email_notifications', 'checkpoints'
+        'recipient_email', 'delivery_location', 'paused', 'speed', 'days', 'email_notifications', 'checkpoints',
+        'lock_stage'   # added
     }
 
     updated = {}
@@ -2831,6 +2837,11 @@ def api_shipment_update(tn):
                 if redis_client:
                     rset('sim_days', tn, str(days_value))
                 updated['days'] = days_value
+                continue
+            if k == 'lock_stage':   # added
+                if redis_client:
+                    rset('lock_stage', tn, 'true' if v else 'false')
+                updated['lock_stage'] = bool(v)
                 continue
 
             if k == 'checkpoints':
