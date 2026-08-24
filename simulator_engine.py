@@ -532,7 +532,11 @@ class SimulationRunner:
         joined = ";".join(checkpoints[-50:])
         self.hooks.save_shipment(status, joined)
         self.hooks.set_flag("progress", str(round(progress, 4)))
-        self.hooks.set_flag("stage", stage.value)
+
+        # Only set stage if not locked by admin
+        if self.hooks.get_flag("lock_stage", "false") != "true":
+            self.hooks.set_flag("stage", stage.value)
+
         self.hooks.set_flag("current_location", city)
         self.hooks.set_flag("current_lat", str(lat))
         self.hooks.set_flag("current_lon", str(lon))
