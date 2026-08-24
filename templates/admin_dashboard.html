@@ -111,6 +111,7 @@
     }
     .stage-badge.pickup { background: #dbeafe; color: #1e40af; }
     .stage-badge.transit { background: #fef3c7; color: #92400e; }
+    .stage-badge.customs { background: #fce7f3; color: #be185d; }  /* added */
     .stage-badge.delivery { background: #fce7f3; color: #be185d; }
     .stage-badge.delivered { background: #dcfce7; color: #16a34a; }
     .stage-badge.exception { background: #fee2e2; color: #dc2626; }
@@ -400,7 +401,6 @@
     }
     
     @media (max-width: 768px) {
-      /* Header - keep inline on mobile */
       .dhl-header .row { 
         flex-direction: row !important;
         flex-wrap: wrap;
@@ -426,7 +426,6 @@
       .stat-card { padding: 0.75rem; }
       .stat-card h3 { font-size: 1.1rem; }
       
-      /* Table - horizontal scroll with nowrap */
       .table-responsive {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
@@ -447,7 +446,6 @@
         padding: 2px 6px !important;
       }
       
-      /* Fix status badge */
       .status-badge {
         font-size: 0.65rem !important;
         padding: 2px 8px !important;
@@ -466,7 +464,6 @@
     }
     
     @media (max-width: 576px) {
-      /* Header buttons wrap but stay inline */
       .dhl-header .col-md-6.text-end {
         text-align: left !important;
         width: 100%;
@@ -517,7 +514,6 @@
       .modal-dialog { margin: 1rem; max-width: calc(100% - 2rem); }
       .modal-lg { max-width: 100%; }
       
-      /* Hide non-essential table columns on very small screens */
       .table-responsive table th:nth-child(4),
       .table-responsive table td:nth-child(4),
       .table-responsive table th:nth-child(5),
@@ -552,7 +548,6 @@
       #map { height: 180px; }
     }
 
-    /* Compact stats mode: applies when toggled or useful on small screens */
     body.compact-stats .stat-card,
     @media (max-width: 576px) {
       .stat-card {
@@ -799,6 +794,7 @@
                     <span class="stage-badge 
                       {%- if s.stage == 'pickup' %} pickup
                       {%- elif s.stage == 'transit' %} transit
+                      {%- elif s.stage == 'customs' %} customs
                       {%- elif s.stage == 'delivery' %} delivery
                       {%- elif s.stage == 'delivered' %} delivered
                       {%- elif s.stage == 'exception' %} exception
@@ -961,7 +957,7 @@
     </div>
   </div>
 
-  <!-- [REST OF MODALS AND SCRIPTS REMAIN THE SAME AS YOUR VERSION] -->
+  <!-- REST OF MODALS AND SCRIPTS (unchanged except stage dropdown) -->
   
   <script>
     // Compact stats toggle: persist in localStorage
@@ -986,7 +982,7 @@
   </script>
   <datalist id="citiesList"></datalist>
 
-  <!-- === EMAIL SEND MODAL === -->
+  <!-- EMAIL SEND MODAL (unchanged) -->
   <div class="modal fade" id="emailModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1065,7 +1061,7 @@
     </div>
   </div>
 
-  <!-- Create Shipment Modal -->
+  <!-- Create Shipment Modal (unchanged) -->
   <div class="modal fade" id="createModal" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1132,7 +1128,7 @@
     </div>
   </div>
 
-  <!-- Detail Modal -->
+  <!-- Detail Modal (unchanged) -->
   <div class="modal fade" id="detailModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1147,7 +1143,7 @@
     </div>
   </div>
 
-  <!-- Edit Shipment Modal -->
+  <!-- Edit Shipment Modal (UPDATED: added customs to stage dropdown) -->
   <div class="modal fade" id="editModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1166,6 +1162,7 @@
                   <option>Out_for_Delivery</option>
                   <option>Delayed</option>
                   <option>On_Hold</option>
+                  <option>Customs_Clearance</option>
                   <option>Delivered</option>
                   <option>Returned</option>
                   <option>Exception</option>
@@ -1176,6 +1173,7 @@
                 <select class="form-select" id="editStage">
                   <option value="pickup">Pickup</option>
                   <option value="transit">Transit</option>
+                  <option value="customs">Customs</option>  <!-- added -->
                   <option value="delivery">Delivery</option>
                   <option value="delivered">Delivered</option>
                   <option value="exception">Exception</option>
@@ -1321,11 +1319,9 @@
 
       if (data.error) {
         alertDiv.className = 'alert alert-danger';
-        // Prefer server-provided error_code mapping when available
         let friendly = data.error || 'Error';
         if (data.error_code && window.errorCodeMap && window.errorCodeMap[data.error_code]) {
           friendly = window.errorCodeMap[data.error_code];
-          // If server also provided a raw error string, show it in parentheses for debugging
           if (data.error && data.error !== friendly) {
             friendly = `${friendly} (${data.error})`;
           }
@@ -1582,7 +1578,6 @@
       })
       .then(r => r.json())
       .then(result => {
-        // When API enqueues the email (202 fallback), server returns { enqueued: true, message }
         if (result.success) {
           showEmailStatus('success', `✅ Email sent successfully to ${result.recipient}`);
           loadEmailHistory(currentEmailTn);
@@ -1905,11 +1900,13 @@
         const stageMap = {
           'pickup': 'pickup',
           'transit': 'transit',
+          'customs': 'customs',
           'delivery': 'delivery',
           'delivered': 'delivered',
           'exception': 'exception'
         };
-        stageEl.className = `stage-badge ${stageMap[data.stage] || 'pickup'}`;
+        const cls = stageMap[data.stage] || 'pickup';
+        stageEl.className = `stage-badge ${cls}`;
         stageEl.textContent = (data.stage || 'Pickup').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
       }
 
