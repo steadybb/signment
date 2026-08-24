@@ -396,6 +396,16 @@
             font-weight: 600;
         }
 
+        /* Scrollable checkpoint container */
+        .checkpoints-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0 10px;
+            margin-top: 8px;
+        }
+
         .checkpoint {
             padding: 10px 0;
             border-bottom: 1px solid #f0f0f0;
@@ -715,6 +725,9 @@
             }
             .grid-item img { height: 180px; }
             .grid-label { font-size: 0.75rem; padding: 6px 10px; }
+            .checkpoints-container {
+                max-height: 300px;
+            }
         }
         @media (max-width: 480px) {
             #map { height: 260px; }
@@ -724,6 +737,9 @@
             .grid-item img { height: 200px; }
             .grid-label { font-size: 0.7rem; padding: 4px 8px; }
             .progress-dot { width: 12px; height: 12px; }
+            .checkpoints-container {
+                max-height: 250px;
+            }
         }
         @media (max-width: 380px) {
             #map { height: 200px; }
@@ -738,6 +754,9 @@
             .parcel-grid { gap: 8px; }
             .grid-item img { height: 160px; }
             .progress-dot { width: 10px; height: 10px; }
+            .checkpoints-container {
+                max-height: 200px;
+            }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -879,27 +898,29 @@
                     </div>
 
                     <h3 class="text-lg font-semibold mt-2 mb-2 text-gray-700">Tracking History</h3>
-                    <div id="checkpoints">
-                        {% if checkpoints %}
-                            {% for checkpoint in checkpoints %}
+                    <div class="checkpoints-container">
+                        <div id="checkpoints">
+                            {% if checkpoints %}
+                                {% for checkpoint in checkpoints %}
+                                    <div class="checkpoint">
+                                        <div class="dot {% if loop.last %}current{% else %}completed{% endif %}"></div>
+                                        <div>
+                                            <div class="time">{{ checkpoint.split(' - ')[0] if ' - ' in checkpoint else '' }}</div>
+                                            <div class="location">{{ checkpoint.split(' - ')[1] if (' - ' in checkpoint and checkpoint.split(' - ')|length > 1) else '' }}</div>
+                                            <div class="event">{{ checkpoint.split(' - ')[2:]|join(' - ') if ' - ' in checkpoint and checkpoint.split(' - ')|length > 2 else checkpoint }}</div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            {% else %}
                                 <div class="checkpoint">
-                                    <div class="dot {% if loop.last %}current{% else %}completed{% endif %}"></div>
+                                    <div class="dot pending"></div>
                                     <div>
-                                        <div class="time">{{ checkpoint.split(' - ')[0] if ' - ' in checkpoint else '' }}</div>
-                                        <div class="location">{{ checkpoint.split(' - ')[1] if (' - ' in checkpoint and checkpoint.split(' - ')|length > 1) else '' }}</div>
-                                        <div class="event">{{ checkpoint.split(' - ')[2:]|join(' - ') if ' - ' in checkpoint and checkpoint.split(' - ')|length > 2 else checkpoint }}</div>
+                                        <div class="location">No checkpoints available</div>
+                                        <div class="event">Tracking information will appear here</div>
                                     </div>
                                 </div>
-                            {% endfor %}
-                        {% else %}
-                            <div class="checkpoint">
-                                <div class="dot pending"></div>
-                                <div>
-                                    <div class="location">No checkpoints available</div>
-                                    <div class="event">Tracking information will appear here</div>
-                                </div>
-                            </div>
-                        {% endif %}
+                            {% endif %}
+                        </div>
                     </div>
 
                     <div class="details-grid">
