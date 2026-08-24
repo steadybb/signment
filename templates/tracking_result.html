@@ -7,7 +7,6 @@
     <meta name="description" content="Real‑time DHL shipment tracking with live map, route animation, and instant updates.">
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <style>
-        /* ---------- Variables ---------- */
         :root {
             --dhl-red: #D40511;
             --dhl-yellow: #FFCC00;
@@ -15,7 +14,6 @@
             --transition-speed: 0.25s;
         }
 
-        /* ---------- Reset & Base ---------- */
         * { box-sizing: border-box; }
         html { scroll-behavior: smooth; }
         body {
@@ -30,7 +28,6 @@
             flex-direction: column;
         }
 
-        /* ---------- Header ---------- */
         .header {
             background: linear-gradient(to right, var(--dhl-yellow), #fff);
             padding: 10px 20px;
@@ -99,7 +96,6 @@
             outline: none;
         }
 
-        /* ---------- Titles ---------- */
         .title {
             text-align: center;
             color: var(--dhl-red);
@@ -115,7 +111,6 @@
             margin-bottom: 20px;
         }
 
-        /* ---------- Layout Containers ---------- */
         .tracking-result,
         .map-container,
         .details {
@@ -149,7 +144,6 @@
             pointer-events: none;
         }
         .map-loading-hint.hide { display: none; }
-        /* fullscreen mode */
         .map-container.fullscreen {
             position: fixed;
             top: 0;
@@ -161,9 +155,7 @@
             border-radius: 0;
             margin: 0;
         }
-        .map-container.fullscreen #map {
-            height: 100vh;
-        }
+        .map-container.fullscreen #map { height: 100vh; }
 
         .details {
             background: #fff;
@@ -175,7 +167,6 @@
             flex: 1;
         }
 
-        /* ---------- Badges & Labels ---------- */
         .tracking-number-display {
             font-family: 'Courier New', monospace;
             font-weight: 700;
@@ -234,7 +225,6 @@
         .connection-dot.connected { background: #22c55e; }
         .connection-dot.disconnected { background: #dc2626; }
 
-        /* ---------- Paused Banner ---------- */
         .paused-banner {
             display: none;
             align-items: center;
@@ -250,7 +240,6 @@
         }
         .paused-banner.show { display: flex; }
 
-        /* ---------- Speed / Mode Badges ---------- */
         .meta-badges {
             display: flex;
             gap: 8px;
@@ -271,7 +260,6 @@
         }
         .meta-badge.show { display: inline-flex; }
 
-        /* ---------- Progress with dot ---------- */
         .progress-container {
             margin: 16px 0 20px;
             position: relative;
@@ -325,7 +313,6 @@
             box-shadow: 0 0 6px rgba(245,158,11,0.4);
         }
 
-        /* ---------- Position Card ---------- */
         .position-card {
             margin: 16px 0 18px;
             padding: 16px 18px;
@@ -367,11 +354,8 @@
             grid-template-columns: 1fr 1fr;
             gap: 12px;
         }
-        .position-grid .detail-label {
-            margin-bottom: 2px;
-        }
+        .position-grid .detail-label { margin-bottom: 2px; }
 
-        /* ---------- Arrival & Checkpoint Cards ---------- */
         .arrival-card {
             margin: 14px 0 18px;
             padding: 14px 16px;
@@ -412,7 +396,6 @@
             font-weight: 600;
         }
 
-        /* ---------- Checkpoints ---------- */
         .checkpoint {
             padding: 10px 0;
             border-bottom: 1px solid #f0f0f0;
@@ -454,7 +437,6 @@
             to { opacity: 1; transform: translateX(0); }
         }
 
-        /* ---------- Details Grid ---------- */
         .details-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -464,9 +446,7 @@
             border-top: 1px solid #f0f0f0;
             border-bottom: 1px solid #f0f0f0;
         }
-        .details-grid .detail-item {
-            padding: 4px 0;
-        }
+        .details-grid .detail-item { padding: 4px 0; }
         .details-grid .detail-label {
             font-size: 0.75rem;
             color: #94a3b8;
@@ -474,11 +454,8 @@
             letter-spacing: 0.5px;
             font-weight: 600;
         }
-        .details-grid .detail-value {
-            font-weight: 500;
-        }
+        .details-grid .detail-value { font-weight: 500; }
 
-        /* ---------- Parcel Photos (BIGGER) ---------- */
         .parcel-photos-section {
             margin-top: 20px;
             border-top: 1px solid #f0f0f0;
@@ -518,7 +495,6 @@
             border-top: 1px solid #f0f0f0;
         }
 
-        /* ---------- Buttons ---------- */
         .back-button {
             display: inline-block;
             margin-top: 16px;
@@ -538,17 +514,10 @@
         }
         .back-button:active { transform: scale(0.97); }
 
-        .refresh-btn {
-            display: none;
-        }
-        .refresh-hint {
-            display: none;
-        }
-        #retryBtn {
-            display: none !important;
-        }
+        .refresh-btn { display: none; }
+        .refresh-hint { display: none; }
+        #retryBtn { display: none !important; }
 
-        /* ---------- Toast ---------- */
         .toast-container {
             position: fixed;
             top: 80px;
@@ -591,7 +560,6 @@
             to { opacity: 1; transform: translateX(0); }
         }
 
-        /* ---------- Loading Spinner ---------- */
         .spinner {
             display: inline-block;
             width: 32px;
@@ -603,7 +571,6 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ---------- Error ---------- */
         .error-message {
             max-width: 760px;
             margin: 30px auto;
@@ -622,7 +589,6 @@
             font-weight: 500;
         }
 
-        /* ---------- Footer ---------- */
         .footer {
             background: linear-gradient(to right, var(--dhl-yellow), #fff);
             padding: 30px 20px;
@@ -677,7 +643,6 @@
             margin-top: 12px;
         }
 
-        /* ---------- Map Controls ---------- */
         .leaflet-control-custom {
             background: white;
             border: 2px solid rgba(0,0,0,0.2);
@@ -713,7 +678,6 @@
             background: #b0040e;
         }
 
-        /* ---------- Responsive ---------- */
         @media (max-width: 1024px) {
             .details { padding: 24px 22px; }
             #map { height: 360px; }
@@ -756,11 +720,7 @@
             #map { height: 260px; }
             .details { padding: 16px 14px; }
             .position-pill { font-size: 0.7rem !important; padding: 4px 8px; }
-            .refresh-hint { display: none; }
-            .parcel-grid {
-                grid-template-columns: 1fr;
-                gap: 12px;
-            }
+            .parcel-grid { grid-template-columns: 1fr; gap: 12px; }
             .grid-item img { height: 200px; }
             .grid-label { font-size: 0.7rem; padding: 4px 8px; }
             .progress-dot { width: 12px; height: 12px; }
@@ -780,7 +740,6 @@
             .progress-dot { width: 10px; height: 10px; }
         }
 
-        /* ---------- Reduced motion ---------- */
         @media (prefers-reduced-motion: reduce) {
             .live-indicator { animation: none; }
             .progress-bar .fill { transition: none; }
@@ -792,7 +751,6 @@
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
-    <!-- ====== HEADER ====== -->
     <header class="header">
         <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL Logo">
         <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="menuContent" type="button">☰</button>
@@ -803,16 +761,11 @@
         </div>
     </header>
 
-    <!-- ====== TITLE ====== -->
     <h1 class="title">Tracking Details</h1>
     <p class="title-sub">Real‑time tracking for your DHL shipment</p>
 
-    <!-- ====== TOAST CONTAINER ====== -->
     <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
 
-    <!-- ============================================================ -->
-    <!--  MAIN CONTENT – conditional on error                          -->
-    <!-- ============================================================ -->
     {% if error %}
         <div class="error-message">
             <span>📦</span> {{ error }}<br>
@@ -826,15 +779,12 @@
             </div>
 
             <div id="resultContent" style="display:none;">
-                <!-- ====== MAP ====== -->
                 <div class="map-container" id="mapContainer">
                     <div id="map"></div>
                     <div class="map-loading-hint" id="mapLoadingHint">Loading map…</div>
                 </div>
 
-                <!-- ====== DETAILS ====== -->
                 <div class="details" id="details">
-                    <!-- Tracking Number & Status (larger) -->
                     <div class="flex items-center justify-between flex-wrap gap-3">
                         <div class="flex items-center gap-2">
                             <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
@@ -856,7 +806,6 @@
                         </div>
                     </div>
 
-                    <!-- Live Controls (Refresh and Retry hidden) -->
                     <div class="flex items-center gap-3 mt-4 flex-wrap">
                         <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
                         <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
@@ -867,18 +816,15 @@
                         <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection" style="display:none;"></button>
                     </div>
 
-                    <!-- Simulator state badges (only mode badge, speed removed) -->
                     <div class="meta-badges" id="metaBadges">
                         <span class="meta-badge" id="modeBadge">🚚 Ground</span>
                     </div>
 
-                    <!-- Paused banner -->
                     <div class="paused-banner" id="pausedBanner" role="status">
                         <span>⏸</span>
                         <span>This shipment's simulation is currently paused — position will resume updating once it's restarted.</span>
                     </div>
 
-                    <!-- Position Card -->
                     <div class="position-card" id="positionCard">
                         <div class="position-header">
                             <div>
@@ -908,7 +854,6 @@
                         </div>
                     </div>
 
-                    <!-- Arrival & Checkpoint -->
                     <div class="arrival-card">
                         <div class="arrival-title">Estimated Arrival</div>
                         <div class="arrival-value" id="estimatedArrival">{{ delivery_window | default('Calculating...') }}</div>
@@ -922,7 +867,6 @@
                         <div class="value" id="nextCheckpoint">{{ checkpoints[1] if checkpoints and checkpoints|length > 1 else 'Next scan pending' }}</div>
                     </div>
 
-                    <!-- Progress with dot -->
                     <div class="progress-container">
                         <div class="progress-label">
                             <span>Delivery Progress</span>
@@ -934,7 +878,6 @@
                         </div>
                     </div>
 
-                    <!-- Checkpoints -->
                     <h3 class="text-lg font-semibold mt-2 mb-2 text-gray-700">Tracking History</h3>
                     <div id="checkpoints">
                         {% if checkpoints %}
@@ -959,7 +902,6 @@
                         {% endif %}
                     </div>
 
-                    <!-- Details Grid -->
                     <div class="details-grid">
                         <div class="detail-item">
                             <div class="detail-label">Origin</div>
@@ -987,12 +929,10 @@
                         </div>
                     </div>
 
-                    <!-- Last Updated -->
                     <div class="last-updated" id="lastUpdated">
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
-                    <!-- ====== PARCEL PHOTOS (BIGGER) ====== -->
                     <div class="parcel-photos-section">
                         <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
                         <div class="parcel-grid">
@@ -1003,19 +943,13 @@
                         </div>
                     </div>
 
-                    <!-- Back Button -->
                     <a href="{{ url_for('index') }}" class="back-button">← Back to home</a>
                 </div>
             </div>
         </div>
 
-        <!-- ============================================================ -->
-        <!--  SCRIPT – with deduplication and persistence                  -->
-        <!-- ============================================================ -->
         <script>
-            // ============================================================
-            //  GLOBAL ERROR HANDLER
-            // ============================================================
+            // GLOBAL ERROR HANDLER
             window.onerror = function(message, source, lineno, colno, error) {
                 console.error('Global error caught:', message, error);
                 const spinner = document.getElementById('loadingSpinner');
@@ -1027,9 +961,6 @@
 
             console.log('📦 Tracking page script started (inside else block)');
 
-            // ============================================================
-            //  SHOW CONTENT IMMEDIATELY
-            // ============================================================
             function showContent() {
                 try {
                     document.getElementById('loadingSpinner').style.display = 'none';
@@ -1041,9 +972,6 @@
             }
             showContent();
 
-            // ============================================================
-            //  CONSTANTS & CONFIGURATION
-            // ============================================================
             const SOCKET_URL = window.location.origin;
             const REFRESH_INTERVAL_MS = 30000;
             const MARKER_TWEEN_MS = 900;
@@ -1070,9 +998,6 @@
                 return isNaN(n) ? null : n;
             }
 
-            // ============================================================
-            //  TOAST NOTIFICATIONS
-            // ============================================================
             function showToast(message, type = 'info', duration = 5000) {
                 const container = document.getElementById('toastContainer');
                 if (!container) return;
@@ -1093,9 +1018,6 @@
                 }, duration);
             }
 
-            // ============================================================
-            //  MENU TOGGLE
-            // ============================================================
             const menuBtn = document.getElementById('menuBtn');
             const menuContent = document.getElementById('menuContent');
             menuBtn.addEventListener('click', (e) => {
@@ -1118,9 +1040,6 @@
                 }
             });
 
-            // ============================================================
-            //  SOCKET.IO SETUP
-            // ============================================================
             const socket = io(SOCKET_URL, {
                 transports: ['polling', 'websocket'],
                 reconnection: true,
@@ -1182,9 +1101,6 @@
                 showToast('Reconnecting…', 'info', 2000);
             });
 
-            // ============================================================
-            //  TRACKING REQUEST
-            // ============================================================
             const trackingNumber = "{{ shipment.tracking_number }}";
 
             function requestTracking() {
@@ -1196,7 +1112,6 @@
                 socket.emit('request_tracking', { tracking_number: trackingNumber });
             }
 
-            // Refresh function kept but button hidden
             function refreshTracking() {
                 const btn = document.getElementById('refreshBtn');
                 if (!btn || btn.disabled) return;
@@ -1209,9 +1124,6 @@
                 }, 3000);
             }
 
-            // ============================================================
-            //  LEAFLET LOADING (dynamic)
-            // ============================================================
             let leafletState = 'unloaded';
             let leafletCallbacks = [];
 
@@ -1286,9 +1198,6 @@
                 showToast('Map failed to load. Tracking data is still updating normally.', 'error', 6000);
             }
 
-            // ============================================================
-            //  MAP INITIALIZATION
-            // ============================================================
             let map = null;
             let markerGroup, polylineGroup, liveMarkerGroup;
             let routeBounds = null;
@@ -1395,9 +1304,6 @@
                 }
             }
 
-            // ============================================================
-            //  ROUTE DRAWING
-            // ============================================================
             function routeSignature(coords) {
                 if (!coords || !coords.length) return '';
                 const first = coords[0];
@@ -1444,9 +1350,6 @@
                 debugLog('Route redrawn:', coords.length, 'points');
             }
 
-            // ============================================================
-            //  LIVE MARKER MOVEMENT
-            // ============================================================
             let markerTweenFrame = null;
 
             function buildMarkerIcon() {
@@ -1519,9 +1422,6 @@
                 markerTweenFrame = requestAnimationFrame(step);
             }
 
-            // ============================================================
-            //  SIMULATOR STATE INDICATORS
-            // ============================================================
             function applyPausedState(paused) {
                 const banner = document.getElementById('pausedBanner');
                 const dot = document.getElementById('liveIndicator');
@@ -1534,12 +1434,6 @@
                 if (progressDot) progressDot.classList.toggle('paused', !!paused);
             }
 
-            // Speed badge removed – we keep the function but it won't be called if we remove the call in applyTrackingUpdate
-            function applySpeedBadge(speed) {
-                // No speed badge element – do nothing
-                return;
-            }
-
             function applyModeBadge(mode) {
                 const badge = document.getElementById('modeBadge');
                 if (!badge || !mode) return;
@@ -1548,15 +1442,12 @@
                 badge.classList.add('show');
             }
 
-            // ============================================================
-            //  UNIFIED UPDATE HANDLER (with deduplication)
-            // ============================================================
             let checkpointSet = new Set();
 
             function applyTrackingUpdate(data) {
                 if (!data) return;
 
-                // ---- Status ----
+                // Status
                 if (data.status) {
                     const statusEl = document.getElementById('status');
                     statusEl.textContent = data.status;
@@ -1572,9 +1463,7 @@
                     statusEl.className = `status-badge-header ${cls}`;
                 }
 
-                // ---- Stage badge removed ----
-
-                // ---- Progress ----
+                // Progress
                 if (data.progress !== undefined) {
                     const progress = toNum(data.progress) || 0;
                     const percent = Math.round(progress * 100);
@@ -1593,7 +1482,7 @@
                     }
                 }
 
-                // ---- Location ----
+                // Location
                 if (data.current_location) {
                     document.getElementById('currentLocation').textContent = data.current_location;
                 }
@@ -1606,11 +1495,10 @@
                     moveLiveMarker(lat, lon, data.current_location);
                 }
 
-                // ---- Paused / Mode (speed removed) ----
                 applyPausedState(data.paused);
                 applyModeBadge(data.mode);
 
-                // ---- Arrival / Checkpoints ----
+                // Arrival
                 updateElement('estimatedArrival', data.delivery_window);
 
                 if (data.checkpoints && data.checkpoints.length) {
@@ -1650,16 +1538,20 @@
                         container.appendChild(div);
                     });
 
-                    const progress = toNum(data.progress) || 0;
+                    // FIX: Next checkpoint should be the one after current index
                     if (allCheckpoints.length > 1) {
-                        const idx = Math.min(Math.max(1, Math.round(progress * (allCheckpoints.length - 1))), allCheckpoints.length - 1);
-                        updateElement('nextCheckpoint', allCheckpoints[idx]);
+                        const nextIdx = currentIdx + 1;
+                        if (nextIdx < allCheckpoints.length) {
+                            updateElement('nextCheckpoint', allCheckpoints[nextIdx]);
+                        } else {
+                            updateElement('nextCheckpoint', 'Next scan pending');
+                        }
                     } else {
                         updateElement('nextCheckpoint', 'Next scan pending');
                     }
                 }
 
-                // ---- Details Grid ----
+                // Details grid
                 updateElement('deliveryLocation', data.delivery_location);
                 updateElement('serviceLevel', data.service_level);
                 updateElement('deliveryWindow', data.delivery_window);
@@ -1671,16 +1563,13 @@
                     }
                 }
 
-                // ---- Map route ----
+                // Map route
                 const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
                 if (routeData && routeData.length) {
                     maybeRedrawRoute(routeData);
                 }
             }
 
-            // ============================================================
-            //  INITIAL DATA LOAD (server-rendered)
-            // ============================================================
             function setInitialPageState() {
                 try {
                     const initialCheckpoints = sanitizeArray({{ checkpoints | tojson }});
@@ -1715,9 +1604,6 @@
                 }
             }
 
-            // ============================================================
-            //  START
-            // ============================================================
             try {
                 setInitialPageState();
                 loadLeaflet(initMap);
@@ -1730,9 +1616,6 @@
                 }
             }
 
-            // ============================================================
-            //  SOCKET.IO TRACKING UPDATES
-            // ============================================================
             socket.on('tracking_update', (data) => {
                 debugLog('Received tracking update:', data);
                 if (data.error) {
@@ -1743,9 +1626,6 @@
                 applyTrackingUpdate(data);
             });
 
-            // ============================================================
-            //  KEYBOARD SHORTCUTS
-            // ============================================================
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'r' && e.ctrlKey) {
                     e.preventDefault();
@@ -1763,9 +1643,6 @@
                 }
             });
 
-            // ============================================================
-            //  INITIAL CONNECTION STATUS
-            // ============================================================
             updateConnectionStatus(socket.connected);
             if (!socket.connected) {
                 showToast('Connecting to live server…', 'info', 3000);
@@ -1775,7 +1652,6 @@
         </script>
     {% endif %}
 
-    <!-- ====== FOOTER ====== -->
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-section">
