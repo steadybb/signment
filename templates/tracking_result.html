@@ -180,19 +180,19 @@
             font-family: 'Courier New', monospace;
             font-weight: 700;
             color: var(--dhl-red);
-            font-size: 1.1rem;
+            font-size: 1.4rem;  /* increased */
             background: #fef2f2;
-            padding: 4px 14px;
-            border-radius: 6px;
+            padding: 8px 20px;   /* larger padding */
+            border-radius: 8px;
             display: inline-block;
             letter-spacing: 0.5px;
         }
         .status-badge-header {
             display: inline-block;
-            padding: 6px 18px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 0.85rem;
+            padding: 8px 22px;   /* larger */
+            border-radius: 24px;
+            font-weight: 700;    /* bolder */
+            font-size: 1rem;     /* bigger */
             letter-spacing: 0.3px;
             white-space: nowrap;
         }
@@ -204,26 +204,6 @@
         .status-badge-header.pending { background: #f3f4f6; color: #6b7280; }
         .status-badge-header.on-hold { background: #fef3c7; color: #b45309; }
         .status-badge-header.customs { background: #fce7f3; color: #be185d; }
-
-        /* Stage badge */
-        .stage-badge {
-            display: inline-block;
-            padding: 4px 14px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 0.7rem;
-            letter-spacing: 0.4px;
-            text-transform: uppercase;
-            white-space: nowrap;
-            margin-left: 6px;
-            vertical-align: middle;
-        }
-        .stage-badge.pickup { background: #dbeafe; color: #1e40af; }
-        .stage-badge.transit { background: #fef3c7; color: #92400e; }
-        .stage-badge.customs { background: #fce7f3; color: #be185d; }
-        .stage-badge.delivery { background: #fce7f3; color: #be185d; }
-        .stage-badge.delivered { background: #dcfce7; color: #16a34a; }
-        .stage-badge.exception { background: #fee2e2; color: #dc2626; }
 
         .live-indicator {
             display: inline-block;
@@ -559,29 +539,13 @@
         .back-button:active { transform: scale(0.97); }
 
         .refresh-btn {
-            padding: 6px 16px;
-            background: var(--dhl-red);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all var(--transition-speed) ease;
-            min-height: 36px;
-        }
-        .refresh-btn:hover:not(:disabled) {
-            background: #b0040e;
-            transform: scale(1.02);
-        }
-        .refresh-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
+            display: none;  /* completely hidden */
         }
         .refresh-hint {
-            font-size: 0.8rem;
-            color: #94a3b8;
+            display: none;  /* hidden */
+        }
+        #retryBtn {
+            display: none !important;  /* hidden */
         }
 
         /* ---------- Toast ---------- */
@@ -773,16 +737,12 @@
                 gap: 6px !important;
             }
             .status-badge-header {
-                font-size: 0.75rem !important;
-                padding: 4px 12px !important;
-            }
-            .stage-badge {
-                font-size: 0.6rem !important;
-                padding: 2px 10px !important;
+                font-size: 0.85rem !important;
+                padding: 6px 16px !important;
             }
             .tracking-number-display {
-                font-size: 0.85rem !important;
-                padding: 2px 10px !important;
+                font-size: 1.1rem !important;
+                padding: 4px 14px !important;
             }
             .parcel-grid {
                 grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -816,16 +776,12 @@
         @media (max-width: 380px) {
             #map { height: 200px; }
             .tracking-number-display {
-                font-size: 0.7rem !important;
-                padding: 2px 6px !important;
+                font-size: 0.85rem !important;
+                padding: 2px 10px !important;
             }
             .status-badge-header {
-                font-size: 0.6rem !important;
-                padding: 2px 8px !important;
-            }
-            .stage-badge {
-                font-size: 0.5rem !important;
-                padding: 1px 6px !important;
+                font-size: 0.7rem !important;
+                padding: 4px 12px !important;
             }
             .parcel-grid {
                 grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
@@ -896,13 +852,13 @@
 
                 <!-- ====== DETAILS ====== -->
                 <div class="details" id="details">
-                    <!-- Tracking Number & Status + Stage -->
+                    <!-- Tracking Number & Status (larger container) -->
                     <div class="flex items-center justify-between flex-wrap gap-3">
                         <div class="flex items-center gap-2">
                             <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
                             <span class="tracking-number-display" id="trackingNumberDisplay">{{ shipment.tracking_number }}</span>
                         </div>
-                        <div class="flex items-center gap-2 flex-wrap">
+                        <div class="flex items-center gap-2">
                             <span class="text-sm text-gray-400 font-medium hidden sm:inline mr-1">Status</span>
                             <span id="status" class="status-badge-header 
                                 {% if shipment.status == 'Delivered' %}delivered
@@ -915,35 +871,25 @@
                                 {% else %}pending{% endif %}">
                                 {{ shipment.status }}
                             </span>
-                            <span id="stageBadge" class="stage-badge 
-                                {% set stage = shipment.stage|default('pickup') %}
-                                {% if stage == 'pickup' %}pickup
-                                {% elif stage == 'transit' %}transit
-                                {% elif stage == 'customs' %}customs
-                                {% elif stage == 'delivery' %}delivery
-                                {% elif stage == 'delivered' %}delivered
-                                {% elif stage == 'exception' %}exception
-                                {% else %}pickup{% endif %}">
-                                {{ stage|default('Pickup')|replace('_', ' ')|title }}
-                            </span>
                         </div>
                     </div>
 
-                    <!-- Live Controls -->
+                    <!-- Live Controls (Refresh and Retry buttons removed) -->
                     <div class="flex items-center gap-3 mt-4 flex-wrap">
                         <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
                         <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
                         <span class="connection-dot connected" id="connectionDot" aria-hidden="true"></span>
                         <span id="connectionStatus" class="text-xs text-gray-500">Connected</span>
-                        <button class="refresh-btn" id="refreshBtn" disabled aria-label="Refresh tracking data">Refresh</button>
-                        <span id="refreshHint" class="refresh-hint">Live connection active</span>
-                        <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection">Reconnect</button>
+                        <!-- Refresh and Retry buttons are hidden via CSS; we keep them for logic but not visible -->
+                        <button class="refresh-btn" id="refreshBtn" disabled aria-label="Refresh tracking data" style="display:none;"></button>
+                        <span id="refreshHint" class="refresh-hint" style="display:none;"></span>
+                        <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection" style="display:none;"></button>
                     </div>
 
                     <!-- Simulator state badges (speed / transport mode) -->
                     <div class="meta-badges" id="metaBadges">
                         <span class="meta-badge" id="modeBadge">🚚 Ground</span>
-                       
+                        <span class="meta-badge" id="speedBadge">1.0x speed</span>
                     </div>
 
                     <!-- Paused banner -->
@@ -1207,7 +1153,7 @@
             function updateConnectionStatus(connected) {
                 const dot = document.getElementById('connectionDot');
                 const statusText = document.getElementById('connectionStatus');
-                const refreshBtn = document.getElementById('refreshBtn');
+                const refreshBtn = document.getElementById('refreshBtn');  // hidden but we can still update
                 const refreshHint = document.getElementById('refreshHint');
                 const retryBtn = document.getElementById('retryBtn');
 
@@ -1270,6 +1216,7 @@
                 socket.emit('request_tracking', { tracking_number: trackingNumber });
             }
 
+            // We keep the refresh function but the button is hidden
             function refreshTracking() {
                 const btn = document.getElementById('refreshBtn');
                 if (!btn || btn.disabled) return;
@@ -1281,7 +1228,7 @@
                     btn.textContent = 'Refresh';
                 }, 3000);
             }
-            document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
+            // no click listener needed since button hidden
 
             // ============================================================
             //  LEAFLET LOADING (dynamic)
@@ -1628,7 +1575,6 @@
             // ============================================================
             //  UNIFIED UPDATE HANDLER (with deduplication)
             // ============================================================
-            // Keep a local set of checkpoint strings to avoid duplicates
             let checkpointSet = new Set();
 
             function applyTrackingUpdate(data) {
@@ -1650,21 +1596,7 @@
                     statusEl.className = `status-badge-header ${cls}`;
                 }
 
-                // ---- Stage Badge ----
-                if (data.stage) {
-                    const stageEl = document.getElementById('stageBadge');
-                    const stageMap = {
-                        'pickup': 'pickup',
-                        'transit': 'transit',
-                        'customs': 'customs',
-                        'delivery': 'delivery',
-                        'delivered': 'delivered',
-                        'exception': 'exception'
-                    };
-                    const cls = stageMap[data.stage] || 'pickup';
-                    stageEl.className = `stage-badge ${cls}`;
-                    stageEl.textContent = data.stage.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-                }
+                // ---- Stage badge removed ----
 
                 // ---- Progress ----
                 if (data.progress !== undefined) {
@@ -1703,17 +1635,14 @@
                 applySpeedBadge(data.speed_multiplier);
                 applyModeBadge(data.mode);
 
-                // ---- Arrival / Checkpoints (with deduplication) ----
+                // ---- Arrival / Checkpoints ----
                 updateElement('estimatedArrival', data.delivery_window);
 
                 if (data.checkpoints && data.checkpoints.length) {
                     const checkpoints = data.checkpoints;
-                    // Update the last checkpoint display
                     updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
 
-                    // Merge new checkpoints with existing set to avoid duplicates
                     const allCheckpoints = [...checkpointSet];
-                    // Add any new checkpoints from the server
                     checkpoints.forEach(cp => {
                         if (!checkpointSet.has(cp)) {
                             checkpointSet.add(cp);
@@ -1721,7 +1650,6 @@
                         }
                     });
 
-                    // Render the checkpoint list
                     const container = document.getElementById('checkpoints');
                     const oldCount = container.querySelectorAll('.checkpoint').length;
                     const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
@@ -1747,7 +1675,6 @@
                         container.appendChild(div);
                     });
 
-                    // Update next checkpoint
                     const progress = toNum(data.progress) || 0;
                     if (allCheckpoints.length > 1) {
                         const idx = Math.min(Math.max(1, Math.round(progress * (allCheckpoints.length - 1))), allCheckpoints.length - 1);
@@ -1782,7 +1709,6 @@
             function setInitialPageState() {
                 try {
                     const initialCheckpoints = sanitizeArray({{ checkpoints | tojson }});
-                    // Initialize the checkpoint set with the initial list
                     initialCheckpoints.forEach(cp => checkpointSet.add(cp));
 
                     const initialData = {
@@ -1846,6 +1772,7 @@
             //  KEYBOARD SHORTCUTS
             // ============================================================
             document.addEventListener('keydown', (e) => {
+                // Ctrl+R still works but button hidden
                 if (e.key === 'r' && e.ctrlKey) {
                     e.preventDefault();
                     refreshTracking();
