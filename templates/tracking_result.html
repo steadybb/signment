@@ -180,19 +180,19 @@
             font-family: 'Courier New', monospace;
             font-weight: 700;
             color: var(--dhl-red);
-            font-size: 1.4rem;  /* increased */
+            font-size: 1.4rem;
             background: #fef2f2;
-            padding: 8px 20px;   /* larger padding */
+            padding: 8px 20px;
             border-radius: 8px;
             display: inline-block;
             letter-spacing: 0.5px;
         }
         .status-badge-header {
             display: inline-block;
-            padding: 8px 22px;   /* larger */
+            padding: 8px 22px;
             border-radius: 24px;
-            font-weight: 700;    /* bolder */
-            font-size: 1rem;     /* bigger */
+            font-weight: 700;
+            font-size: 1rem;
             letter-spacing: 0.3px;
             white-space: nowrap;
         }
@@ -539,13 +539,13 @@
         .back-button:active { transform: scale(0.97); }
 
         .refresh-btn {
-            display: none;  /* completely hidden */
+            display: none;
         }
         .refresh-hint {
-            display: none;  /* hidden */
+            display: none;
         }
         #retryBtn {
-            display: none !important;  /* hidden */
+            display: none !important;
         }
 
         /* ---------- Toast ---------- */
@@ -829,15 +829,12 @@
     <!--  MAIN CONTENT – conditional on error                          -->
     <!-- ============================================================ -->
     {% if error %}
-        <!-- ====== ERROR STATE ====== -->
         <div class="error-message">
             <span>📦</span> {{ error }}<br>
             <a href="{{ url_for('index') }}">Try again →</a>
         </div>
     {% else %}
-        <!-- ====== TRACKING CONTENT (shipment exists) ====== -->
         <div class="tracking-result" id="trackingResult">
-            <!-- Loading Spinner -->
             <div id="loadingSpinner" class="text-center py-8">
                 <div class="spinner" role="status" aria-label="Loading tracking data"></div>
                 <p class="mt-2 text-gray-500">Fetching live data…</p>
@@ -852,7 +849,7 @@
 
                 <!-- ====== DETAILS ====== -->
                 <div class="details" id="details">
-                    <!-- Tracking Number & Status (larger container) -->
+                    <!-- Tracking Number & Status (larger) -->
                     <div class="flex items-center justify-between flex-wrap gap-3">
                         <div class="flex items-center gap-2">
                             <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
@@ -874,22 +871,20 @@
                         </div>
                     </div>
 
-                    <!-- Live Controls (Refresh and Retry buttons removed) -->
+                    <!-- Live Controls (Refresh and Retry hidden) -->
                     <div class="flex items-center gap-3 mt-4 flex-wrap">
                         <span class="live-indicator" id="liveIndicator" aria-hidden="true"></span>
                         <span class="text-sm text-gray-500 font-medium" id="liveIndicatorLabel">Live</span>
                         <span class="connection-dot connected" id="connectionDot" aria-hidden="true"></span>
                         <span id="connectionStatus" class="text-xs text-gray-500">Connected</span>
-                        <!-- Refresh and Retry buttons are hidden via CSS; we keep them for logic but not visible -->
                         <button class="refresh-btn" id="refreshBtn" disabled aria-label="Refresh tracking data" style="display:none;"></button>
                         <span id="refreshHint" class="refresh-hint" style="display:none;"></span>
                         <button class="refresh-btn" id="retryBtn" style="display:none; background:#6b7280;" aria-label="Retry connection" style="display:none;"></button>
                     </div>
 
-                    <!-- Simulator state badges (speed / transport mode) -->
+                    <!-- Simulator state badges (only mode badge, speed removed) -->
                     <div class="meta-badges" id="metaBadges">
                         <span class="meta-badge" id="modeBadge">🚚 Ground</span>
-                        <span class="meta-badge" id="speedBadge">1.0x speed</span>
                     </div>
 
                     <!-- Paused banner -->
@@ -1153,7 +1148,7 @@
             function updateConnectionStatus(connected) {
                 const dot = document.getElementById('connectionDot');
                 const statusText = document.getElementById('connectionStatus');
-                const refreshBtn = document.getElementById('refreshBtn');  // hidden but we can still update
+                const refreshBtn = document.getElementById('refreshBtn');
                 const refreshHint = document.getElementById('refreshHint');
                 const retryBtn = document.getElementById('retryBtn');
 
@@ -1216,7 +1211,7 @@
                 socket.emit('request_tracking', { tracking_number: trackingNumber });
             }
 
-            // We keep the refresh function but the button is hidden
+            // Refresh function kept but button hidden
             function refreshTracking() {
                 const btn = document.getElementById('refreshBtn');
                 if (!btn || btn.disabled) return;
@@ -1228,7 +1223,6 @@
                     btn.textContent = 'Refresh';
                 }, 3000);
             }
-            // no click listener needed since button hidden
 
             // ============================================================
             //  LEAFLET LOADING (dynamic)
@@ -1555,13 +1549,10 @@
                 if (progressDot) progressDot.classList.toggle('paused', !!paused);
             }
 
+            // Speed badge removed – we keep the function but it won't be called if we remove the call in applyTrackingUpdate
             function applySpeedBadge(speed) {
-                const badge = document.getElementById('speedBadge');
-                if (!badge || speed === undefined || speed === null) return;
-                const n = toNum(speed);
-                if (n === null) return;
-                badge.textContent = `⚡ ${n.toFixed(1)}x speed`;
-                badge.classList.add('show');
+                // No speed badge element – do nothing
+                return;
             }
 
             function applyModeBadge(mode) {
@@ -1630,9 +1621,8 @@
                     moveLiveMarker(lat, lon, data.current_location);
                 }
 
-                // ---- Paused / Speed / Mode ----
+                // ---- Paused / Mode (speed removed) ----
                 applyPausedState(data.paused);
-                applySpeedBadge(data.speed_multiplier);
                 applyModeBadge(data.mode);
 
                 // ---- Arrival / Checkpoints ----
@@ -1772,7 +1762,6 @@
             //  KEYBOARD SHORTCUTS
             // ============================================================
             document.addEventListener('keydown', (e) => {
-                // Ctrl+R still works but button hidden
                 if (e.key === 'r' && e.ctrlKey) {
                     e.preventDefault();
                     refreshTracking();
@@ -1800,7 +1789,6 @@
             console.log('✅ Tracking page fully loaded – all systems go');
         </script>
     {% endif %}
-    <!-- =================== END OF SHIPMENT BLOCK =================== -->
 
     <!-- ====== FOOTER ====== -->
     <footer class="footer">
