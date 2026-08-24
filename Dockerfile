@@ -25,7 +25,7 @@ COPY bot.py .
 COPY worker.py .
 COPY utils.py .
 COPY forms.py .
-COPY simulator_engine.py .          # <-- ADD THIS LINE
+COPY simulator_engine.py .
 COPY Procfile .
 COPY templates/ templates/
 COPY static/ static/
