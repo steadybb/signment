@@ -203,6 +203,27 @@
         .status-badge-header.exception { background: #fef2f2; color: #dc2626; }
         .status-badge-header.pending { background: #f3f4f6; color: #6b7280; }
         .status-badge-header.on-hold { background: #fef3c7; color: #b45309; }
+        .status-badge-header.customs { background: #fce7f3; color: #be185d; }
+
+        /* Stage badge */
+        .stage-badge {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.7rem;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            white-space: nowrap;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+        .stage-badge.pickup { background: #dbeafe; color: #1e40af; }
+        .stage-badge.transit { background: #fef3c7; color: #92400e; }
+        .stage-badge.customs { background: #fce7f3; color: #be185d; }
+        .stage-badge.delivery { background: #fce7f3; color: #be185d; }
+        .stage-badge.delivered { background: #dcfce7; color: #16a34a; }
+        .stage-badge.exception { background: #fee2e2; color: #dc2626; }
 
         .live-indicator {
             display: inline-block;
@@ -270,9 +291,10 @@
         }
         .meta-badge.show { display: inline-flex; }
 
-        /* ---------- Progress ---------- */
+        /* ---------- Progress with dot ---------- */
         .progress-container {
             margin: 16px 0 20px;
+            position: relative;
         }
         .progress-label {
             display: flex;
@@ -285,7 +307,8 @@
             height: 6px;
             background: #e8e8e8;
             border-radius: 4px;
-            overflow: hidden;
+            overflow: visible;
+            position: relative;
         }
         .progress-bar .fill {
             width: 0%;
@@ -293,6 +316,33 @@
             background: linear-gradient(90deg, var(--dhl-red), #ef4444);
             border-radius: 4px;
             transition: width 0.6s ease;
+        }
+        .progress-dot {
+            position: absolute;
+            top: 50%;
+            left: 0%;
+            transform: translate(-50%, -50%);
+            width: 16px;
+            height: 16px;
+            background: var(--dhl-red);
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 6px rgba(212,5,17,0.4);
+            transition: left 0.5s ease;
+            pointer-events: none;
+            z-index: 2;
+        }
+        .progress-dot.delivered {
+            background: #22c55e;
+            box-shadow: 0 0 6px rgba(34,197,94,0.4);
+        }
+        .progress-dot.exception {
+            background: #dc2626;
+            box-shadow: 0 0 6px rgba(220,38,38,0.4);
+        }
+        .progress-dot.paused {
+            background: #f59e0b;
+            box-shadow: 0 0 6px rgba(245,158,11,0.4);
         }
 
         /* ---------- Position Card ---------- */
@@ -396,11 +446,12 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
-            background: var(--dhl-red);
             margin-top: 5px;
             flex-shrink: 0;
+            transition: background 0.3s;
         }
-        .checkpoint .dot.delivered { background: #22c55e; }
+        .checkpoint .dot.completed { background: #22c55e; }
+        .checkpoint .dot.current { background: var(--dhl-red); }
         .checkpoint .dot.pending { background: #94a3b8; }
         .checkpoint .time {
             color: #666;
@@ -447,7 +498,7 @@
             font-weight: 500;
         }
 
-        /* ---------- Parcel Photos Grid ---------- */
+        /* ---------- Parcel Photos ---------- */
         .parcel-photos-section {
             margin-top: 20px;
             border-top: 1px solid #f0f0f0;
@@ -662,7 +713,7 @@
             margin-top: 12px;
         }
 
-        /* ---------- Map Controls (Leaflet override) ---------- */
+        /* ---------- Map Controls ---------- */
         .leaflet-control-custom {
             background: white;
             border: 2px solid rgba(0,0,0,0.2);
@@ -725,6 +776,10 @@
                 font-size: 0.75rem !important;
                 padding: 4px 12px !important;
             }
+            .stage-badge {
+                font-size: 0.6rem !important;
+                padding: 2px 10px !important;
+            }
             .tracking-number-display {
                 font-size: 0.85rem !important;
                 padding: 2px 10px !important;
@@ -753,6 +808,10 @@
                 font-size: 0.65rem;
                 padding: 4px 6px;
             }
+            .progress-dot {
+                width: 12px;
+                height: 12px;
+            }
         }
         @media (max-width: 380px) {
             #map { height: 200px; }
@@ -764,11 +823,19 @@
                 font-size: 0.6rem !important;
                 padding: 2px 8px !important;
             }
+            .stage-badge {
+                font-size: 0.5rem !important;
+                padding: 1px 6px !important;
+            }
             .parcel-grid {
                 grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
             }
             .grid-item img {
                 height: 80px;
+            }
+            .progress-dot {
+                width: 10px;
+                height: 10px;
             }
         }
 
@@ -776,36 +843,11 @@
         @media (prefers-reduced-motion: reduce) {
             .live-indicator { animation: none; }
             .progress-bar .fill { transition: none; }
+            .progress-dot { transition: none; }
             .checkpoint-new { animation: none; }
         }
     </style>
 
-    <!--
-        NOTE ON SOCKET.IO / LEAFLET LOADING:
-        Both third-party scripts on this page are loaded WITHOUT a
-        Subresource Integrity (SRI) hash pinned in a static <script> tag.
-
-        A previous version pinned an `integrity="sha384-..."` value on the
-        Socket.IO <script> tag that was not a valid SHA-384 digest at all
-        (wrong length after base64-decoding, not just a stale hash for an
-        old version). Any `integrity` mismatch causes the browser to
-        silently block the script - no console error banner, just a
-        blocked-resource network warning - so `io` was left undefined.
-        Since `const socket = io(...)` runs at the top level of the page
-        script (outside any try/catch), that ReferenceError halted the
-        entire script early, which meant `loadLeaflet(initMap)` never ran
-        either. Net effect: tracking data looked fine (it's server-rendered
-        via Jinja) but the map stayed stuck on "Loading map..." forever,
-        with no visible error to the user.
-
-        Leaflet was already switched to dynamic runtime loading (see
-        loadLeaflet() below) for the same class of bug. Socket.IO is now
-        loaded the same way: no static integrity hash to get wrong.
-        If you want SRI back, regenerate a real hash for the exact file
-        version (e.g. via `openssl dgst -sha384 -binary socket.io.min.js |
-        openssl base64 -A`) rather than reusing a hash copied from another
-        version or source.
-    -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
@@ -839,7 +881,7 @@
     {% else %}
         <!-- ====== TRACKING CONTENT (shipment exists) ====== -->
         <div class="tracking-result" id="trackingResult">
-            <!-- Loading Spinner (shown while initial data loads) -->
+            <!-- Loading Spinner -->
             <div id="loadingSpinner" class="text-center py-8">
                 <div class="spinner" role="status" aria-label="Loading tracking data"></div>
                 <p class="mt-2 text-gray-500">Fetching live data…</p>
@@ -854,13 +896,13 @@
 
                 <!-- ====== DETAILS ====== -->
                 <div class="details" id="details">
-                    <!-- Tracking Number & Status -->
+                    <!-- Tracking Number & Status + Stage -->
                     <div class="flex items-center justify-between flex-wrap gap-3">
                         <div class="flex items-center gap-2">
                             <span class="text-sm text-gray-400 font-medium hidden sm:inline">Tracking</span>
                             <span class="tracking-number-display" id="trackingNumberDisplay">{{ shipment.tracking_number }}</span>
                         </div>
-                        <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
                             <span class="text-sm text-gray-400 font-medium hidden sm:inline mr-1">Status</span>
                             <span id="status" class="status-badge-header 
                                 {% if shipment.status == 'Delivered' %}delivered
@@ -869,8 +911,20 @@
                                 {% elif shipment.status == 'Delayed' %}delayed
                                 {% elif shipment.status == 'Exception' %}exception
                                 {% elif shipment.status == 'On_Hold' %}on-hold
+                                {% elif shipment.status == 'Customs_Clearance' %}customs
                                 {% else %}pending{% endif %}">
                                 {{ shipment.status }}
+                            </span>
+                            <span id="stageBadge" class="stage-badge 
+                                {% set stage = shipment.stage|default('pickup') %}
+                                {% if stage == 'pickup' %}pickup
+                                {% elif stage == 'transit' %}transit
+                                {% elif stage == 'customs' %}customs
+                                {% elif stage == 'delivery' %}delivery
+                                {% elif stage == 'delivered' %}delivered
+                                {% elif stage == 'exception' %}exception
+                                {% else %}pickup{% endif %}">
+                                {{ stage|default('Pickup')|replace('_', ' ')|title }}
                             </span>
                         </div>
                     </div>
@@ -892,7 +946,7 @@
                         <span class="meta-badge" id="speedBadge">1.0x speed</span>
                     </div>
 
-                    <!-- Paused banner (shown when the simulator is paused) -->
+                    <!-- Paused banner -->
                     <div class="paused-banner" id="pausedBanner" role="status">
                         <span>⏸</span>
                         <span>This shipment's simulation is currently paused — position will resume updating once it's restarted.</span>
@@ -942,7 +996,7 @@
                         <div class="value" id="nextCheckpoint">{{ checkpoints[1] if checkpoints and checkpoints|length > 1 else 'Next scan pending' }}</div>
                     </div>
 
-                    <!-- Progress -->
+                    <!-- Progress with dot -->
                     <div class="progress-container">
                         <div class="progress-label">
                             <span>Delivery Progress</span>
@@ -950,6 +1004,7 @@
                         </div>
                         <div class="progress-bar">
                             <div class="fill" id="progressFill" style="width:0%;"></div>
+                            <div class="progress-dot" id="progressDot" style="left:0%;"></div>
                         </div>
                     </div>
 
@@ -959,7 +1014,7 @@
                         {% if checkpoints %}
                             {% for checkpoint in checkpoints %}
                                 <div class="checkpoint">
-                                    <div class="dot {% if 'Delivered' in checkpoint or 'delivered' in checkpoint|lower %}delivered{% endif %}"></div>
+                                    <div class="dot {% if loop.last %}current{% else %}completed{% endif %}"></div>
                                     <div>
                                         <div class="time">{{ checkpoint.split(' - ')[0] if ' - ' in checkpoint else '' }}</div>
                                         <div class="location">{{ checkpoint.split(' - ')[1] if (' - ' in checkpoint and checkpoint.split(' - ')|length > 1) else '' }}</div>
@@ -1011,7 +1066,7 @@
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
-                    <!-- ====== PARCEL PHOTOS – only one image ====== -->
+                    <!-- Parcel Photos -->
                     <div class="parcel-photos-section">
                         <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
                         <div class="parcel-grid">
@@ -1021,7 +1076,6 @@
                             </div>
                         </div>
                     </div>
-                    <!-- ====== END PARCEL PHOTOS ====== -->
 
                     <!-- Back Button -->
                     <a href="{{ url_for('index') }}" class="back-button">← Back to home</a>
@@ -1030,11 +1084,11 @@
         </div>
 
         <!-- ============================================================ -->
-        <!--  SCRIPT – inside the "else" block, so shipment is guaranteed  -->
+        <!--  SCRIPT – with deduplication and persistence                  -->
         <!-- ============================================================ -->
         <script>
             // ============================================================
-            //  GLOBAL ERROR HANDLER – catches any uncaught error
+            //  GLOBAL ERROR HANDLER
             // ============================================================
             window.onerror = function(message, source, lineno, colno, error) {
                 console.error('Global error caught:', message, error);
@@ -1048,7 +1102,7 @@
             console.log('📦 Tracking page script started (inside else block)');
 
             // ============================================================
-            //  SHOW CONTENT IMMEDIATELY (hides spinner)
+            //  SHOW CONTENT IMMEDIATELY
             // ============================================================
             function showContent() {
                 try {
@@ -1146,9 +1200,6 @@
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
-                auth: {
-                    // token: localStorage.getItem('dhl_token') // uncomment if you use auth
-                }
             });
 
             let trackingInterval = null;
@@ -1233,12 +1284,9 @@
             document.getElementById('refreshBtn')?.addEventListener('click', refreshTracking);
 
             // ============================================================
-            //  LEAFLET LOADING (dynamic — see <head> comment for why)
-            //  No SRI hash to guess wrong, no tag-presence guard to trip.
-            //  loadLeaflet() is idempotent: safe to call more than once,
-            //  every caller's callback still fires once Leaflet is ready.
+            //  LEAFLET LOADING (dynamic)
             // ============================================================
-            let leafletState = 'unloaded'; // 'unloaded' | 'loading' | 'ready' | 'failed'
+            let leafletState = 'unloaded';
             let leafletCallbacks = [];
 
             function loadLeaflet(callback) {
@@ -1422,7 +1470,7 @@
             }
 
             // ============================================================
-            //  ROUTE DRAWING (checkpoints markers + polyline)
+            //  ROUTE DRAWING
             // ============================================================
             function routeSignature(coords) {
                 if (!coords || !coords.length) return '';
@@ -1552,10 +1600,12 @@
                 const banner = document.getElementById('pausedBanner');
                 const dot = document.getElementById('liveIndicator');
                 const label = document.getElementById('liveIndicatorLabel');
+                const progressDot = document.getElementById('progressDot');
                 if (paused === undefined || paused === null) return;
                 if (banner) banner.classList.toggle('show', !!paused);
                 if (dot) dot.classList.toggle('paused-dot', !!paused);
                 if (label) label.textContent = paused ? 'Paused' : 'Live';
+                if (progressDot) progressDot.classList.toggle('paused', !!paused);
             }
 
             function applySpeedBadge(speed) {
@@ -1576,11 +1626,15 @@
             }
 
             // ============================================================
-            //  UNIFIED UPDATE HANDLER
+            //  UNIFIED UPDATE HANDLER (with deduplication)
             // ============================================================
+            // Keep a local set of checkpoint strings to avoid duplicates
+            let checkpointSet = new Set();
+
             function applyTrackingUpdate(data) {
                 if (!data) return;
 
+                // ---- Status ----
                 if (data.status) {
                     const statusEl = document.getElementById('status');
                     statusEl.textContent = data.status;
@@ -1590,18 +1644,48 @@
                         'Out_for_Delivery': 'out-for-delivery',
                         'Delayed': 'delayed',
                         'Exception': 'exception',
-                        'On_Hold': 'on-hold'
+                        'On_Hold': 'on-hold',
+                        'Customs_Clearance': 'customs'
                     }[data.status] || 'pending';
                     statusEl.className = `status-badge-header ${cls}`;
                 }
 
+                // ---- Stage Badge ----
+                if (data.stage) {
+                    const stageEl = document.getElementById('stageBadge');
+                    const stageMap = {
+                        'pickup': 'pickup',
+                        'transit': 'transit',
+                        'customs': 'customs',
+                        'delivery': 'delivery',
+                        'delivered': 'delivered',
+                        'exception': 'exception'
+                    };
+                    const cls = stageMap[data.stage] || 'pickup';
+                    stageEl.className = `stage-badge ${cls}`;
+                    stageEl.textContent = data.stage.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                }
+
+                // ---- Progress ----
                 if (data.progress !== undefined) {
                     const progress = toNum(data.progress) || 0;
                     const percent = Math.round(progress * 100);
                     document.getElementById('progressPercent').textContent = `${percent}%`;
                     document.getElementById('progressFill').style.width = `${percent}%`;
+                    const dot = document.getElementById('progressDot');
+                    dot.style.left = `${percent}%`;
+                    if (data.status === 'Delivered') {
+                        dot.className = 'progress-dot delivered';
+                    } else if (data.status === 'Exception') {
+                        dot.className = 'progress-dot exception';
+                    } else if (data.paused) {
+                        dot.className = 'progress-dot paused';
+                    } else {
+                        dot.className = 'progress-dot';
+                    }
                 }
 
+                // ---- Location ----
                 if (data.current_location) {
                     document.getElementById('currentLocation').textContent = data.current_location;
                 }
@@ -1614,24 +1698,46 @@
                     moveLiveMarker(lat, lon, data.current_location);
                 }
 
+                // ---- Paused / Speed / Mode ----
                 applyPausedState(data.paused);
                 applySpeedBadge(data.speed_multiplier);
                 applyModeBadge(data.mode);
 
+                // ---- Arrival / Checkpoints (with deduplication) ----
                 updateElement('estimatedArrival', data.delivery_window);
+
                 if (data.checkpoints && data.checkpoints.length) {
                     const checkpoints = data.checkpoints;
+                    // Update the last checkpoint display
                     updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
+
+                    // Merge new checkpoints with existing set to avoid duplicates
+                    const allCheckpoints = [...checkpointSet];
+                    // Add any new checkpoints from the server
+                    checkpoints.forEach(cp => {
+                        if (!checkpointSet.has(cp)) {
+                            checkpointSet.add(cp);
+                            allCheckpoints.push(cp);
+                        }
+                    });
+
+                    // Render the checkpoint list
                     const container = document.getElementById('checkpoints');
                     const oldCount = container.querySelectorAll('.checkpoint').length;
+                    const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
+                        Math.min(Math.round((toNum(data.progress) || 0) * (allCheckpoints.length - 1)), allCheckpoints.length - 1);
+
                     container.innerHTML = '';
-                    checkpoints.forEach((cp, idx) => {
+                    allCheckpoints.forEach((cp, idx) => {
                         const parts = cp.split(' - ');
                         const div = document.createElement('div');
                         div.className = `checkpoint${idx >= oldCount ? ' checkpoint-new' : ''}`;
-                        const isDelivered = cp.toLowerCase().includes('delivered');
+                        let dotClass = 'pending';
+                        if (idx < currentIdx) dotClass = 'completed';
+                        else if (idx === currentIdx) dotClass = 'current';
+                        else dotClass = 'pending';
                         div.innerHTML = `
-                            <div class="dot ${isDelivered ? 'delivered' : ''}"></div>
+                            <div class="dot ${dotClass}"></div>
                             <div>
                                 <div class="time">${parts[0] || ''}</div>
                                 <div class="location">${parts[1] || ''}</div>
@@ -1640,15 +1746,18 @@
                         `;
                         container.appendChild(div);
                     });
+
+                    // Update next checkpoint
                     const progress = toNum(data.progress) || 0;
-                    if (checkpoints.length > 1) {
-                        const idx = Math.min(Math.max(1, Math.round(progress * (checkpoints.length - 1))), checkpoints.length - 1);
-                        updateElement('nextCheckpoint', checkpoints[idx]);
+                    if (allCheckpoints.length > 1) {
+                        const idx = Math.min(Math.max(1, Math.round(progress * (allCheckpoints.length - 1))), allCheckpoints.length - 1);
+                        updateElement('nextCheckpoint', allCheckpoints[idx]);
                     } else {
                         updateElement('nextCheckpoint', 'Next scan pending');
                     }
                 }
 
+                // ---- Details Grid ----
                 updateElement('deliveryLocation', data.delivery_location);
                 updateElement('serviceLevel', data.service_level);
                 updateElement('deliveryWindow', data.delivery_window);
@@ -1660,6 +1769,7 @@
                     }
                 }
 
+                // ---- Map route ----
                 const routeData = (data.route_coords && data.route_coords.length) ? data.route_coords : data.coords;
                 if (routeData && routeData.length) {
                     maybeRedrawRoute(routeData);
@@ -1667,12 +1777,17 @@
             }
 
             // ============================================================
-            //  INITIAL DATA LOAD (server-rendered values from Flask/Jinja)
+            //  INITIAL DATA LOAD (server-rendered)
             // ============================================================
             function setInitialPageState() {
                 try {
+                    const initialCheckpoints = sanitizeArray({{ checkpoints | tojson }});
+                    // Initialize the checkpoint set with the initial list
+                    initialCheckpoints.forEach(cp => checkpointSet.add(cp));
+
                     const initialData = {
                         status: "{{ shipment.status }}",
+                        stage: "{{ shipment.stage|default('pickup') }}",
                         progress: {{ progress | default(0) }},
                         current_lat: {{ current_lat | default('null') }},
                         current_lon: {{ current_lon | default('null') }},
@@ -1681,14 +1796,11 @@
                         delivery_location: "{{ shipment.delivery_location }}",
                         service_level: "{{ service_level | default('DHL Express') }}",
                         proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
-                        checkpoints: sanitizeArray({{ checkpoints | tojson }}),
-                        last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}"
+                        checkpoints: initialCheckpoints,
+                        last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}",
+                        current_checkpoint_index: {{ current_checkpoint_index | default(0) }}
                     };
 
-                    // moveLiveMarker() and maybeRedrawRoute() both queue
-                    // themselves via window._pendingMarker/_pendingRoute if
-                    // the map isn't ready yet, so this is safe to call before
-                    // Leaflet has loaded.
                     applyTrackingUpdate(initialData);
 
                     const coords = sanitizeArray({{ coords | tojson }});
@@ -1763,7 +1875,7 @@
     {% endif %}
     <!-- =================== END OF SHIPMENT BLOCK =================== -->
 
-    <!-- ====== FOOTER (common to all pages) ====== -->
+    <!-- ====== FOOTER ====== -->
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-section">
