@@ -2195,7 +2195,10 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# Admin diagnostics endpoints
+# ============================================================
+# ADMIN API ENDPOINTS (including photo upload)
+# ============================================================
+
 @app.route('/admin/api/redis_metrics')
 @admin_required
 def admin_redis_metrics():
@@ -2253,6 +2256,56 @@ def admin_simulator_status():
     except Exception as e:
         flask_logger.error(f"Failed to fetch simulator status: {e}")
         return jsonify({'error': 'Could not retrieve simulator status'}), 500
+
+# ============================================================
+# PHOTO UPLOAD ENDPOINT
+# ============================================================
+from werkzeug.utils import secure_filename
+
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/admin/api/shipment/<tn>/photo', methods=['POST'])
+@admin_required
+def upload_shipment_photo(tn):
+    shipment = Shipment.query.filter_by(tracking_number=tn).first()
+    if not shipment:
+        return jsonify({'error': 'Shipment not found'}), 404
+
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No photo file provided'}), 400
+
+    file = request.files['photo']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'File type not allowed. Use PNG, JPG, GIF, or WEBP'}), 400
+
+    # Create uploads folder if it doesn't exist
+    upload_dir = os.path.join(app.root_path, 'static', 'uploads')
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Generate unique filename
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    filename = f"{tn}_{int(datetime.now().timestamp())}.{ext}"
+    filepath = os.path.join(upload_dir, filename)
+    file.save(filepath)
+
+    # Update shipment with relative URL
+    photo_url = f"/static/uploads/{filename}"
+    shipment.photo_url = photo_url
+    shipment.last_updated = datetime.now()
+    db.session.commit()
+    invalidate_cache(tn)
+
+    return jsonify({'success': True, 'photo_url': photo_url})
+
+# ============================================================
+# REST OF ROUTES (FAVICON, PUBLIC, ADMIN, SOCKET.IO, etc.)
+# ============================================================
 
 # === FAVICON ROUTE ===
 @app.route('/favicon.ico')
@@ -2758,7 +2811,7 @@ def generate_dhl_tracking():
     return f"{prefix}{digits}"
 
 # ============================================================
-# ADMIN API ENDPOINTS
+# ADMIN API ENDPOINTS (continued)
 # ============================================================
 
 @app.route('/admin/api/shipment/<tn>')
