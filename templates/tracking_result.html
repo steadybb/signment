@@ -984,6 +984,8 @@
 
             // Track highest progress seen to prevent backward jumps
             let currentProgress = 0;
+            // This set will be **replaced** on each update to reflect server state
+            let checkpointSet = new Set();
 
             function showContent() {
                 try {
@@ -1127,6 +1129,7 @@
 
             const trackingNumber = "{{ shipment.tracking_number }}";
 
+            // Fire a request immediately (buffered until socket connects)
             function requestTracking() {
                 if (!trackingNumber) {
                     console.warn('No tracking number – skipping request');
@@ -1135,6 +1138,15 @@
                 debugLog('Requesting tracking update');
                 socket.emit('request_tracking', { tracking_number: trackingNumber });
             }
+            requestTracking();
+
+            // Also re-request when the user comes back to the tab
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    debugLog('Tab became visible – requesting update');
+                    requestTracking();
+                }
+            });
 
             function refreshTracking() {
                 const btn = document.getElementById('refreshBtn');
@@ -1466,7 +1478,76 @@
                 badge.classList.add('show');
             }
 
-            let checkpointSet = new Set();
+            // Normalize a checkpoint to its event text (remove timestamp, location, ref)
+            function normalizeCheckpointText(cp) {
+                if (!cp) return '';
+                const parts = cp.split(' - ', 3);
+                if (parts.length >= 3) {
+                    // Remove [Ref: ...]
+                    return parts[2].replace(/\s*\[Ref:\s*[^\]]+\]/, '').trim();
+                }
+                return cp.trim();
+            }
+
+            // Render checkpoints with deduplication by normalized event text
+            function renderCheckpoints(checkpoints, currentIdx) {
+                const container = document.getElementById('checkpoints');
+                if (!container) return;
+                // Deduplicate: keep first occurrence of each normalized event
+                const seen = new Map(); // key: normalized event, value: { checkpoint, index }
+                const unique = [];
+                checkpoints.forEach((cp, idx) => {
+                    const norm = normalizeCheckpointText(cp);
+                    if (!seen.has(norm)) {
+                        seen.set(norm, { checkpoint: cp, index: idx });
+                        unique.push({ checkpoint: cp, originalIndex: idx });
+                    }
+                });
+
+                if (unique.length === 0) {
+                    container.innerHTML = `
+                        <div class="checkpoint">
+                            <div class="dot pending"></div>
+                            <div>
+                                <div class="location">No checkpoints available</div>
+                                <div class="event">Tracking information will appear here</div>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Now render unique list
+                container.innerHTML = '';
+                unique.forEach((item, idx) => {
+                    const cp = item.checkpoint;
+                    const parts = cp.split(' - ');
+                    const div = document.createElement('div');
+                    div.className = 'checkpoint';
+                    let dotClass = 'pending';
+                    // Determine current index based on original order or fallback
+                    // We use currentIdx from server; but we can map to the unique list
+                    // Since we deduped, we need to map the currentIdx to the unique list index.
+                    // If currentIdx is not set, use progress.
+                    // For simplicity, we'll use the original index to decide dot.
+                    // But we need to map: if originalIndex < currentIdx => completed, etc.
+                    // We'll compute which unique items are before currentIdx.
+                    const isBefore = item.originalIndex < currentIdx;
+                    const isCurrent = item.originalIndex === currentIdx;
+                    if (isCurrent) dotClass = 'current';
+                    else if (isBefore) dotClass = 'completed';
+                    // else pending
+                    div.innerHTML = `
+                        <div class="dot ${dotClass}"></div>
+                        <div>
+                            <div class="time">${parts[0] || ''}</div>
+                            <div class="location">${parts[1] || ''}</div>
+                            <div class="event">${parts.slice(2).join(' - ') || ''}</div>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
+            }
 
             function applyTrackingUpdate(data) {
                 if (!data) return;
@@ -1547,54 +1628,40 @@
                 // Arrival
                 updateElement('estimatedArrival', data.delivery_window);
 
+                // --- CHECKPOINTS: REPLACE with server list and deduplicate ---
                 if (data.checkpoints && data.checkpoints.length) {
                     const checkpoints = data.checkpoints;
+                    // Update the set for reference (but we'll use deduped list)
+                    checkpointSet = new Set(checkpoints);
                     updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
 
-                    const allCheckpoints = [...checkpointSet];
-                    checkpoints.forEach(cp => {
-                        if (!checkpointSet.has(cp)) {
-                            checkpointSet.add(cp);
-                            allCheckpoints.push(cp);
-                        }
-                    });
-
-                    const container = document.getElementById('checkpoints');
-                    const oldCount = container.querySelectorAll('.checkpoint').length;
+                    // Compute current index from server
                     const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
-                        Math.min(Math.round((toNum(data.progress) || 0) * (allCheckpoints.length - 1)), allCheckpoints.length - 1);
+                        Math.min(Math.round((toNum(data.progress) || 0) * (checkpoints.length - 1)), checkpoints.length - 1);
 
-                    container.innerHTML = '';
-                    allCheckpoints.forEach((cp, idx) => {
-                        const parts = cp.split(' - ');
-                        const div = document.createElement('div');
-                        div.className = `checkpoint${idx >= oldCount ? ' checkpoint-new' : ''}`;
-                        let dotClass = 'pending';
-                        if (idx < currentIdx) dotClass = 'completed';
-                        else if (idx === currentIdx) dotClass = 'current';
-                        else dotClass = 'pending';
-                        div.innerHTML = `
-                            <div class="dot ${dotClass}"></div>
-                            <div>
-                                <div class="time">${parts[0] || ''}</div>
-                                <div class="location">${parts[1] || ''}</div>
-                                <div class="event">${parts.slice(2).join(' - ') || ''}</div>
-                            </div>
-                        `;
-                        container.appendChild(div);
-                    });
+                    // Render deduped checkpoints
+                    renderCheckpoints(checkpoints, currentIdx);
 
-                    // FIX: Next checkpoint should be the one after current index
-                    if (allCheckpoints.length > 1) {
+                    // Next checkpoint (using deduped list)
+                    // We need to find next checkpoint after currentIdx in the original list
+                    // But we can use the original list with currentIdx.
+                    // However, we can just compute next from original list and then show its text.
+                    // Simpler: use the original list's next checkpoint after currentIdx.
+                    if (checkpoints.length > 1) {
                         const nextIdx = currentIdx + 1;
-                        if (nextIdx < allCheckpoints.length) {
-                            updateElement('nextCheckpoint', allCheckpoints[nextIdx]);
+                        if (nextIdx < checkpoints.length) {
+                            updateElement('nextCheckpoint', checkpoints[nextIdx]);
                         } else {
                             updateElement('nextCheckpoint', 'Next scan pending');
                         }
                     } else {
                         updateElement('nextCheckpoint', 'Next scan pending');
                     }
+                } else {
+                    checkpointSet.clear();
+                    renderCheckpoints([], 0);
+                    updateElement('lastCheckpoint', 'Waiting for first scan');
+                    updateElement('nextCheckpoint', 'Next scan pending');
                 }
 
                 // Details grid
@@ -1619,7 +1686,7 @@
             function setInitialPageState() {
                 try {
                     const initialCheckpoints = sanitizeArray({{ checkpoints | tojson }});
-                    initialCheckpoints.forEach(cp => checkpointSet.add(cp));
+                    checkpointSet = new Set(initialCheckpoints);
 
                     const initialProgress = {{ progress | default(0) }};
                     if (initialProgress > 0) {
