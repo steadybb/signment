@@ -319,9 +319,6 @@
             display: block;
         }
         
-        /* === TOAST CONTAINER - REMOVED === */
-        /* Toast system completely removed */
-        
         /* === BLOG SECTION - OPTIMIZED FOR 741x774 IMAGES === */
         .blog-section {
             max-width: 1400px;
@@ -578,7 +575,9 @@
     </script>
 </head>
 
-<body>
+<!-- ✅ FIX: Add recaptcha-locked class directly to <body> if reCAPTCHA is enabled -->
+<body class="{% if recaptcha_site_key %}recaptcha-locked{% endif %}">
+
     <!-- Background Video -->
     <video class="video-background" autoplay muted loop playsinline poster="{{ url_for('static', filename='fallback-image.jpg') }}">
         <source src="{{ url_for('static', filename='background.mp4') }}" type="video/mp4">
@@ -593,7 +592,7 @@
         <div id="gate-overlay" class="gate-overlay">
             <div class="gate-card" role="dialog" aria-modal="true">
                 <h2>Please verify you're human</h2>
-                <p>Complete the reCAPTCHA below to unlock the tracking page.</p>
+                <p id="gate-message">Complete the reCAPTCHA below to unlock the tracking page.</p>
                 <div class="recaptcha-wrapper">
                     <div id="gate-recaptcha" class="g-recaptcha" data-sitekey="{{ recaptcha_site_key }}" data-callback="recaptchaGateSuccess"></div>
                 </div>
@@ -794,33 +793,25 @@
         function recaptchaGateSuccess(token) {
             document.getElementById('g-recaptcha-response').value = token;
             document.getElementById('submit-btn').disabled = false;
+            // ✅ Remove the lock class to show the page content
             document.body.classList.remove('recaptcha-locked');
             const overlay = document.getElementById('gate-overlay');
             if (overlay) {
                 overlay.style.display = 'none';
             }
-            // Toast notification removed
         }
 
         // ============================================================
-        // Lock page until reCAPTCHA is solved
+        // ✅ No need for lockPageUntilRecaptcha() – class already on body
         // ============================================================
-        function lockPageUntilRecaptcha() {
-            document.body.classList.add('recaptcha-locked');
-        }
-        {% if recaptcha_site_key %}
-        lockPageUntilRecaptcha();
-        {% else %}
-        // No reCAPTCHA configured — enable form immediately
+        // If reCAPTCHA is not configured, enable the form immediately
+        {% if not recaptcha_site_key %}
         document.getElementById('submit-btn').disabled = false;
         const overlay = document.getElementById('gate-overlay');
         if (overlay) overlay.style.display = 'none';
+        // Also remove the locked class if it was applied (shouldn't be)
+        document.body.classList.remove('recaptcha-locked');
         {% endif %}
-
-        // ============================================================
-        // Toast Notification - REMOVED (function kept for compatibility)
-        // ============================================================
-        // Toast system completely removed
 
         // ============================================================
         // Hamburger Menu
@@ -982,22 +973,44 @@
         }
 
         // ============================================================
-        // Retry reCAPTCHA if it doesn't load
+        // ✅ Enhanced reCAPTCHA retry with user feedback
         // ============================================================
         {% if recaptcha_site_key %}
         setTimeout(function() {
-            const recaptchaContainer = document.getElementById('gate-recaptcha');
-            if (recaptchaContainer && !recaptchaContainer.innerHTML.trim() && window.grecaptcha) {
-                try {
-                    grecaptcha.render(recaptchaContainer, {
-                        'sitekey': '{{ recaptcha_site_key }}',
-                        'callback': 'recaptchaGateSuccess'
-                    });
-                } catch (e) {
-                    console.warn('reCAPTCHA render retry failed:', e);
+            const container = document.getElementById('gate-recaptcha');
+            const gateMessage = document.getElementById('gate-message');
+            if (container && !container.innerHTML.trim()) {
+                if (window.grecaptcha) {
+                    try {
+                        grecaptcha.render(container, {
+                            'sitekey': '{{ recaptcha_site_key }}',
+                            'callback': 'recaptchaGateSuccess'
+                        });
+                    } catch (e) {
+                        console.warn('reCAPTCHA render retry failed:', e);
+                        if (gateMessage) {
+                            gateMessage.innerHTML = 'reCAPTCHA failed to load. Please <a href="#" onclick="location.reload()">refresh the page</a>.';
+                        }
+                    }
+                } else {
+                    // grecaptcha not loaded yet – show refresh link
+                    if (gateMessage) {
+                        gateMessage.innerHTML = 'reCAPTCHA is taking too long. Please <a href="#" onclick="location.reload()">refresh the page</a>.';
+                    }
                 }
             }
         }, 3000);
+
+        // Also if after 8 seconds still no reCAPTCHA, show a clearer error
+        setTimeout(function() {
+            const container = document.getElementById('gate-recaptcha');
+            const gateMessage = document.getElementById('gate-message');
+            if (container && !container.innerHTML.trim()) {
+                if (gateMessage) {
+                    gateMessage.innerHTML = 'Unable to load reCAPTCHA. Please <a href="#" onclick="location.reload()">refresh the page</a> or try again later.';
+                }
+            }
+        }, 8000);
         {% endif %}
 
         // ============================================================
@@ -1018,7 +1031,7 @@
         });
 
         console.log('DHL Track & Trace loaded successfully');
-        console.log('Version: 2.0.1');
+        console.log('Version: 2.0.2 – reCAPTCHA gate fixed');
         console.log('reCAPTCHA:', '{{ recaptcha_site_key }}' ? 'Enabled' : 'Disabled');
     </script>
 </body>

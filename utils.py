@@ -36,7 +36,6 @@ def configure_logging() -> None:
             if not handler.formatter:
                 handler.setFormatter(logging.Formatter(LOG_FORMAT))
     logging.getLogger('werkzeug').setLevel(level)
-    # Allow SQLAlchemy logging to be less verbose by default; configurable via env
     sa_level_name = os.getenv('SQLALCHEMY_LOG_LEVEL', 'WARNING').upper()
     sa_level = getattr(logging, sa_level_name, logging.WARNING)
     logging.getLogger('sqlalchemy.engine').setLevel(sa_level)
@@ -79,7 +78,6 @@ redis_password = os.getenv("REDIS_PASSWORD", os.getenv("REDISPASSWORD", os.geten
 redis_host = os.getenv("REDISHOST", os.getenv("REDIS_HOST", "")).strip()
 redis_port = os.getenv("REDISPORT", os.getenv("REDIS_PORT", "6379")).strip()
 
-# Redis disable metrics and reconnect/backoff settings
 redis_disable_count = 0
 last_redis_disable = None
 REDIS_RECONNECT_BASE = int(os.getenv('REDIS_RECONNECT_BASE_SECONDS', '5'))
@@ -151,7 +149,22 @@ def add_client_error(payload: dict):
 
 
 def spawn_simulation(tracking_number: str):
+    """
+    Start a simulation thread for the given tracking number.
+    Uses a Redis lock to prevent multiple concurrent runs for the same TN.
+    """
+    # Acquire Redis lock to prevent duplicate runs
+    lock_key = f"sim_running:{tracking_number}"
+    if redis_client:
+        # setnx returns True if key was set (i.e., not already existing)
+        if not redis_client.setnx(lock_key, "1"):
+            bot_logger.info(f"Simulation already running for {tracking_number}")
+            return None
+        redis_client.expire(lock_key, 3600)  # 1 hour max
+
     if not register_simulation_start():
+        if redis_client:
+            redis_client.delete(lock_key)
         return None
 
     def _runner():
@@ -164,6 +177,8 @@ def spawn_simulation(tracking_number: str):
             if app_module and hasattr(app_module, 'simulate_tracking'):
                 app_module.simulate_tracking(tracking_number)
         finally:
+            if redis_client:
+                redis_client.delete(lock_key)
             register_simulation_stop()
 
     try:
@@ -172,6 +187,8 @@ def spawn_simulation(tracking_number: str):
         thread.start()
         return thread
     except Exception:
+        if redis_client:
+            redis_client.delete(lock_key)
         register_simulation_stop()
         pass
     return None
@@ -298,7 +315,6 @@ _initialize_redis_client()
 
 
 def _redis_reconnect_loop():
-    """Background thread: monitor Redis and attempt reconnect with exponential backoff."""
     import threading
     backoff = REDIS_RECONNECT_BASE
     while True:
@@ -306,17 +322,14 @@ def _redis_reconnect_loop():
             client = redis_client.get_client()
             if client:
                 try:
-                    # ping to ensure health
                     client.ping()
                     backoff = REDIS_RECONNECT_BASE
                 except Exception:
-                    # Mark client as disabled and attempt reconnect next loop
                     try:
                         redis_client.set_client(None)
                     except Exception:
                         pass
             else:
-                # attempt to initialize
                 _initialize_redis_client()
                 if not redis_client.get_client():
                     time.sleep(min(backoff, REDIS_RECONNECT_MAX))
@@ -324,14 +337,12 @@ def _redis_reconnect_loop():
                 else:
                     backoff = REDIS_RECONNECT_BASE
         except Exception:
-            # ensure loop doesn't die
             try:
                 time.sleep(REDIS_RECONNECT_BASE)
             except Exception:
                 pass
 
 
-# start background reconnect thread
 try:
     import threading
     t = threading.Thread(target=_redis_reconnect_loop, daemon=True)
@@ -341,7 +352,6 @@ except Exception:
 
 
 def get_redis_metrics() -> Dict[str, Any]:
-    """Return simple Redis metrics for diagnostics."""
     return {
         'connected': bool(redis_client.get_client()),
         'disable_count': globals().get('redis_disable_count', 0),
@@ -385,7 +395,7 @@ class BotConfig:
         self.valid_statuses = (
             valid_statuses
             if valid_statuses is not None
-            else os.getenv("VALID_STATUSES", "Pending,In_Transit,Out_for_Delivery,Delivered,Returned,Delayed").split(",")
+            else os.getenv("VALID_STATUSES", "Pending,In_Transit,Out_for_Delivery,Delivered,Returned,Delayed,On_Hold").split(",")
         )
         self.route_templates = (
             route_templates
@@ -459,7 +469,6 @@ app.config['RECAPTCHA_VERIFY_URL'] = os.getenv('RECAPTCHA_VERIFY_URL', 'https://
 app.config['TAWK_PROPERTY_ID'] = os.getenv('TAWK_PROPERTY_ID', 'your-tawk-property-id')
 app.config['TAWK_WIDGET_ID'] = os.getenv('TAWK_WIDGET_ID', 'your-tawk-widget-id')
 app.config['ADMIN_PASSWORD'] = os.getenv('ADMIN_PASSWORD', 'admin')
-# Tune SQLAlchemy engine options to mitigate pool exhaustion. Values are configurable via environment.
 engine_opts = {
     'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '20')),
     'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '40')),
@@ -488,6 +497,8 @@ class Shipment(db.Model):
     webhook_url = db.Column(db.Text, nullable=True)
     email_notifications = db.Column(db.Boolean, default=True)
     carrier = db.Column(db.String(20), default="DHL")
+    # ✅ NEW: photo_url column for parcel image
+    photo_url = db.Column(db.String(255), nullable=True)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -506,7 +517,8 @@ class Shipment(db.Model):
             'webhook_url': self.webhook_url,
             'email_notifications': self.email_notifications,
             'carrier': self.carrier,
-            'checkpoints': (self.checkpoints or "").split(";") if self.checkpoints else []
+            'checkpoints': (self.checkpoints or "").split(";") if self.checkpoints else [],
+            'photo_url': self.photo_url,   # ✅ added
         }
 
 # === REDIS HELPERS ===
@@ -519,7 +531,6 @@ def safe_redis_operation(func, *args, **kwargs):
     except Exception as e:
         msg = str(e).lower()
         bot_logger.error(f"Redis error: {e}")
-        # If Redis reports too many clients or similar, disable redis client to avoid repeated failures
         global redis_disable_count, last_redis_disable
         if "max number of clients" in msg or "too many connections" in msg or "max clients" in msg:
             try:
@@ -603,7 +614,7 @@ def should_send_email(tn: str, status: str, checkpoints):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment or not shipment.recipient_email or not shipment.email_notifications:
         return False
-    important_statuses = {"Pending", "In_Transit", "Out_for_Delivery", "Delivered", "Exception", "Delayed"}
+    important_statuses = {"Pending", "In_Transit", "Out_for_Delivery", "Delivered", "Exception", "Delayed", "On_Hold"}
     final_statuses = {"Delivered", "Exception"}
     if status not in important_statuses:
         return False
@@ -828,9 +839,11 @@ def invalidate_cache(tracking_number: str):
 
 def enqueue_notification(data: Dict[str, Any]) -> bool:
     if not redis_client:
+        bot_logger.warning(f"Redis client unavailable – notification for {data.get('tracking_number', 'unknown')} dropped")
         return False
     try:
         redis_client.rpush("notifications", json.dumps(data))
+        bot_logger.info(f"Notification enqueued: {data.get('type')} for {data.get('tracking_number', 'unknown')}")
         return True
     except Exception as e:
         bot_logger.error(f"Queue failed: {e}")
@@ -856,6 +869,8 @@ def rate_limit(func):
         user_id = str(message.from_user.id)
         key = f"rate_limit:{user_id}"
         count = safe_redis_operation(redis_client.incr, key) if redis_client else 0
+        if count is None:
+            count = 0
         if count == 1:
             safe_redis_operation(redis_client.expire, key, RATE_LIMIT_WINDOW)
         if count > RATE_LIMIT_MAX:
@@ -936,7 +951,6 @@ def set_webhook():
         bot_logger.info(f"Webhook set: {config.webhook_url}")
     except Exception as e:
         bot_logger.error(f"Webhook failed: {e}")
-
 
 def keep_alive():
     bot_logger.info("Keep-alive loop started")
