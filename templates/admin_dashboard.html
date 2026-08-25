@@ -977,7 +977,7 @@
 
   <!-- === MODALS === -->
 
-  <!-- EMAIL SEND MODAL (unchanged) -->
+  <!-- EMAIL SEND MODAL -->
   <div class="modal fade" id="emailModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1056,7 +1056,7 @@
     </div>
   </div>
 
-  <!-- Create Shipment Modal (unchanged) -->
+  <!-- Create Shipment Modal -->
   <div class="modal fade" id="createModal" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1107,6 +1107,8 @@
               </div>
             </div>
           </form>
+          <!-- ✅ FIX: Missing datalist added here -->
+          <datalist id="citiesList"></datalist>
           
           <div id="createResult" style="display:none; margin-top: 1rem;">
             <div class="alert" id="createAlert"></div>
@@ -1123,7 +1125,7 @@
     </div>
   </div>
 
-  <!-- Detail Modal (unchanged) -->
+  <!-- Detail Modal -->
   <div class="modal fade" id="detailModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1138,7 +1140,7 @@
     </div>
   </div>
 
-  <!-- Edit Shipment Modal - improved -->
+  <!-- Edit Shipment Modal -->
   <div class="modal fade" id="editModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1215,7 +1217,7 @@
                 <label class="form-label fw-bold">Delivery Location</label>
                 <input class="form-control" id="editDeliveryLocation" />
               </div>
-              <!-- Checkpoint editor (replaces single text input) -->
+              <!-- Checkpoint editor -->
               <div class="col-12">
                 <label class="form-label fw-bold">Checkpoints <small class="text-muted">(one per line)</small></label>
                 <div id="checkpointEditor" class="checkpoint-editor">
@@ -1314,7 +1316,9 @@
         .then(r => r.json())
         .then(cities => {
           const dl = document.getElementById('citiesList');
-          dl.innerHTML = cities.map(c => `<option value="${c}"></option>`).join('');
+          // Deduplicate cities
+          const uniqueCities = [...new Set(cities)];
+          dl.innerHTML = uniqueCities.map(c => `<option value="${c}"></option>`).join('');
         })
         .catch(() => {});
     }
@@ -2077,7 +2081,7 @@
     }
 
     // ============================================================
-    // EDIT MODAL – improved checkpoint editor + lock stage
+    // EDIT MODAL
     // ============================================================
     function showEditModal(tn) {
       fetch(`/admin/api/shipment/${tn}`)
