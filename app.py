@@ -1887,7 +1887,20 @@ def _handle_new_checkpoint(tn, checkpoint):
 def simulate_tracking(tn):
     """Run the new leg-based simulation engine for a given tracking number."""
     with app.app_context():
-        # Build the hooks object
+        # --- FIX: define _on_position_update to include checkpoints ---
+        def _on_position_update(progress, city, lat, lon, stage):
+            # Always include current checkpoints in the lightweight payload
+            # too - omitting this field previously caused the frontend to
+            # treat "no checkpoints key" as "no checkpoints exist" and wipe
+            # the visible tracking history on every light ping (every ~2s
+            # during an active simulation), even though nothing about the
+            # checkpoint history had actually changed.
+            live = Shipment.query.filter_by(tracking_number=tn).first()
+            checkpoints = (live.checkpoints or '').split(';') if live and live.checkpoints else []
+            sim_emit_light(tn, progress=progress, current_location=city,
+                           current_lat=lat, current_lon=lon, stage=stage,
+                           checkpoints=checkpoints)
+
         hooks = RunnerHooks(
             get_live_shipment=lambda: Shipment.query.filter_by(tracking_number=tn).first(),
             save_shipment=lambda status, checkpoints: _save_shipment_state(tn, status, checkpoints),
@@ -1895,11 +1908,7 @@ def simulate_tracking(tn):
             set_flag=lambda field, value: rset(field, tn, value),
             resolve_location=resolve_location,
             build_route_hubs=DHLRealisticSimulator.build_route_hubs,
-            on_position_update=lambda progress, city, lat, lon, stage: (
-                # lightweight update for clients that only need coords/progress
-                sim_emit_light(tn, progress=progress, current_location=city,
-                               current_lat=lat, current_lon=lon, stage=stage)
-            ),
+            on_position_update=_on_position_update,
             on_checkpoint_added=lambda checkpoint: _handle_new_checkpoint(tn, checkpoint),
             on_status_changed=lambda status: None,  # handled inside _commit
             broadcast=lambda: broadcast_update(tn),
