@@ -497,6 +497,8 @@ class Shipment(db.Model):
     webhook_url = db.Column(db.Text, nullable=True)
     email_notifications = db.Column(db.Boolean, default=True)
     carrier = db.Column(db.String(20), default="DHL")
+    # ✅ NEW: photo_url column for parcel image
+    photo_url = db.Column(db.String(255), nullable=True)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -515,7 +517,8 @@ class Shipment(db.Model):
             'webhook_url': self.webhook_url,
             'email_notifications': self.email_notifications,
             'carrier': self.carrier,
-            'checkpoints': (self.checkpoints or "").split(";") if self.checkpoints else []
+            'checkpoints': (self.checkpoints or "").split(";") if self.checkpoints else [],
+            'photo_url': self.photo_url,   # ✅ added
         }
 
 # === REDIS HELPERS ===
