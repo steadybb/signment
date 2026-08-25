@@ -954,11 +954,16 @@
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
+                    <!-- ✅ PARCEL PHOTO: dynamic -->
                     <div class="parcel-photos-section">
                         <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
                         <div class="parcel-grid">
                             <div class="grid-item">
-                                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel photo">
+                                {% if shipment.photo_url %}
+                                    <img src="{{ shipment.photo_url }}" alt="Parcel photo" style="width:100%; height:280px; object-fit:cover;">
+                                {% else %}
+                                    <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTpLJICsMuPdGS1p3o_T5RbQkvXyfA_xVeNfFgox4X_mA&s=10" alt="Parcel photo">
+                                {% endif %}
                                 <div class="grid-label">Parcel #1</div>
                             </div>
                         </div>
