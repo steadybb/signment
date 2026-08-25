@@ -623,6 +623,16 @@
     .checkpoint-editor .add-checkpoint-btn {
       margin-top: 8px;
     }
+    
+    /* Photo upload preview */
+    #photoPreview img {
+      max-width: 200px;
+      max-height: 200px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      padding: 4px;
+      background: white;
+    }
   </style>
 </head>
 <body>
@@ -1107,7 +1117,7 @@
               </div>
             </div>
           </form>
-          <!-- ✅ FIX: Missing datalist added here -->
+          <!-- datalist for city autocomplete -->
           <datalist id="citiesList"></datalist>
           
           <div id="createResult" style="display:none; margin-top: 1rem;">
@@ -1140,7 +1150,7 @@
     </div>
   </div>
 
-  <!-- Edit Shipment Modal -->
+  <!-- Edit Shipment Modal (with Parcel Photo upload) -->
   <div class="modal fade" id="editModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1217,6 +1227,22 @@
                 <label class="form-label fw-bold">Delivery Location</label>
                 <input class="form-control" id="editDeliveryLocation" />
               </div>
+              
+              <!-- Parcel Photo Upload Section -->
+              <div class="col-12">
+                <label class="form-label fw-bold">Parcel Photo</label>
+                <div id="photoPreview" class="mb-2">
+                  <img id="currentPhoto" src="" style="display:none; max-width:200px; max-height:200px; border-radius:8px; border:1px solid #e2e8f0; padding:4px; background:white;">
+                </div>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                  <input type="file" class="form-control" id="photoUpload" accept="image/*" style="width:auto; flex:1; min-width:150px;">
+                  <button class="btn btn-sm btn-primary" id="uploadPhotoBtn" onclick="uploadPhoto()">
+                    <i class="bi bi-upload"></i> Upload
+                  </button>
+                </div>
+                <small class="text-muted">Upload a photo of the parcel (PNG, JPG, GIF, WEBP)</small>
+              </div>
+              
               <!-- Checkpoint editor -->
               <div class="col-12">
                 <label class="form-label fw-bold">Checkpoints <small class="text-muted">(one per line)</small></label>
@@ -2081,7 +2107,7 @@
     }
 
     // ============================================================
-    // EDIT MODAL
+    // EDIT MODAL – includes photo upload
     // ============================================================
     function showEditModal(tn) {
       fetch(`/admin/api/shipment/${tn}`)
@@ -2100,6 +2126,16 @@
           document.getElementById('editDeliveryLocation').value = data.delivery_location || '';
           document.getElementById('editForm').dataset.tn = tn;
 
+          // Load photo preview
+          const photoUrl = data.photo_url || '';
+          const img = document.getElementById('currentPhoto');
+          if (photoUrl) {
+            img.src = photoUrl;
+            img.style.display = 'block';
+          } else {
+            img.style.display = 'none';
+          }
+
           // Populate checkpoints
           const checkpoints = data.checkpoints || [];
           renderCheckpoints(checkpoints);
@@ -2111,6 +2147,52 @@
         });
     }
 
+    // ============================================================
+    // PHOTO UPLOAD
+    // ============================================================
+    function uploadPhoto() {
+      const tn = document.getElementById('editForm').dataset.tn;
+      const fileInput = document.getElementById('photoUpload');
+      const file = fileInput.files[0];
+      if (!file) {
+        showToast('Please select a photo first', 'warning');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('photo', file);
+
+      const btn = document.getElementById('uploadPhotoBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+      fetch(`/admin/api/shipment/${tn}/photo`, {
+        method: 'POST',
+        body: formData
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('currentPhoto').src = data.photo_url;
+          document.getElementById('currentPhoto').style.display = 'block';
+          showToast('Photo uploaded successfully', 'success');
+        } else {
+          showToast(data.error || 'Upload failed', 'error');
+        }
+      })
+      .catch(err => {
+        showToast('Upload failed', 'error');
+      })
+      .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-upload"></i> Upload';
+        fileInput.value = '';
+      });
+    }
+
+    // ============================================================
+    // CHECKPOINT EDITOR
+    // ============================================================
     function renderCheckpoints(checkpoints) {
       const container = document.getElementById('checkpointEditor');
       container.innerHTML = '';
