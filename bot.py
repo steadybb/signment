@@ -142,6 +142,92 @@ def get_recent_logs_with_context(limit=10):
         bot_logger.error(f"Error reading logs: {e}")
         return []
 
+# === STEP HANDLERS ===
+def handle_set_speed(message, tracking_number):
+    try:
+        speed = float(message.text.strip())
+        if speed < 0.1 or speed > 10:
+            bot.reply_to(message, "Speed must be 0.1 to 10.0")
+            return
+        if redis_client:
+            safe_redis_operation(redis_client.hset, "sim_speed_multipliers", tracking_number, str(speed))
+        bot.reply_to(message, f"⚡ Speed set to `{speed}x` for `{tracking_number}`.", parse_mode='Markdown')
+    except:
+        bot.reply_to(message, "❌ Invalid speed.")
+
+def handle_set_webhook(message, tracking_number):
+    webhook_url = message.text.strip()
+    if not re.match(r'^https?://[^\s/$.?#].[^\s]*$', webhook_url):
+        bot.reply_to(message, "❌ Invalid URL.")
+        return
+    if update_shipment_with_context(tracking_number, webhook_url=webhook_url):
+        bot.reply_to(message, f"🔗 Webhook set for `{tracking_number}`.", parse_mode='Markdown')
+    else:
+        bot.reply_to(message, "❌ Failed to set webhook.")
+
+def handle_add_shipment(message):
+    """Handle /add command or guided add from button."""
+    parts = message.text.strip().split()
+    if len(parts) < 3:
+        bot.reply_to(message, "Usage: tracking_number status delivery_location [origin] [email] [webhook]")
+        return
+    tn, status, dest = parts[:3]
+    origin = parts[3] if len(parts) > 3 else "Lagos, NG"
+    email = parts[4] if len(parts) > 4 else None
+    webhook = parts[5] if len(parts) > 5 else None
+    tn = sanitize_tracking_number(tn)
+    if not tn or status not in config.valid_statuses:
+        bot.reply_to(message, "Invalid tracking number or status.")
+        return
+    if save_shipment_with_context(tn, status, '', dest, email, origin, webhook, "DHL"):
+        bot.reply_to(message, f"✅ Shipment `{tn}` added.", parse_mode='Markdown')
+    else:
+        bot.reply_to(message, "❌ Failed to add shipment.")
+
+def handle_search_query(message):
+    query = message.text.strip()
+    if not query:
+        bot.reply_to(message, "❌ Empty query.")
+        return
+    try:
+        shipments, total = search_shipments_with_context(query, page=1)
+        if not shipments:
+            bot.reply_to(message, f"No shipments found for `{query}`.", parse_mode='Markdown')
+            return
+        markup = InlineKeyboardMarkup(row_width=1)
+        for tn in shipments:
+            markup.add(InlineKeyboardButton(tn, callback_data=f"view_{tn}"))
+        if total > 10:
+            markup.add(InlineKeyboardButton("Next", callback_data=f"search_page_{query}_2"))
+        markup.add(InlineKeyboardButton("🏠 Home", callback_data="menu_page_1"))
+        bot.reply_to(message, f"*Search Results for '{query}'* (Page 1, {total} total):",
+                    parse_mode='Markdown', reply_markup=markup)
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
+def handle_guided_add(message):
+    """Guided flow for adding shipment via 'Add Shipment' button."""
+    try:
+        # Expect format: tracking_number status destination origin email webhook
+        parts = message.text.strip().split()
+        if len(parts) < 3:
+            bot.reply_to(message, "Please provide: `tracking_number status destination` (origin, email, webhook optional)")
+            return
+        tn, status, dest = parts[:3]
+        origin = parts[3] if len(parts) > 3 else "Lagos, NG"
+        email = parts[4] if len(parts) > 4 else None
+        webhook = parts[5] if len(parts) > 5 else None
+        tn = sanitize_tracking_number(tn)
+        if not tn or status not in config.valid_statuses:
+            bot.reply_to(message, "Invalid tracking number or status.")
+            return
+        if save_shipment_with_context(tn, status, '', dest, email, origin, webhook, "DHL"):
+            bot.reply_to(message, f"✅ Shipment `{tn}` added successfully!", parse_mode='Markdown')
+        else:
+            bot.reply_to(message, "❌ Failed to add shipment.")
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
 # === COMMAND HANDLERS ===
 if bot is not None:
     @bot.message_handler(commands=['myid'])
@@ -439,32 +525,8 @@ if bot is not None:
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
-        parts = message.text.strip().split(maxsplit=3)
-        if len(parts) < 4:
-            bot.reply_to(message, "Usage: /add <tracking_number> <status> <delivery_location> [origin_location] [recipient_email] [webhook_url]")
-            return
-        tracking_number = sanitize_tracking_number(parts[1].strip())
-        status = parts[2].strip()
-        delivery_location = parts[3].strip()
-        args = message.text.split(maxsplit=6)[4:] if len(message.text.split()) > 4 else []
-        origin_location = args[0] if len(args) > 0 else "Lagos, NG"
-        recipient_email = args[1] if len(args) > 1 else None
-        webhook_url = args[2] if len(args) > 2 else None
-        try:
-            if not tracking_number:
-                bot.reply_to(message, "Invalid tracking number. Must be JDxxxxxxxxxx")
-                return
-            if status not in config.valid_statuses:
-                bot.reply_to(message, f"Invalid status. Must be one of: {', '.join(config.valid_statuses)}")
-                return
-            if save_shipment_with_context(tracking_number, status, '', delivery_location,
-                                         recipient_email, origin_location, webhook_url, "DHL"):
-                bot.reply_to(message, f"✅ Shipment `{tracking_number}` added.", parse_mode='Markdown')
-            else:
-                bot.reply_to(message, "❌ Failed to add shipment.")
-        except Exception as e:
-            bot.reply_to(message, f"Error: {e}")
-            bot_logger.error(f"Error in add command: {e}")
+        # Use the handler
+        handle_add_shipment(message)
 
     @bot.message_handler(commands=['export'])
     @rate_limit
@@ -504,6 +566,16 @@ if bot is not None:
         except Exception as e:
             bot.reply_to(message, f"Error: {e}")
             bot_logger.error(f"Error in logs command: {e}")
+
+    # === DIRECT TRACKING NUMBER HANDLER ===
+    @bot.message_handler(func=lambda message: re.match(r'^JD\d{10}$', message.text.strip()))
+    @rate_limit
+    def direct_track(message):
+        tracking_number = message.text.strip()
+        # Simulate /track command
+        fake_msg = message
+        fake_msg.text = f"/track {tracking_number}"
+        track_shipment(fake_msg)
 
     # === CALLBACK HANDLERS ===
     @bot.callback_query_handler(func=lambda call: True)
@@ -640,8 +712,48 @@ if bot is not None:
                 new_id = generate_unique_id()
                 bot.answer_callback_query(call.id, f"Generated ID: `{new_id}`", show_alert=True)
             elif data == "add":
-                bot.answer_callback_query(call.id, "Enter: tracking_number status delivery_location [origin] [email] [webhook]", show_alert=True)
-                bot.register_next_step_handler(call.message, handle_add_shipment)
+                bot.answer_callback_query(call.id, "Enter: tracking_number status destination [origin] [email] [webhook]", show_alert=False)
+                bot.send_message(call.message.chat.id, "📦 *Add Shipment*\nEnter details in this format:\n`tracking_number status destination [origin] [email] [webhook]`\nExample:\n`JD1234567890 Pending Lagos, NG recipient@example.com`", parse_mode='Markdown')
+                bot.register_next_step_handler(call.message, handle_guided_add)
+            elif data == "search_menu":
+                bot.answer_callback_query(call.id, "Enter your search query:", show_alert=False)
+                bot.send_message(call.message.chat.id, "🔍 *Enter search query* (e.g. Lagos, JD123...):", parse_mode='Markdown')
+                bot.register_next_step_handler(call.message, handle_search_query)
+            elif data == "bulk_action":
+                markup = InlineKeyboardMarkup(row_width=2)
+                markup.add(
+                    InlineKeyboardButton("⏸ Bulk Pause", callback_data="bulk_pause_menu_1"),
+                    InlineKeyboardButton("▶️ Bulk Resume", callback_data="bulk_resume_menu_1"),
+                    InlineKeyboardButton("🗑 Bulk Delete", callback_data="batch_delete_menu_1"),
+                    InlineKeyboardButton("🏠 Home", callback_data="menu_page_1")
+                )
+                bot.edit_message_text("*Select bulk action*:", chat_id=call.message.chat.id,
+                                     message_id=call.message.message_id, parse_mode='Markdown', reply_markup=markup)
+            elif data == "stats":
+                # Reuse system_stats logic
+                try:
+                    with app.app_context():
+                        total = Shipment.query.count()
+                        active = Shipment.query.filter(
+                            Shipment.status.in_(['Pending', 'In_Transit', 'Out_for_Delivery', 'Delayed', 'On_Hold'])
+                        ).count()
+                    paused_count = len(safe_redis_operation(redis_client.hgetall, "paused_simulations") or {}) if redis_client else 0
+                    response = (
+                        f"*📊 System Statistics*\n\n"
+                        f"*Total Shipments*: `{total}`\n"
+                        f"*Active Shipments*: `{active}`\n"
+                        f"*Paused Simulations*: `{paused_count}`\n"
+                        f"*Redis*: `{'✅ Connected' if redis_client else '❌ Disconnected'}`"
+                    )
+                    markup = InlineKeyboardMarkup(row_width=2)
+                    markup.add(
+                        InlineKeyboardButton("📋 All Shipments", callback_data="list_1"),
+                        InlineKeyboardButton("🏠 Home", callback_data="menu_page_1")
+                    )
+                    bot.edit_message_text(response, chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                         parse_mode='Markdown', reply_markup=markup)
+                except Exception as e:
+                    bot.answer_callback_query(call.id, f"Error: {e}", show_alert=True)
             elif data == "help":
                 help_text = (
                     "*📚 Help Menu*\n\n"
@@ -664,52 +776,52 @@ if bot is not None:
                 bot.edit_message_text(help_text, call.message.chat.id, call.message.message_id,
                                      parse_mode='Markdown', reply_markup=InlineKeyboardMarkup().add(
                                          InlineKeyboardButton("🏠 Home", callback_data="menu_page_1")))
-            bot.answer_callback_query(call.id)
+            elif data.startswith("bulk_pause_menu_"):
+                page = int(data.split("_")[-1])
+                show_shipment_menu(call, page, "bulk_pause", "Select shipments to pause (pause all selected)")
+            elif data.startswith("bulk_resume_menu_"):
+                page = int(data.split("_")[-1])
+                show_shipment_menu(call, page, "bulk_resume", "Select shipments to resume (resume all selected)")
+            elif data.startswith("batch_delete_menu_"):
+                page = int(data.split("_")[-1])
+                show_shipment_menu(call, page, "bulk_delete", "Select shipments to delete (delete all selected)")
+            elif data.startswith("bulk_pause_"):
+                tracking_number = data.split("_", 2)[2]
+                if redis_client:
+                    safe_redis_operation(redis_client.hset, "paused_simulations", tracking_number, "true")
+                bot.answer_callback_query(call.id, f"⏸ Paused `{tracking_number}`")
+            elif data.startswith("bulk_resume_"):
+                tracking_number = data.split("_", 2)[2]
+                if redis_client:
+                    safe_redis_operation(redis_client.hdel, "paused_simulations", tracking_number)
+                bot.answer_callback_query(call.id, f"▶️ Resumed `{tracking_number}`")
+            elif data.startswith("bulk_delete_"):
+                tracking_number = data.split("_", 2)[2]
+                with app.app_context():
+                    shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
+                    if shipment:
+                        db.session.delete(shipment)
+                        db.session.commit()
+                        # Clear Redis keys
+                        if redis_client:
+                            keys_to_delete = [
+                                "paused_simulations", "sim_speed_multipliers", "transport_mode",
+                                "delivery_attempts", "max_attempts", "progress", "stage",
+                                "delivery_window", "proof_of_delivery", "service_level", "lock_stage"
+                            ]
+                            for key in keys_to_delete:
+                                safe_redis_operation(redis_client.hdel, key, tracking_number)
+                            safe_redis_operation(redis_client.delete, f"email_history:{tracking_number}", f"clients:{tracking_number}")
+                        bot.answer_callback_query(call.id, f"🗑 Deleted `{tracking_number}`")
+                    else:
+                        bot.answer_callback_query(call.id, f"Shipment not found", show_alert=True)
+            else:
+                bot.answer_callback_query(call.id, "Unknown action", show_alert=True)
         except Exception as e:
             bot.answer_callback_query(call.id, f"Error: {e}", show_alert=True)
             bot_logger.error(f"Callback error: {e}")
 
-    # === STEP HANDLERS ===
-    def handle_set_speed(message, tracking_number):
-        try:
-            speed = float(message.text.strip())
-            if speed < 0.1 or speed > 10:
-                bot.reply_to(message, "Speed must be 0.1 to 10.0")
-                return
-            if redis_client:
-                safe_redis_operation(redis_client.hset, "sim_speed_multipliers", tracking_number, str(speed))
-            bot.reply_to(message, f"⚡ Speed set to `{speed}x` for `{tracking_number}`.", parse_mode='Markdown')
-        except:
-            bot.reply_to(message, "❌ Invalid speed.")
-
-    def handle_set_webhook(message, tracking_number):
-        webhook_url = message.text.strip()
-        if not re.match(r'^https?://[^\s/$.?#].[^\s]*$', webhook_url):
-            bot.reply_to(message, "❌ Invalid URL.")
-            return
-        if update_shipment_with_context(tracking_number, webhook_url=webhook_url):
-            bot.reply_to(message, f"🔗 Webhook set for `{tracking_number}`.", parse_mode='Markdown')
-        else:
-            bot.reply_to(message, "❌ Failed to set webhook.")
-
-    def handle_add_shipment(message):
-        parts = message.text.strip().split()
-        if len(parts) < 3:
-            bot.reply_to(message, "Usage: tracking_number status delivery_location [origin] [email] [webhook]")
-            return
-        tn, status, dest = parts[:3]
-        origin = parts[3] if len(parts) > 3 else "Lagos, NG"
-        email = parts[4] if len(parts) > 4 else None
-        webhook = parts[5] if len(parts) > 5 else None
-        tn = sanitize_tracking_number(tn)
-        if not tn or status not in config.valid_statuses:
-            bot.reply_to(message, "Invalid tracking number or status.")
-            return
-        if save_shipment_with_context(tn, status, '', dest, email, origin, webhook, "DHL"):
-            bot.reply_to(message, f"✅ Shipment `{tn}` added.", parse_mode='Markdown')
-        else:
-            bot.reply_to(message, "❌ Failed to add shipment.")
-
+    # === STARTUP HELPERS ===
     def get_startup_welcome_text() -> str:
         return (
             "🚀 *DHL Shipment Bot is online!*\n\n"
