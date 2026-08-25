@@ -1830,13 +1830,40 @@ class DHLRealisticSimulator:
 # NEW SIMULATION ENGINE WRAPPER
 # ============================================================
 
+def deduplicate_checkpoints(checkpoints_list):
+    """Remove duplicate checkpoints based on normalized event text (ignoring timestamp, location, and [Ref: ...])."""
+    if not checkpoints_list:
+        return []
+    seen = set()
+    unique = []
+    for cp in checkpoints_list:
+        if not cp:
+            continue
+        # Normalize like in simulator_engine: strip timestamp, location, and [Ref]
+        parts = cp.split(" - ", 2)
+        if len(parts) >= 3:
+            event = re.sub(r'\s*\[Ref:\s*[^\]]+\]', '', parts[2]).strip()
+        else:
+            event = cp.strip()
+        if event not in seen:
+            seen.add(event)
+            unique.append(cp)
+    return unique
+
 def _save_shipment_state(tn, status, checkpoints):
     """Update the shipment in the database and commit."""
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
         return
+    # Deduplicate checkpoints before saving
+    if isinstance(checkpoints, str):
+        checkpoint_list = checkpoints.split(";") if checkpoints else []
+    else:
+        checkpoint_list = checkpoints or []
+    unique_checkpoints = deduplicate_checkpoints(checkpoint_list)
+    checkpoints_str = ";".join(unique_checkpoints) if unique_checkpoints else ""
     shipment.status = status
-    shipment.checkpoints = checkpoints
+    shipment.checkpoints = checkpoints_str
     shipment.last_updated = datetime.now()
     try:
         db.session.commit()
@@ -2892,8 +2919,10 @@ def api_shipment_update(tn):
 
             if k == 'checkpoints':
                 if isinstance(v, list):
-                    shipment.checkpoints = ';'.join(v)
-                    updated['checkpoints'] = v
+                    # Deduplicate checkpoints before saving
+                    unique = deduplicate_checkpoints(v)
+                    shipment.checkpoints = ';'.join(unique)
+                    updated['checkpoints'] = unique
                 continue
 
             if hasattr(shipment, k):
