@@ -954,7 +954,7 @@
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
-                    <!-- ✅ PARCEL PHOTO: dynamic -->
+                    <!-- ✅ Parcel photo: dynamic -->
                     <div class="parcel-photos-section">
                         <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
                         <div class="parcel-grid">
@@ -1388,6 +1388,8 @@
                 routeBounds = L.latLngBounds(latlngs);
                 map.fitBounds(routeBounds, { padding: [20, 20] });
                 document.getElementById('resetView')?.removeAttribute('disabled');
+                // Store route for interpolation fallback
+                window._lastRouteCoords = coords;
                 debugLog('Route redrawn:', coords.length, 'points');
             }
 
@@ -1616,8 +1618,22 @@
                     document.getElementById('currentLocation').textContent = data.current_location;
                 }
 
-                const lat = toNum(data.current_lat);
-                const lon = toNum(data.current_lon);
+                let lat = toNum(data.current_lat);
+                let lon = toNum(data.current_lon);
+
+                // --- INTERPOLATION FALLBACK: if lat/lon missing, use route + progress ---
+                if ((lat === null || lon === null) && window._lastRouteCoords && window._lastRouteCoords.length >= 2 && data.progress !== undefined) {
+                    const pos = interpolateAlongRoute(window._lastRouteCoords, data.progress);
+                    if (pos) {
+                        lat = pos[0];
+                        lon = pos[1];
+                        // Also update the displayed coordinates
+                        document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
+                        document.getElementById('positionStatusText').textContent = 'Moving now (interpolated)';
+                        debugLog('Marker position interpolated from route');
+                    }
+                }
+
                 if (lat !== null && lon !== null && progressOk) {
                     document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
                     document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
