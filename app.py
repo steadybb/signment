@@ -2095,7 +2095,10 @@ def track_direct(tracking_number):
         receiver_phone=shipment.receiver_phone,
         receiver_email=shipment.receiver_email,
         weight_kg=shipment.weight_kg,
-        shipment_date=shipment.shipment_date
+        shipment_date=shipment.shipment_date,
+        # ADDED: payment_status and payment_reason for initial banner display
+        payment_status=shipment.payment_status or 'unpaid',
+        payment_reason=shipment.payment_reason or '',
     )
 
 @app.route('/telegram/webhook', methods=['POST'])
