@@ -134,7 +134,8 @@
     }
     .table tr:hover { background: #f8fafc; }
     
-    .btn-pause, .btn-resume, .btn-create, .btn-view, .btn-email {
+    .btn-pause, .btn-resume, .btn-create, .btn-view, .btn-email,
+    .btn-block, .btn-paid {
       font-size: 0.7rem;
       padding: 4px 10px;
       border-radius: 20px;
@@ -151,6 +152,11 @@
     .btn-view:hover { background: #e2e8f0; transform: scale(1.05); }
     .btn-email { background: #dbeafe; color: #2563eb; }
     .btn-email:hover { background: #bfdbfe; transform: scale(1.05); }
+    .btn-block { background: #fef3c7; color: #92400e; }
+    .btn-block:hover { background: #fde68a; transform: scale(1.05); }
+    .btn-paid { background: #dcfce7; color: #16a34a; }
+    .btn-paid:hover { background: #bbf7d0; transform: scale(1.05); }
+    .btn-paid:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
     .btn-create { background: var(--dhl-red); color: white; padding: 8px 20px; }
     .btn-create:hover { background: #b0040e; color: white; transform: scale(1.02); }
     
@@ -444,7 +450,7 @@
         -webkit-overflow-scrolling: touch;
       }
       .table-responsive table {
-        min-width: 800px;
+        min-width: 900px;
       }
       .table td, .table th { 
         padding: 0.4rem;
@@ -454,7 +460,8 @@
       #map { height: 250px; }
       .speed-slider { width: 40px; }
       .toast-container { max-width: 300px; right: 10px; }
-      .btn-pause, .btn-resume, .btn-view, .btn-email { 
+      .btn-pause, .btn-resume, .btn-view, .btn-email,
+      .btn-block, .btn-paid { 
         font-size: 0.55rem !important;
         padding: 2px 6px !important;
       }
@@ -503,17 +510,19 @@
         padding: 0.2rem 0.35rem; 
         font-size: 0.6rem;
       }
-      .table-responsive table { min-width: 700px; }
+      .table-responsive table { min-width: 800px; }
       
       .speed-slider { width: 50px; }
       .proof-signature { max-width: 80px; font-size: 0.55rem; }
       .delivery-window { font-size: 0.55rem; }
       
-      .btn-pause, .btn-resume, .btn-view, .btn-email { 
+      .btn-pause, .btn-resume, .btn-view, .btn-email,
+      .btn-block, .btn-paid { 
         font-size: 0.5rem !important;
         padding: 1px 4px !important;
       }
-      .btn-pause i, .btn-resume i, .btn-view i, .btn-email i {
+      .btn-pause i, .btn-resume i, .btn-view i, .btn-email i,
+      .btn-block i, .btn-paid i {
         font-size: 0.6rem;
       }
       
@@ -554,7 +563,7 @@
         padding: 0.15rem 0.25rem; 
         font-size: 0.55rem;
       }
-      .table-responsive table { min-width: 600px; }
+      .table-responsive table { min-width: 700px; }
       
       .speed-slider { width: 40px; }
       .speed-value { font-size: 0.6rem !important; min-width: 20px !important; }
@@ -948,6 +957,14 @@
                         <i class="bi bi-envelope"></i>
                       </button>
                       {% endif %}
+                      <!-- ========== PAYMENT WALL BUTTONS ========== -->
+                      <button class="btn btn-block btn-sm" onclick="blockPayment('{{ s.tracking_number }}')" title="Block for Payment">
+                        <i class="bi bi-credit-card"></i> Block
+                      </button>
+                      <button class="btn btn-paid btn-sm" onclick="markPaid('{{ s.tracking_number }}')" title="Mark as Paid"
+                              {% if s.payment_status == 'paid' or s.payment_status == 'failed' %}disabled{% endif %}>
+                        <i class="bi bi-check-circle"></i> Paid
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -1337,7 +1354,7 @@
                 <input class="form-control" id="editDeliveryLocation" />
               </div>
               
-              <!-- BILLING FIELDS -->
+              <!-- BILLING FIELDS (including Payment Reason) -->
               <div class="col-md-4">
                 <label class="form-label fw-bold">Invoice Amount ($)</label>
                 <input class="form-control" id="editInvoiceAmount" type="number" step="0.01" min="0" placeholder="0.00">
@@ -1361,6 +1378,10 @@
                   <option value="paid">Paid</option>
                   <option value="failed">Failed</option>
                 </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-bold">Payment Reason</label>
+                <input class="form-control" id="editPaymentReason" placeholder="Why was this blocked for payment?">
               </div>
               
               <!-- Parcel Photo Upload Section -->
@@ -2197,6 +2218,59 @@
       });
     }
 
+    // ============================================================
+    // PAYMENT WALL ACTIONS
+    // ============================================================
+    function blockPayment(tn) {
+      const amount = prompt('Enter invoice amount (e.g. 49.99):');
+      if (amount === null) return;
+      const parsed = parseFloat(amount);
+      if (isNaN(parsed) || parsed <= 0) {
+        showToast('Please enter a valid amount', 'error');
+        return;
+      }
+      const reason = prompt('Reason for blocking (optional):') || 'Payment required.';
+      
+      fetch(`/admin/api/shipment/${tn}/block_payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: parsed, reason })
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          showToast(`Shipment ${tn} blocked for payment`, 'success');
+          setTimeout(() => location.reload(), 800);
+        } else {
+          showToast(d.error || 'Failed to block shipment', 'error');
+        }
+      })
+      .catch(err => {
+        showToast('Error: ' + err.message, 'error');
+      });
+    }
+
+    function markPaid(tn) {
+      if (!confirm(`Mark shipment ${tn} as paid and resume simulation?`)) return;
+      
+      fetch(`/admin/api/shipment/${tn}/mark_paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          showToast(`Shipment ${tn} marked as paid and resumed`, 'success');
+          setTimeout(() => location.reload(), 800);
+        } else {
+          showToast(d.error || 'Failed to mark as paid', 'error');
+        }
+      })
+      .catch(err => {
+        showToast('Error: ' + err.message, 'error');
+      });
+    }
+
     function showDetails(tn) {
       document.getElementById('detailContent').innerHTML = `
         <div class="text-center py-4">
@@ -2228,7 +2302,8 @@
                   ['Mode', data.mode || 'Ground'],
                   ['Invoice Amount', data.invoice_amount ? `$${data.invoice_amount.toFixed(2)}` : 'Not set'],
                   ['Payment Method', data.payment_method || 'Not set'],
-                  ['Payment Status', `<span class="billing-badge ${data.payment_status === 'paid' ? 'paid' : data.payment_status === 'pending' ? 'pending' : data.payment_status === 'failed' ? 'failed' : 'unpaid'}">${(data.payment_status || 'unpaid').toUpperCase()}</span>`]
+                  ['Payment Status', `<span class="billing-badge ${data.payment_status === 'paid' ? 'paid' : data.payment_status === 'pending' ? 'pending' : data.payment_status === 'failed' ? 'failed' : 'unpaid'}">${(data.payment_status || 'unpaid').toUpperCase()}</span>`],
+                  ['Payment Reason', data.payment_reason || '—']
                 ].map(([label, val]) => `
                   <div class="d-flex justify-content-between py-1 border-bottom" style="font-size:0.9rem;">
                     <span class="text-muted">${label}</span>
@@ -2305,6 +2380,7 @@
           document.getElementById('editInvoiceAmount').value = data.invoice_amount || '';
           document.getElementById('editPaymentMethod').value = data.payment_method || '';
           document.getElementById('editPaymentStatus').value = data.payment_status || 'unpaid';
+          document.getElementById('editPaymentReason').value = data.payment_reason || '';
 
           // Load photo preview
           const photoUrl = data.photo_url || '';
@@ -2461,7 +2537,8 @@
         // Billing fields
         invoice_amount: parseFloat(document.getElementById('editInvoiceAmount').value) || null,
         payment_method: document.getElementById('editPaymentMethod').value,
-        payment_status: document.getElementById('editPaymentStatus').value
+        payment_status: document.getElementById('editPaymentStatus').value,
+        payment_reason: document.getElementById('editPaymentReason').value
       };
 
       const saveBtn = document.getElementById('saveEditBtn');
