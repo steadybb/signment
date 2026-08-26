@@ -1887,7 +1887,20 @@ def _handle_new_checkpoint(tn, checkpoint):
 def simulate_tracking(tn):
     """Run the new leg-based simulation engine for a given tracking number."""
     with app.app_context():
-        # Build the hooks object
+        # --- FIX: define _on_position_update to include checkpoints ---
+        def _on_position_update(progress, city, lat, lon, stage):
+            # Always include current checkpoints in the lightweight payload
+            # too - omitting this field previously caused the frontend to
+            # treat "no checkpoints key" as "no checkpoints exist" and wipe
+            # the visible tracking history on every light ping (every ~2s
+            # during an active simulation), even though nothing about the
+            # checkpoint history had actually changed.
+            live = Shipment.query.filter_by(tracking_number=tn).first()
+            checkpoints = (live.checkpoints or '').split(';') if live and live.checkpoints else []
+            sim_emit_light(tn, progress=progress, current_location=city,
+                           current_lat=lat, current_lon=lon, stage=stage,
+                           checkpoints=checkpoints)
+
         hooks = RunnerHooks(
             get_live_shipment=lambda: Shipment.query.filter_by(tracking_number=tn).first(),
             save_shipment=lambda status, checkpoints: _save_shipment_state(tn, status, checkpoints),
@@ -1895,11 +1908,7 @@ def simulate_tracking(tn):
             set_flag=lambda field, value: rset(field, tn, value),
             resolve_location=resolve_location,
             build_route_hubs=DHLRealisticSimulator.build_route_hubs,
-            on_position_update=lambda progress, city, lat, lon, stage: (
-                # lightweight update for clients that only need coords/progress
-                sim_emit_light(tn, progress=progress, current_location=city,
-                               current_lat=lat, current_lon=lon, stage=stage)
-            ),
+            on_position_update=_on_position_update,
             on_checkpoint_added=lambda checkpoint: _handle_new_checkpoint(tn, checkpoint),
             on_status_changed=lambda status: None,  # handled inside _commit
             broadcast=lambda: broadcast_update(tn),
@@ -2089,7 +2098,45 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
             pass
         return False
 
-# === BROADCAST UPDATE (with fallback for route) ===
+# ============================================================
+# HELPER: Get route coordinates with fallback
+# ============================================================
+def get_route_coords_for_shipment(shipment):
+    """
+    Return a list of coordinate dicts with at least two points for the route.
+    Fallback chain: checkpoints -> origin/destination lat/lon -> resolve_location -> hardcoded defaults.
+    """
+    # Try from checkpoints first
+    coords = geocode_locations((shipment.checkpoints or "").split(";"))
+    if len(coords) >= 2:
+        return coords
+
+    origin_coords = None
+    dest_coords = None
+
+    # Origin
+    if shipment.origin_lat is not None and shipment.origin_lon is not None:
+        origin_coords = {'lat': shipment.origin_lat, 'lon': shipment.origin_lon, 'desc': shipment.origin_location or 'Origin'}
+    elif shipment.origin_location:
+        _, origin_coords = resolve_location(shipment.origin_location)
+
+    # Destination
+    if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
+        dest_coords = {'lat': shipment.delivery_lat, 'lon': shipment.delivery_lon, 'desc': shipment.delivery_location or 'Destination'}
+    elif shipment.delivery_location:
+        _, dest_coords = resolve_location(shipment.delivery_location)
+
+    # If still missing, use hardcoded defaults
+    if not origin_coords:
+        origin_coords = {'lat': 6.5244, 'lon': 3.3792, 'desc': 'Lagos, NG (fallback)'}
+    if not dest_coords:
+        dest_coords = {'lat': 51.5074, 'lon': -0.1278, 'desc': 'London, UK (fallback)'}
+
+    return [origin_coords, dest_coords]
+
+# ============================================================
+# BROADCAST UPDATE (with fallback for route)
+# ============================================================
 def broadcast_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
@@ -2097,31 +2144,9 @@ def broadcast_update(tn):
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
     lock_stage = rget("lock_stage", tn, "false") == "true"
+
     try:
-        coords = geocode_locations((shipment.checkpoints or "").split(";"))
-        # --- FALLBACK: if checkpoint geocoding fails, use origin/destination ---
-        if len(coords) < 2:
-            origin_coords = None
-            dest_coords = None
-            if shipment.origin_lat is not None and shipment.origin_lon is not None:
-                origin_coords = {
-                    'lat': shipment.origin_lat,
-                    'lon': shipment.origin_lon,
-                    'desc': shipment.origin_location or 'Origin'
-                }
-            if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
-                dest_coords = {
-                    'lat': shipment.delivery_lat,
-                    'lon': shipment.delivery_lon,
-                    'desc': shipment.delivery_location or 'Destination'
-                }
-            if origin_coords and dest_coords:
-                coords = [origin_coords, dest_coords]
-            elif origin_coords:
-                coords = [origin_coords]
-            elif dest_coords:
-                coords = [dest_coords]
-        # --- end fallback ---
+        coords = get_route_coords_for_shipment(shipment)
         route_coords = build_route_from_checkpoints(coords, mode='drive')
         try:
             dens_km = float(os.getenv('SIM_ROUTE_DENSIFY_KM', '1.0') or '1.0')
@@ -2132,6 +2157,7 @@ def broadcast_update(tn):
         flask_logger.warning(f"Geocoding failed for {tn}: {e}")
         coords = []
         route_coords = []
+
     progress = float(rget("progress", tn, "0") or "0")
     service_level = rget("service_level", tn, "DHL Express") or "DHL Express"
     delivery_window = rget("delivery_window", tn, "Calculating...") or "Calculating..."
@@ -2141,7 +2167,6 @@ def broadcast_update(tn):
     current_lon = rget('current_lon', tn, None)
     stage = rget('stage', tn, 'pickup') or 'pickup'
 
-    # Compute current checkpoint index
     checkpoints = (shipment.checkpoints or "").split(";")
     current_checkpoint_index = 0
     if checkpoints:
@@ -2360,16 +2385,7 @@ def track():
         invalidate_cache(tn)
     # Start simulation (if not already) – this can remain here.
     if shipment.status not in ['Delivered', 'Returned']:
-        try:
-            if can_start_simulation():
-                spawn_simulation(tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping new thread for {tn}")
-        except Exception:
-            if can_start_simulation():
-                eventlet.spawn(simulate_tracking, tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
+        safe_spawn_simulation(tn)
 
     # ✨ FIX: Redirect to the GET endpoint to make refreshes safe.
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -2385,31 +2401,8 @@ def track_direct(tracking_number):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
         return render_template('tracking_result.html', error='Not found', coords=[])
-    checkpoints = (shipment.checkpoints or "").split(";")
-    coords = geocode_locations(checkpoints)
-    # --- FALLBACK: use origin/destination if checkpoints fail ---
-    if len(coords) < 2:
-        origin_coords = None
-        dest_coords = None
-        if shipment.origin_lat is not None and shipment.origin_lon is not None:
-            origin_coords = {
-                'lat': shipment.origin_lat,
-                'lon': shipment.origin_lon,
-                'desc': shipment.origin_location or 'Origin'
-            }
-        if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
-            dest_coords = {
-                'lat': shipment.delivery_lat,
-                'lon': shipment.delivery_lon,
-                'desc': shipment.delivery_location or 'Destination'
-            }
-        if origin_coords and dest_coords:
-            coords = [origin_coords, dest_coords]
-        elif origin_coords:
-            coords = [origin_coords]
-        elif dest_coords:
-            coords = [dest_coords]
-    # --- end fallback ---
+
+    coords = get_route_coords_for_shipment(shipment)
     coords_list = [{'lat': c['lat'], 'lon': c['lon'], 'desc': c['desc']} for c in coords]
     route_coords = build_route_from_checkpoints(coords_list, mode='drive')
     try:
@@ -2417,6 +2410,7 @@ def track_direct(tracking_number):
         route_coords = densify_route_coords(route_coords, dens_km)
     except Exception:
         pass
+
     distance_km = estimate_distance(shipment.origin_location or "Lagos, NG", shipment.delivery_location)
     service_level = DHLRealisticSimulator.get_service_level(
         distance_km, DHLRealisticSimulator.is_business_hours(datetime.now())
@@ -2424,16 +2418,8 @@ def track_direct(tracking_number):
     delivery_window = DHLRealisticSimulator.get_delivery_window(service_level, distance_km)
     proof_of_delivery = DHLRealisticSimulator.generate_pod_info()
     if shipment.status not in ['Delivered', 'Returned']:
-        try:
-            if can_start_simulation():
-                spawn_simulation(tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping new thread for {tn}")
-        except Exception:
-            if can_start_simulation():
-                eventlet.spawn(simulate_tracking, tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
+        safe_spawn_simulation(tn)
+
     progress = float(rget('progress', tn, '0') or '0')
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
@@ -2441,17 +2427,37 @@ def track_direct(tracking_number):
     stage = rget('stage', tn, 'pickup') or 'pickup'
 
     # Compute current checkpoint index
+    checkpoints = (shipment.checkpoints or "").split(";")
     current_checkpoint_index = 0
     if checkpoints:
         current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
 
     return render_template(
-        'tracking_result.html', shipment=shipment, checkpoints=checkpoints, coords=coords_list,
-        route_coords=route_coords, service_level=service_level, delivery_window=delivery_window,
-        proof_of_delivery=proof_of_delivery, progress=progress,
-        current_location=current_location, current_lat=current_lat, current_lon=current_lon,
-        stage=stage, current_checkpoint_index=current_checkpoint_index,
-        tawk_property_id=app.config['TAWK_PROPERTY_ID'], tawk_widget_id=app.config['TAWK_WIDGET_ID']
+        'tracking_result.html',
+        shipment=shipment,
+        checkpoints=checkpoints,
+        coords=coords_list,
+        route_coords=route_coords,
+        service_level=service_level,
+        delivery_window=delivery_window,
+        proof_of_delivery=proof_of_delivery,
+        progress=progress,
+        current_location=current_location,
+        current_lat=current_lat,
+        current_lon=current_lon,
+        stage=stage,
+        current_checkpoint_index=current_checkpoint_index,
+        tawk_property_id=app.config['TAWK_PROPERTY_ID'],
+        tawk_widget_id=app.config['TAWK_WIDGET_ID'],
+        # New fields
+        sender_name=shipment.sender_name,
+        sender_location=shipment.sender_location,
+        receiver_name=shipment.receiver_name,
+        receiver_address=shipment.receiver_address,
+        receiver_phone=shipment.receiver_phone,
+        receiver_email=shipment.receiver_email,
+        weight_kg=shipment.weight_kg,
+        shipment_date=shipment.shipment_date
     )
 
 @app.route('/telegram/webhook', methods=['POST'])
@@ -2811,6 +2817,39 @@ def generate_dhl_tracking():
     return f"{prefix}{digits}"
 
 # ============================================================
+# ============================================================
+# NEW SAFE SPAWN HELPER
+# ============================================================
+def safe_spawn_simulation(tn):
+    """
+    Single choke point for starting a simulation thread. Replaces the old
+    pattern of `try: spawn_simulation(tn) except Exception: eventlet.spawn(...)`
+    that was duplicated in track(), track_direct(), and create_shipment_record().
+
+    That old pattern's except-branch called eventlet.spawn(simulate_tracking, tn)
+    directly, completely bypassing spawn_simulation()'s Redis lock. Any
+    transient Redis error (timeout, connection reset, "max clients") during
+    the primary spawn_simulation() call would fall into that branch and spawn
+    an UNLOCKED duplicate simulation thread for the same tracking number --
+    a second, independent cause of the "progress resets to 0%" bug alongside
+    the lock TTL issue, since two threads would then race to overwrite each
+    other's progress in Redis.
+
+    Now: if spawn_simulation() raises for any reason, we just log it and do
+    NOT spawn a fallback thread. Worst case, the simulation doesn't advance
+    until the next successful call (e.g. the next page load) -- which is far
+    better than silently corrupting progress with a duplicate, unsynchronized
+    thread.
+    """
+    if not can_start_simulation():
+        flask_logger.info(f"Simulator throttle active; skipping spawn for {tn}")
+        return
+    try:
+        spawn_simulation(tn)
+    except Exception as e:
+        flask_logger.warning(f"spawn_simulation failed for {tn}, not spawning an unlocked fallback: {e}")
+
+# ============================================================
 # ADMIN API ENDPOINTS (continued)
 # ============================================================
 
@@ -3110,7 +3149,10 @@ def admin_geocoding_status():
         }
     })
 
-def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express'):
+def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
+                           sender_name=None, sender_location=None,
+                           receiver_name=None, receiver_address=None, receiver_phone=None,
+                           receiver_email=None, weight_kg=None, shipment_date=None):
     origin = origin.strip() if isinstance(origin, str) else origin
     destination = destination.strip() if isinstance(destination, str) else destination
     service_level = service_level.strip() if isinstance(service_level, str) else service_level
@@ -3131,6 +3173,22 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         tracking_number = generate_dhl_tracking()
 
     now = datetime.now()
+    # --- FIX: Parse shipment_date if it's a string ---
+    if isinstance(shipment_date, str):
+        try:
+            # Try strict ISO format
+            shipment_date = datetime.fromisoformat(shipment_date.replace('Z', '+00:00'))
+        except ValueError:
+            try:
+                # Try format from HTML datetime-local (YYYY-MM-DDTHH:MM)
+                shipment_date = datetime.strptime(shipment_date, '%Y-%m-%dT%H:%M')
+            except ValueError:
+                # Fallback to current time
+                shipment_date = now
+    elif shipment_date is None:
+        shipment_date = now
+    # now shipment_date is a datetime object
+
     norm_origin, origin_coords = resolve_location(origin)
     norm_destination, dest_coords = resolve_location(destination)
 
@@ -3323,7 +3381,16 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         recipient_email=recipient_email or '',
         created_at=now,
         carrier='DHL',
-        email_notifications=bool(recipient_email)
+        email_notifications=bool(recipient_email),
+        # New fields
+        sender_name=sender_name,
+        sender_location=sender_location,
+        receiver_name=receiver_name,
+        receiver_address=receiver_address,
+        receiver_phone=receiver_phone,
+        receiver_email=receiver_email or recipient_email,  # fallback
+        weight_kg=weight_kg,
+        shipment_date=shipment_date  # now a datetime object
     )
 
     try:
@@ -3368,19 +3435,8 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         except Exception as redis_err:
             flask_logger.warning(f"Redis error for {tracking_number}: {redis_err}")
 
-    try:
-        if can_start_simulation():
-            spawn_simulation(tracking_number)
-        else:
-            flask_logger.info(f"Simulator throttle active; skipping create_shipment launch for {tracking_number}")
-    except Exception:
-        try:
-            if can_start_simulation():
-                eventlet.spawn(simulate_tracking, tracking_number)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping create_shipment eventlet spawn for {tracking_number}")
-        except Exception as sim_err:
-            flask_logger.warning(f"Simulation start error for {tracking_number}: {sim_err}")
+    # Start simulation
+    safe_spawn_simulation(tracking_number)
 
     return {
         'success': True,
@@ -3404,7 +3460,15 @@ def api_create_shipment():
         data.get('origin'),
         data.get('destination'),
         data.get('recipient_email'),
-        data.get('service_level', 'DHL Express')
+        data.get('service_level', 'DHL Express'),
+        sender_name=data.get('sender_name'),
+        sender_location=data.get('sender_location'),
+        receiver_name=data.get('receiver_name'),
+        receiver_address=data.get('receiver_address'),
+        receiver_phone=data.get('receiver_phone'),
+        receiver_email=data.get('receiver_email'),
+        weight_kg=data.get('weight_kg'),
+        shipment_date=data.get('shipment_date')
     )
     # Log payload and validation details for easier debugging from the admin UI
     if status_code != 201:
@@ -3434,6 +3498,7 @@ def api_bulk_create():
         recipient_email = shipment_data.get('recipient_email')
         service_level = shipment_data.get('service_level', 'DHL Express')
 
+        # Note: bulk creation does not yet support extended fields; only core fields
         result, status_code = create_shipment_record(origin, destination, recipient_email, service_level)
         if result.get('success'):
             created.append(result['tracking_number'])
@@ -3693,37 +3758,15 @@ def on_request(data):
         emit('tracking_update', {'error': 'Not found'})
         return
     add_client(tn, request.sid)
-    checkpoints = (shipment.checkpoints or "").split(";")
-    coords = geocode_locations(checkpoints)
-    # --- FALLBACK: use origin/destination if checkpoints fail ---
-    if len(coords) < 2:
-        origin_coords = None
-        dest_coords = None
-        if shipment.origin_lat is not None and shipment.origin_lon is not None:
-            origin_coords = {
-                'lat': shipment.origin_lat,
-                'lon': shipment.origin_lon,
-                'desc': shipment.origin_location or 'Origin'
-            }
-        if shipment.delivery_lat is not None and shipment.delivery_lon is not None:
-            dest_coords = {
-                'lat': shipment.delivery_lat,
-                'lon': shipment.delivery_lon,
-                'desc': shipment.delivery_location or 'Destination'
-            }
-        if origin_coords and dest_coords:
-            coords = [origin_coords, dest_coords]
-        elif origin_coords:
-            coords = [origin_coords]
-        elif dest_coords:
-            coords = [dest_coords]
-    # --- end fallback ---
+
+    coords = get_route_coords_for_shipment(shipment)
     route_coords = build_route_from_checkpoints(coords, mode='drive')
     try:
         dens_km = float(os.getenv('SIM_ROUTE_DENSIFY_KM', '1.0') or '1.0')
         route_coords = densify_route_coords(route_coords, dens_km)
     except Exception:
         pass
+
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
     progress = float(rget("progress", tn, "0") or "0")
@@ -3740,7 +3783,7 @@ def on_request(data):
     last_updated = shipment.last_updated.isoformat() if shipment.last_updated else None
     stage = rget('stage', tn, 'pickup') or 'pickup'
 
-    # Compute current checkpoint index
+    checkpoints = (shipment.checkpoints or "").split(";")
     current_checkpoint_index = 0
     if checkpoints:
         current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
@@ -3784,7 +3827,7 @@ def start_background_services():
                             flask_logger.info("Simulator throttle reached; stopping resume fan-out")
                             break
                         flask_logger.info(f"Resuming simulation for {s.tracking_number}")
-                        spawn_simulation(s.tracking_number)
+                        safe_spawn_simulation(s.tracking_number)
                     except Exception as e:
                         flask_logger.warning(f"Failed to spawn simulation for {s.tracking_number}: {e}")
         except Exception:
