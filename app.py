@@ -900,7 +900,7 @@ class TrackForm(FlaskForm):
     email = StringField('Email (Optional)')
     submit = SubmitField('Track')
 
-# DB Init
+# DB Init – extended to add new columns
 def init_db():
     with app.app_context():
         db.create_all()
@@ -914,7 +914,16 @@ def init_db():
                     ("origin_lat", "ALTER TABLE shipments ADD COLUMN origin_lat REAL;"),
                     ("origin_lon", "ALTER TABLE shipments ADD COLUMN origin_lon REAL;"),
                     ("delivery_lat", "ALTER TABLE shipments ADD COLUMN delivery_lat REAL;"),
-                    ("delivery_lon", "ALTER TABLE shipments ADD COLUMN delivery_lon REAL;")
+                    ("delivery_lon", "ALTER TABLE shipments ADD COLUMN delivery_lon REAL;"),
+                    # New fields for sender / receiver / shipment details
+                    ("sender_name", "ALTER TABLE shipments ADD COLUMN sender_name VARCHAR(100);"),
+                    ("sender_location", "ALTER TABLE shipments ADD COLUMN sender_location VARCHAR(200);"),
+                    ("receiver_name", "ALTER TABLE shipments ADD COLUMN receiver_name VARCHAR(100);"),
+                    ("receiver_address", "ALTER TABLE shipments ADD COLUMN receiver_address VARCHAR(200);"),
+                    ("receiver_phone", "ALTER TABLE shipments ADD COLUMN receiver_phone VARCHAR(30);"),
+                    ("receiver_email", "ALTER TABLE shipments ADD COLUMN receiver_email VARCHAR(120);"),
+                    ("weight_kg", "ALTER TABLE shipments ADD COLUMN weight_kg REAL;"),
+                    ("shipment_date", "ALTER TABLE shipments ADD COLUMN shipment_date DATETIME;"),
                 ]
                 for col, stmt in alterations:
                     if col not in existing:
@@ -923,7 +932,7 @@ def init_db():
                         except Exception as e:
                             flask_logger.warning(f"SQLite column add failed for {col}: {e}")
                 conn.commit()
-                flask_logger.info("DB initialized using SQLite")
+                flask_logger.info("DB initialized using SQLite with new shipment fields")
             except Exception as e:
                 flask_logger.warning(f"SQLite DB init failed: {e}")
             return
@@ -934,6 +943,7 @@ def init_db():
                 if inspectors := inspect(engine):
                     if 'shipments' not in inspectors.get_table_names():
                         db.create_all()
+                    # Add existing and new columns
                     db.session.execute(text("""
                         ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier VARCHAR(20) DEFAULT 'DHL';
                     """))
@@ -949,8 +959,33 @@ def init_db():
                     db.session.execute(text("""
                         ALTER TABLE shipments ADD COLUMN IF NOT EXISTS delivery_lon REAL;
                     """))
+                    # New fields
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS sender_name VARCHAR(100);
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS sender_location VARCHAR(200);
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_name VARCHAR(100);
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_address VARCHAR(200);
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_phone VARCHAR(30);
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_email VARCHAR(120);
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS weight_kg REAL;
+                    """))
+                    db.session.execute(text("""
+                        ALTER TABLE shipments ADD COLUMN IF NOT EXISTS shipment_date DATETIME;
+                    """))
                     db.session.commit()
-                    flask_logger.info("DB initialized")
+                    flask_logger.info("DB initialized with new shipment fields")
                     return
                 sleep(5 * (2 ** attempt))
             except Exception as e:
@@ -2450,12 +2485,31 @@ def track_direct(tracking_number):
         current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
 
     return render_template(
-        'tracking_result.html', shipment=shipment, checkpoints=checkpoints, coords=coords_list,
-        route_coords=route_coords, service_level=service_level, delivery_window=delivery_window,
-        proof_of_delivery=proof_of_delivery, progress=progress,
-        current_location=current_location, current_lat=current_lat, current_lon=current_lon,
-        stage=stage, current_checkpoint_index=current_checkpoint_index,
-        tawk_property_id=app.config['TAWK_PROPERTY_ID'], tawk_widget_id=app.config['TAWK_WIDGET_ID']
+        'tracking_result.html',
+        shipment=shipment,
+        checkpoints=checkpoints,
+        coords=coords_list,
+        route_coords=route_coords,
+        service_level=service_level,
+        delivery_window=delivery_window,
+        proof_of_delivery=proof_of_delivery,
+        progress=progress,
+        current_location=current_location,
+        current_lat=current_lat,
+        current_lon=current_lon,
+        stage=stage,
+        current_checkpoint_index=current_checkpoint_index,
+        tawk_property_id=app.config['TAWK_PROPERTY_ID'],
+        tawk_widget_id=app.config['TAWK_WIDGET_ID'],
+        # New fields
+        sender_name=shipment.sender_name,
+        sender_location=shipment.sender_location,
+        receiver_name=shipment.receiver_name,
+        receiver_address=shipment.receiver_address,
+        receiver_phone=shipment.receiver_phone,
+        receiver_email=shipment.receiver_email,
+        weight_kg=shipment.weight_kg,
+        shipment_date=shipment.shipment_date
     )
 
 @app.route('/telegram/webhook', methods=['POST'])
@@ -3114,7 +3168,10 @@ def admin_geocoding_status():
         }
     })
 
-def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express'):
+def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
+                           sender_name=None, sender_location=None,
+                           receiver_name=None, receiver_address=None, receiver_phone=None,
+                           receiver_email=None, weight_kg=None, shipment_date=None):
     origin = origin.strip() if isinstance(origin, str) else origin
     destination = destination.strip() if isinstance(destination, str) else destination
     service_level = service_level.strip() if isinstance(service_level, str) else service_level
@@ -3135,6 +3192,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         tracking_number = generate_dhl_tracking()
 
     now = datetime.now()
+    shipment_date = shipment_date or now
     norm_origin, origin_coords = resolve_location(origin)
     norm_destination, dest_coords = resolve_location(destination)
 
@@ -3327,7 +3385,16 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         recipient_email=recipient_email or '',
         created_at=now,
         carrier='DHL',
-        email_notifications=bool(recipient_email)
+        email_notifications=bool(recipient_email),
+        # New fields
+        sender_name=sender_name,
+        sender_location=sender_location,
+        receiver_name=receiver_name,
+        receiver_address=receiver_address,
+        receiver_phone=receiver_phone,
+        receiver_email=receiver_email or recipient_email,  # fallback
+        weight_kg=weight_kg,
+        shipment_date=shipment_date
     )
 
     try:
@@ -3408,7 +3475,15 @@ def api_create_shipment():
         data.get('origin'),
         data.get('destination'),
         data.get('recipient_email'),
-        data.get('service_level', 'DHL Express')
+        data.get('service_level', 'DHL Express'),
+        sender_name=data.get('sender_name'),
+        sender_location=data.get('sender_location'),
+        receiver_name=data.get('receiver_name'),
+        receiver_address=data.get('receiver_address'),
+        receiver_phone=data.get('receiver_phone'),
+        receiver_email=data.get('receiver_email'),
+        weight_kg=data.get('weight_kg'),
+        shipment_date=data.get('shipment_date')
     )
     # Log payload and validation details for easier debugging from the admin UI
     if status_code != 201:
