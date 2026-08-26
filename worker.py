@@ -12,6 +12,7 @@ except Exception:
 
 from dotenv import load_dotenv
 import smtplib
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template
@@ -67,12 +68,22 @@ except Exception as e:
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
-def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str, recipient_email: str, subject: str = None, html_body: str = None, plain_body: str = None) -> bool:
-    """Send an email notification. Uses provided HTML/plain bodies if present, otherwise falls back to rendering template and building plain text."""
+# Maximum number of retries for a failed notification
+MAX_RETRIES = 3
+
+def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
+               recipient_email: str, subject: str = None, html_body: str = None,
+               plain_body: str = None) -> tuple[bool, bool]:
+    """
+    Send an email notification.
+    Returns (success, permanent_failure)
+      - success: True if email was sent successfully
+      - permanent_failure: True if the error is permanent and should not be retried
+    """
     try:
         if not recipient_email:
             logger.warning(f"No recipient email for {tracking_number}")
-            return False
+            return False, True  # Missing email is permanent
 
         # Prepare checkpoints as a list for template/fallback
         checkpoints_list = checkpoints.split(';') if checkpoints else []
@@ -98,13 +109,11 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
             location = delivery_location or 'Unknown'
             plain_body = f"DHL Shipment Update\n\nTracking Number: {tracking_number}\nStatus: {status}\nDestination: {location}\n\nRecent Updates:\n{chr(10).join(['- ' + c for c in checkpoints_list[-3:]]) if checkpoints_list else 'No updates yet'}\n\nTrack online: {config.websocket_server}/track/{tracking_number}"
 
-        # Create MIME message
+        # Create MIME message (for SMTP fallback)
         msg = MIMEMultipart('alternative')
         msg['Subject'] = msg_subject
         msg['From'] = config.smtp_from
         msg['To'] = recipient_email
-
-        # Attach plain and HTML parts
         msg.attach(MIMEText(plain_body, 'plain'))
         msg.attach(MIMEText(html_body, 'html'))
 
@@ -134,33 +143,68 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
                             server.starttls()
                         server.login(config.smtp_user, config.smtp_pass)
                         server.send_message(msg)
+
                 logger.info(f"Sent HTML email notification for {tracking_number} to {recipient_email}")
                 console.print(f"[info]Sent HTML email notification for {tracking_number} to {recipient_email}[/info]")
-                return True
-            except smtplib.SMTPServerDisconnected:
-                logger.warning(f"SMTP connection lost, retrying... ({attempt + 1}/{max_retries})")
-                time.sleep(2 ** attempt)
-            except Exception as e:
+                return True, False
+
+            except requests.exceptions.HTTPError as e:
+                # Resend HTTP errors – treat 4xx client errors as permanent (except 429 rate limit)
+                if hasattr(e, 'response') and e.response is not None:
+                    status_code = e.response.status_code
+                    if 400 <= status_code < 500 and status_code != 429:
+                        logger.error(f"Permanent Resend error (HTTP {status_code}) for {tracking_number}: {e}")
+                        return False, True
+                    # 429 is transient (rate limit), we'll retry
+                # If we cannot determine, treat as transient
                 if attempt == max_retries - 1:
                     raise
                 time.sleep(2 ** attempt)
 
-        return False
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, socket.timeout):
+                # Network/timeout errors are transient
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(2 ** attempt)
+
+            except smtplib.SMTPAuthenticationError:
+                logger.error(f"SMTP authentication error for {tracking_number}")
+                return False, True  # Permanent
+
+            except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, socket.timeout):
+                # Transient SMTP connection errors
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(2 ** attempt)
+
+            except Exception as e:
+                # For any other exception, treat as transient if we have retries left
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(2 ** attempt)
+
+        return False, False  # Should not reach here
+
     except smtplib.SMTPException as e:
-        logger.error(f"Failed to send HTML email notification for {tracking_number}: {e}")
-        console.print(Panel(f"[error]Failed to send HTML email notification for {tracking_number}: {e}[/error]", title="Email Error", border_style="red"))
-        return False
+        logger.error(f"SMTP error for {tracking_number}: {e}")
+        # Generic SMTP exception – could be transient or permanent; we'll treat as transient (will retry)
+        return False, False
     except Exception as e:
         logger.error(f"Unexpected error sending HTML email for {tracking_number}: {e}")
         console.print(Panel(f"[error]Unexpected error sending HTML email for {tracking_number}: {e}[/error]", title="Email Error", border_style="red"))
-        return False
+        # Most unexpected errors are transient; we'll retry unless it's clearly permanent (e.g., invalid API key)
+        return False, False
 
-def send_webhook(tracking_number: str, status: str, checkpoints: list, delivery_location: str, webhook_url: str) -> bool:
-    """Send a webhook notification."""
+
+def send_webhook(tracking_number: str, status: str, checkpoints: list, delivery_location: str, webhook_url: str) -> tuple[bool, bool]:
+    """
+    Send a webhook notification.
+    Returns (success, permanent_failure)
+    """
     try:
         if not webhook_url:
             logger.warning(f"No webhook URL for {tracking_number}")
-            return False
+            return False, True  # Missing URL is permanent
 
         payload = {
             "tracking_number": tracking_number,
@@ -178,18 +222,33 @@ def send_webhook(tracking_number: str, status: str, checkpoints: list, delivery_
                 response.raise_for_status()
                 logger.info(f"Sent webhook notification for {tracking_number} to {webhook_url}")
                 console.print(f"[info]Sent webhook notification for {tracking_number} to {webhook_url}[/info]")
-                return True
-            except requests.RequestException as e:
+                return True, False
+            except requests.exceptions.HTTPError as e:
+                # 4xx client errors (except 429) are permanent
+                if hasattr(e, 'response') and e.response is not None:
+                    status_code = e.response.status_code
+                    if 400 <= status_code < 500 and status_code != 429:
+                        logger.error(f"Permanent webhook error (HTTP {status_code}) for {tracking_number}: {e}")
+                        return False, True
+                # Otherwise treat as transient
                 if attempt == max_retries - 1:
                     raise
-                logger.warning(f"Webhook attempt {attempt + 1} failed: {e}")
+                time.sleep(2 ** attempt)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(2 ** attempt)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
                 time.sleep(2 ** attempt)
         
-        return False
+        return False, False
     except requests.RequestException as e:
         logger.error(f"Failed to send webhook notification for {tracking_number}: {e}")
         console.print(Panel(f"[error]Failed to send webhook notification for {tracking_number}: {e}[/error]", title="Webhook Error", border_style="red"))
-        return False
+        return False, False
+
 
 def process_notifications():
     """Process notifications from the Redis queue."""
@@ -223,12 +282,22 @@ def process_notifications():
             tracking_number = notification.get('tracking_number')
             notification_type = notification.get('type')
             data = notification.get('data', {})
+            retry_count = notification.get('retry_count', 0)
 
-            logger.info(f"Processing {notification_type} notification for {tracking_number}")
-            console.print(f"[info]Processing {notification_type} notification for {tracking_number}[/info]")
+            # Check if we've exceeded retry limit
+            if retry_count >= MAX_RETRIES:
+                logger.warning(f"Discarding notification for {tracking_number} after {MAX_RETRIES} retries")
+                console.print(f"[yellow]Discarded notification for {tracking_number} (type: {notification_type})[/yellow]")
+                continue
+
+            logger.info(f"Processing {notification_type} notification for {tracking_number} (attempt {retry_count + 1}/{MAX_RETRIES})")
+            console.print(f"[info]Processing {notification_type} notification for {tracking_number} (attempt {retry_count + 1})[/info]")
+
+            success = False
+            permanent = False
 
             if notification_type == "email":
-                success = send_email(
+                success, permanent = send_email(
                     tracking_number=tracking_number,
                     status=data.get('status', 'Unknown'),
                     checkpoints=data.get('checkpoints', ''),
@@ -238,24 +307,37 @@ def process_notifications():
                     html_body=data.get('html_body'),
                     plain_body=data.get('plain_body')
                 )
-                if not success:
-                    logger.warning(f"Requeueing failed email notification for {tracking_number}")
-                    safe_redis_operation(redis_client.lpush, "notifications", notification_data)
-
             elif notification_type == "webhook":
                 checkpoints = data.get('checkpoints', [])
                 if isinstance(checkpoints, str):
                     checkpoints = checkpoints.split(';') if checkpoints else []
-                success = send_webhook(
+                success, permanent = send_webhook(
                     tracking_number=tracking_number,
                     status=data.get('status', 'Unknown'),
                     checkpoints=checkpoints,
                     delivery_location=data.get('delivery_location', 'Unknown'),
                     webhook_url=data.get('webhook_url', config.websocket_server)
                 )
-                if not success:
-                    logger.warning(f"Requeueing failed webhook notification for {tracking_number}")
-                    safe_redis_operation(redis_client.lpush, "notifications", notification_data)
+            else:
+                logger.warning(f"Unknown notification type: {notification_type}")
+                continue
+
+            if success:
+                logger.info(f"Successfully processed {notification_type} for {tracking_number}")
+                continue
+
+            # If permanent failure, discard
+            if permanent:
+                logger.error(f"Permanent failure for {tracking_number} ({notification_type}) – discarding")
+                console.print(f"[red]Permanent failure for {tracking_number} ({notification_type}) – discarded[/red]")
+                continue
+
+            # Transient failure – requeue with incremented retry count
+            notification['retry_count'] = retry_count + 1
+            requeue_data = json.dumps(notification)
+            safe_redis_operation(redis_client.lpush, "notifications", requeue_data)
+            logger.warning(f"Requeued {notification_type} for {tracking_number} (attempt {retry_count + 1}/{MAX_RETRIES})")
+            console.print(f"[yellow]Requeued {notification_type} for {tracking_number} (attempt {retry_count + 1})[/yellow]")
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid notification format: {e}")
@@ -264,6 +346,7 @@ def process_notifications():
             logger.error(f"Unexpected error processing notification: {e}")
             console.print(Panel(f"[error]Unexpected error processing notification: {e}[/error]", title="Worker Error", border_style="red"))
             time.sleep(5)  # Prevent tight loop on persistent errors
+
 
 def start_worker():
     """Start the worker process."""
@@ -279,6 +362,7 @@ def start_worker():
         logger.critical(f"Worker crashed: {e}")
         console.print(Panel(f"[critical]Worker crashed: {e}[/critical]", title="Worker Error", border_style="red"))
         raise
+
 
 if __name__ == "__main__":
     start_worker()
