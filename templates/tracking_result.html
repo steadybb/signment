@@ -9,6 +9,7 @@
     <!-- Bootstrap Icons (for sender/receiver/shipment details icons) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
+        /* ===== [STYLES – unchanged, just kept as is] ===== */
         :root {
             --dhl-red: #D40511;
             --dhl-yellow: #FFCC00;
@@ -246,6 +247,48 @@
             font-weight: 600;
         }
         .paused-banner.show { display: flex; }
+
+        /* NEW: Payment banner */
+        .payment-banner {
+            display: none;
+            margin: 12px 0 0;
+            padding: 12px 16px;
+            border-radius: 10px;
+            background: #fee2e2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+        }
+        .payment-banner.show { display: block; }
+        .payment-banner .payment-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+        .payment-banner .payment-reason {
+            margin-top: 4px;
+            font-size: 0.9rem;
+            color: #7f1d1d;
+        }
+        .payment-banner .payment-actions {
+            margin-top: 8px;
+        }
+        .payment-banner .btn-paynow {
+            display: inline-block;
+            padding: 6px 18px;
+            background: #dc2626;
+            color: #fff;
+            border-radius: 30px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-decoration: none;
+            border: none;
+            transition: background 0.2s;
+        }
+        .payment-banner .btn-paynow:hover {
+            background: #b91c1c;
+        }
 
         .meta-badges {
             display: flex;
@@ -780,7 +823,7 @@
     <header class="header">
         <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL Logo">
         <div class="header-actions">
-            <!-- ========== BILLING LINK (new) ========== -->
+            <!-- ========== BILLING LINK ========== -->
             <a href="{{ url_for('billing', email=shipment.recipient_email) if shipment.recipient_email else url_for('billing') }}"
                class="text-white-50 text-decoration-none me-2 d-flex align-items-center gap-1"
                style="color: #1a1a1a !important; font-weight: 500; font-size: 0.9rem;">
@@ -854,9 +897,24 @@
                         <span class="meta-badge" id="modeBadge">🚚 Ground</span>
                     </div>
 
+                    <!-- PAUSED BANNER -->
                     <div class="paused-banner" id="pausedBanner" role="status">
                         <span>⏸</span>
                         <span>This shipment is currently paused — position will resume updating once it's restarted.</span>
+                    </div>
+
+                    <!-- ========== PAYMENT BANNER (NEW) ========== -->
+                    <div class="payment-banner" id="paymentBanner">
+                        <div class="payment-title">
+                            <i class="bi bi-exclamation-circle" style="font-size:1.2rem;"></i>
+                            <span>Payment Required</span>
+                        </div>
+                        <div class="payment-reason" id="paymentReason">This shipment is on hold until the invoice is paid.</div>
+                        <div class="payment-actions">
+                            <a href="{{ url_for('billing', email=shipment.recipient_email) if shipment.recipient_email else url_for('billing') }}" class="btn-paynow">
+                                <i class="bi bi-credit-card me-1"></i> Pay Now
+                            </a>
+                        </div>
                     </div>
 
                     <div class="position-card" id="positionCard">
@@ -939,7 +997,7 @@
                     </div>
 
                     <!-- ============================================================ -->
-                    <!-- NEW SECTIONS: Sender, Receiver, Shipment Details               -->
+                    <!-- SENDER, RECEIVER, SHIPMENT DETAILS                           -->
                     <!-- ============================================================ -->
                     <div class="row g-3 mt-4">
                         <!-- Sender -->
@@ -988,7 +1046,6 @@
                             </div>
                         </div>
                     </div>
-                    <!-- ============================================================ -->
 
                     <div class="details-grid">
                         <div class="detail-item">
@@ -1021,7 +1078,7 @@
                         Last updated: {{ shipment.last_updated.strftime('%Y-%m-%d %H:%M:%S') if shipment.last_updated else 'N/A' }}
                     </div>
 
-                    <!-- ✅ Parcel photo: dynamic -->
+                    <!-- Parcel photo -->
                     <div class="parcel-photos-section">
                         <h3 class="text-lg font-semibold mt-4 mb-3 text-gray-700">📦 Shipment Photo</h3>
                         <div class="parcel-grid">
@@ -1050,7 +1107,7 @@
         </div>
 
         <script>
-            // GLOBAL ERROR HANDLER
+            // ===== GLOBAL ERROR HANDLER =====
             window.onerror = function(message, source, lineno, colno, error) {
                 console.error('Global error caught:', message, error);
                 const spinner = document.getElementById('loadingSpinner');
@@ -1062,11 +1119,15 @@
 
             console.log('📦 Tracking page script started (inside else block)');
 
-            // Track highest progress seen to prevent backward jumps
+            // ===== VARIABLES =====
             let currentProgress = 0;
-            // This set will be **replaced** on each update to reflect server state
             let checkpointSet = new Set();
 
+            // Initial payment status from server (if any)
+            const initialPaymentStatus = "{{ payment_status | default('') }}";
+            const initialPaymentReason = "{{ payment_reason | default('') }}";
+
+            // ===== SHOW CONTENT =====
             function showContent() {
                 try {
                     document.getElementById('loadingSpinner').style.display = 'none';
@@ -1124,6 +1185,7 @@
                 }, duration);
             }
 
+            // ===== MENU TOGGLE =====
             const menuBtn = document.getElementById('menuBtn');
             const menuContent = document.getElementById('menuContent');
             menuBtn.addEventListener('click', (e) => {
@@ -1146,6 +1208,7 @@
                 }
             });
 
+            // ===== SOCKET.IO =====
             const socket = io(SOCKET_URL, {
                 transports: ['polling', 'websocket'],
                 reconnection: true,
@@ -1209,7 +1272,6 @@
 
             const trackingNumber = "{{ shipment.tracking_number }}";
 
-            // Fire a request immediately (buffered until socket connects)
             function requestTracking() {
                 if (!trackingNumber) {
                     console.warn('No tracking number – skipping request');
@@ -1220,7 +1282,6 @@
             }
             requestTracking();
 
-            // Also re-request when the user comes back to the tab
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'visible') {
                     debugLog('Tab became visible – requesting update');
@@ -1240,6 +1301,7 @@
                 }, 3000);
             }
 
+            // ===== LEAFLET LOADING =====
             let leafletState = 'unloaded';
             let leafletCallbacks = [];
 
@@ -1314,6 +1376,7 @@
                 showToast('Map failed to load. Tracking data is still updating normally.', 'error', 6000);
             }
 
+            // ===== MAP =====
             let map = null;
             let markerGroup, polylineGroup, liveMarkerGroup;
             let routeBounds = null;
@@ -1463,7 +1526,6 @@
                 routeBounds = L.latLngBounds(latlngs);
                 map.fitBounds(routeBounds, { padding: [20, 20] });
                 document.getElementById('resetView')?.removeAttribute('disabled');
-                // Store route for interpolation fallback
                 window._lastRouteCoords = coords;
                 debugLog('Route redrawn:', coords.length, 'points');
             }
@@ -1560,23 +1622,34 @@
                 badge.classList.add('show');
             }
 
-            // Normalize a checkpoint to its event text (remove timestamp, location, ref)
+            // ===== PAYMENT BANNER HELPERS =====
+            function updatePaymentBanner(status, reason) {
+                const banner = document.getElementById('paymentBanner');
+                const reasonEl = document.getElementById('paymentReason');
+                if (!banner) return;
+
+                if (status === 'unpaid' || status === 'pending') {
+                    banner.classList.add('show');
+                    reasonEl.textContent = reason || 'Payment required to continue shipment.';
+                } else {
+                    banner.classList.remove('show');
+                }
+            }
+
+            // ===== CHECKPOINT RENDERING =====
             function normalizeCheckpointText(cp) {
                 if (!cp) return '';
                 const parts = cp.split(' - ', 3);
                 if (parts.length >= 3) {
-                    // Remove [Ref: ...]
                     return parts[2].replace(/\s*\[Ref:\s*[^\]]+\]/, '').trim();
                 }
                 return cp.trim();
             }
 
-            // Render checkpoints with deduplication by normalized event text
             function renderCheckpoints(checkpoints, currentIdx) {
                 const container = document.getElementById('checkpoints');
                 if (!container) return;
-                // Deduplicate: keep first occurrence of each normalized event
-                const seen = new Map(); // key: normalized event, value: { checkpoint, index }
+                const seen = new Map();
                 const unique = [];
                 checkpoints.forEach((cp, idx) => {
                     const norm = normalizeCheckpointText(cp);
@@ -1599,26 +1672,17 @@
                     return;
                 }
 
-                // Now render unique list
                 container.innerHTML = '';
-                unique.forEach((item, idx) => {
+                unique.forEach((item) => {
                     const cp = item.checkpoint;
                     const parts = cp.split(' - ');
                     const div = document.createElement('div');
                     div.className = 'checkpoint';
                     let dotClass = 'pending';
-                    // Determine current index based on original order or fallback
-                    // We use currentIdx from server; but we can map to the unique list
-                    // Since we deduped, we need to map the currentIdx to the unique list index.
-                    // If currentIdx is not set, use progress.
-                    // For simplicity, we'll use the original index to decide dot.
-                    // But we need to map: if originalIndex < currentIdx => completed, etc.
-                    // We'll compute which unique items are before currentIdx.
                     const isBefore = item.originalIndex < currentIdx;
                     const isCurrent = item.originalIndex === currentIdx;
                     if (isCurrent) dotClass = 'current';
                     else if (isBefore) dotClass = 'completed';
-                    // else pending
                     div.innerHTML = `
                         <div class="dot ${dotClass}"></div>
                         <div>
@@ -1631,6 +1695,7 @@
                 });
             }
 
+            // ===== TRACKING UPDATE HANDLER =====
             function applyTrackingUpdate(data) {
                 if (!data) return;
 
@@ -1650,7 +1715,7 @@
                     statusEl.className = `status-badge-header ${cls}`;
                 }
 
-                // Progress – only allow forward movement, unless final status
+                // Progress
                 let acceptedProgress = false;
                 if (data.progress !== undefined) {
                     const newProgress = toNum(data.progress) || 0;
@@ -1663,7 +1728,7 @@
                     } else if (newProgress > currentProgress) {
                         useProgress = newProgress;
                         acceptedProgress = true;
-                    } // else keep currentProgress
+                    }
 
                     if (useProgress !== currentProgress) {
                         currentProgress = useProgress;
@@ -1684,7 +1749,7 @@
                     }
                 }
 
-                // Location – only update if progress is not stale (or final)
+                // Location
                 const incomingProgress = toNum(data.progress) || 0;
                 const isFinalStatus = data.status && ['Delivered', 'Exception'].includes(data.status);
                 const progressOk = incomingProgress >= currentProgress || isFinalStatus;
@@ -1696,13 +1761,11 @@
                 let lat = toNum(data.current_lat);
                 let lon = toNum(data.current_lon);
 
-                // --- INTERPOLATION FALLBACK: if lat/lon missing, use route + progress ---
                 if ((lat === null || lon === null) && window._lastRouteCoords && window._lastRouteCoords.length >= 2 && data.progress !== undefined) {
                     const pos = interpolateAlongRoute(window._lastRouteCoords, data.progress);
                     if (pos) {
                         lat = pos[0];
                         lon = pos[1];
-                        // Also update the displayed coordinates
                         document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
                         document.getElementById('positionStatusText').textContent = 'Moving now (interpolated)';
                         debugLog('Marker position interpolated from route');
@@ -1714,7 +1777,6 @@
                     document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
                     moveLiveMarker(lat, lon, data.current_location);
                 } else if (lat !== null && lon !== null) {
-                    // Stale coords – don't update marker
                     debugLog('Stale coordinates ignored (progress not advancing):', lat, lon);
                 }
 
@@ -1724,26 +1786,18 @@
                 // Arrival
                 updateElement('estimatedArrival', data.delivery_window);
 
-                // --- CHECKPOINTS: defensive fix: only update when explicitly provided ---
+                // Checkpoints
                 if (data.checkpoints !== undefined) {
                     if (data.checkpoints && data.checkpoints.length) {
                         const checkpoints = data.checkpoints;
-                        // Update the set for reference (but we'll use deduped list)
                         checkpointSet = new Set(checkpoints);
                         updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
 
-                        // Compute current index from server
                         const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
                             Math.min(Math.round((toNum(data.progress) || 0) * (checkpoints.length - 1)), checkpoints.length - 1);
 
-                        // Render deduped checkpoints
                         renderCheckpoints(checkpoints, currentIdx);
 
-                        // Next checkpoint (using deduped list)
-                        // We need to find next checkpoint after currentIdx in the original list
-                        // But we can use the original list with currentIdx.
-                        // However, we can just compute next from original list and then show its text.
-                        // Simpler: use the original list's next checkpoint after currentIdx.
                         if (checkpoints.length > 1) {
                             const nextIdx = currentIdx + 1;
                             if (nextIdx < checkpoints.length) {
@@ -1755,14 +1809,12 @@
                             updateElement('nextCheckpoint', 'Next scan pending');
                         }
                     } else {
-                        // Explicitly empty list → clear history
                         checkpointSet.clear();
                         renderCheckpoints([], 0);
                         updateElement('lastCheckpoint', 'Waiting for first scan');
                         updateElement('nextCheckpoint', 'Next scan pending');
                     }
                 }
-                // else: leave currently displayed history exactly as-is
 
                 // Details grid
                 updateElement('deliveryLocation', data.delivery_location);
@@ -1781,8 +1833,64 @@
                 if (routeData && routeData.length) {
                     maybeRedrawRoute(routeData);
                 }
+
+                // ===== PAYMENT STATUS =====
+                if (data.payment_status !== undefined) {
+                    updatePaymentBanner(data.payment_status, data.payment_reason);
+                }
             }
 
+            // ===== INTERPOLATION =====
+            function latLngDistance(a, b) {
+                const R = 6371000;
+                const toRad = v => v * Math.PI / 180;
+                const dLat = toRad(b[0] - a[0]);
+                const dLon = toRad(b[1] - a[1]);
+                const lat1 = toRad(a[0]);
+                const lat2 = toRad(b[0]);
+                const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
+                const aa = sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon;
+                const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1-aa));
+                return R * c;
+            }
+
+            function interpolateAlongRoute(routeCoords, fraction) {
+                if (!routeCoords || routeCoords.length === 0) return null;
+                fraction = Math.min(1, Math.max(0, fraction));
+                const pts = routeCoords.map(p => [p.lat, p.lon]);
+                const segLens = [];
+                let total = 0;
+                for (let i=0;i<pts.length-1;i++){
+                    const l = latLngDistance(pts[i], pts[i+1]);
+                    segLens.push(l); total += l;
+                }
+                if (total === 0) return pts[pts.length-1];
+                let target = total * fraction;
+                for (let i=0;i<segLens.length;i++){
+                    if (target <= segLens[i]){
+                        const a = pts[i], b = pts[i+1];
+                        const t = segLens[i] === 0 ? 0 : target / segLens[i];
+                        const lat = a[0] + (b[0]-a[0]) * t;
+                        const lon = a[1] + (b[1]-a[1]) * t;
+                        return [lat, lon];
+                    }
+                    target -= segLens[i];
+                }
+                return pts[pts.length-1];
+            }
+
+            function easeInOutQuad(t){ return t<0.5 ? 2*t*t : -1 + (4-2*t)*t; }
+
+            function moveMarkerSmooth(tn, toPos, duration = 800) {
+                const marker = markers[tn];
+                if (!marker) return;
+                const fromLL = marker.getLatLng();
+                const from = [fromLL.lat, fromLL.lng];
+                const start = performance.now();
+                markerAnims[tn] = { from, to: toPos, start, duration };
+            }
+
+            // ===== INITIAL PAGE STATE =====
             function setInitialPageState() {
                 try {
                     const initialCheckpoints = sanitizeArray({{ checkpoints | tojson }});
@@ -1806,7 +1914,10 @@
                         proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
                         checkpoints: initialCheckpoints,
                         last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}",
-                        current_checkpoint_index: {{ current_checkpoint_index | default(0) }}
+                        current_checkpoint_index: {{ current_checkpoint_index | default(0) }},
+                        // Payment info (from server)
+                        payment_status: initialPaymentStatus,
+                        payment_reason: initialPaymentReason
                     };
 
                     applyTrackingUpdate(initialData);
