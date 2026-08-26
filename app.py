@@ -682,6 +682,8 @@ def init_db():
                     ("invoice_amount", "ALTER TABLE shipments ADD COLUMN invoice_amount REAL;"),
                     ("payment_method", "ALTER TABLE shipments ADD COLUMN payment_method VARCHAR(50);"),
                     ("payment_status", "ALTER TABLE shipments ADD COLUMN payment_status VARCHAR(20) DEFAULT 'unpaid';"),
+                    # payment reason (for payment wall)
+                    ("payment_reason", "ALTER TABLE shipments ADD COLUMN payment_reason TEXT;"),
                 ]
                 for col, stmt in alterations:
                     if col not in existing:
@@ -717,6 +719,7 @@ def init_db():
                     db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS invoice_amount REAL;"))
                     db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50);"))
                     db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'unpaid';"))
+                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS payment_reason TEXT;"))
                     db.session.commit()
                     flask_logger.info("DB initialized with new shipment fields")
                     return
@@ -1797,6 +1800,11 @@ def broadcast_update(tn):
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
     lock_stage = rget("lock_stage", tn, "false") == "true"
+
+    # Payment fields
+    payment_status = shipment.payment_status or 'unpaid'
+    payment_reason = shipment.payment_reason or ''
+
     try:
         coords = get_route_coords_for_shipment(shipment)
         route_coords = build_route_from_checkpoints(coords, mode='drive')
@@ -1841,7 +1849,9 @@ def broadcast_update(tn):
         "carrier": shipment.carrier,
         "stage": stage,
         "lock_stage": lock_stage,
-        "current_checkpoint_index": current_checkpoint_index
+        "current_checkpoint_index": current_checkpoint_index,
+        "payment_status": payment_status,
+        "payment_reason": payment_reason
     }
     try:
         socketio.emit('tracking_update', data, namespace='/')
@@ -2362,7 +2372,8 @@ def admin_dashboard():
                     'email_notifications': s.email_notifications,
                     # billing fields
                     'invoice_amount': s.invoice_amount,
-                    'payment_status': s.payment_status or 'unpaid'
+                    'payment_status': s.payment_status or 'unpaid',
+                    'payment_reason': s.payment_reason or ''
                 })
             except Exception as row_err:
                 flask_logger.error(f"Error processing shipment {s.tracking_number}: {row_err}")
@@ -2461,7 +2472,8 @@ def api_shipment_detail(tn):
         # billing fields
         'invoice_amount': shipment.invoice_amount,
         'payment_method': shipment.payment_method,
-        'payment_status': shipment.payment_status
+        'payment_status': shipment.payment_status,
+        'payment_reason': shipment.payment_reason
     })
 
 def purge_shipment_cache(tn):
@@ -2515,7 +2527,7 @@ def api_shipment_update(tn):
         'status', 'stage', 'service_level', 'delivery_window', 'proof_of_delivery',
         'recipient_email', 'delivery_location', 'paused', 'speed', 'days', 'email_notifications', 'checkpoints',
         'lock_stage',
-        'invoice_amount', 'payment_method', 'payment_status'   # added billing
+        'invoice_amount', 'payment_method', 'payment_status', 'payment_reason'
     }
     updated = {}
     try:
@@ -2610,6 +2622,44 @@ def api_delete_shipment(tn):
         db.session.rollback()
         flask_logger.exception('Failed to delete shipment %s: %s', tn, e)
         return jsonify({'error': 'Failed to delete shipment'}), 500
+
+# ====== PAYMENT WALL ADMIN ENDPOINTS ======
+@app.route('/admin/api/shipment/<tn>/block_payment', methods=['POST'])
+@admin_required
+def block_payment(tn):
+    data = request.get_json() or {}
+    amount = data.get('amount')
+    reason = data.get('reason', 'Payment required to continue shipment.')
+    if amount is None or amount <= 0:
+        return jsonify({'error': 'Valid invoice amount required'}), 400
+    shipment = Shipment.query.filter_by(tracking_number=tn).first()
+    if not shipment:
+        return jsonify({'error': 'Shipment not found'}), 404
+    shipment.invoice_amount = float(amount)
+    shipment.payment_reason = reason
+    shipment.payment_status = 'unpaid'
+    shipment.last_updated = datetime.now()
+    db.session.commit()
+    # Pause simulation
+    rset('paused_simulations', tn, 'true')
+    invalidate_cache(tn)
+    broadcast_update(tn)
+    return jsonify({'success': True, 'paused': True})
+
+@app.route('/admin/api/shipment/<tn>/mark_paid', methods=['POST'])
+@admin_required
+def mark_paid(tn):
+    shipment = Shipment.query.filter_by(tracking_number=tn).first()
+    if not shipment:
+        return jsonify({'error': 'Shipment not found'}), 404
+    shipment.payment_status = 'paid'
+    shipment.last_updated = datetime.now()
+    db.session.commit()
+    # Resume simulation
+    rset('paused_simulations', tn, 'false')
+    invalidate_cache(tn)
+    broadcast_update(tn)
+    return jsonify({'success': True, 'paused': False})
 
 @app.route('/admin/api/cities')
 @admin_required
@@ -3170,6 +3220,10 @@ def billing_pay():
             shipment.payment_status = 'paid'
             shipment.payment_method = payment_method
             db.session.commit()
+            # Resume simulation
+            rset('paused_simulations', tn, 'false')
+            invalidate_cache(tn)
+            broadcast_update(tn)
             success_count += 1
     return jsonify({'success': True, 'paid_count': success_count})
 
@@ -3273,7 +3327,9 @@ def on_request(data):
         'last_updated': last_updated,
         'speed_multiplier': speed, 'paused': paused, 'mode': mode, 'carrier': shipment.carrier,
         'stage': stage,
-        'current_checkpoint_index': current_checkpoint_index
+        'current_checkpoint_index': current_checkpoint_index,
+        'payment_status': shipment.payment_status or 'unpaid',
+        'payment_reason': shipment.payment_reason or ''
     })
 
 services_started = False
