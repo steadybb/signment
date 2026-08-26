@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DHL Express – My Invoices</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --dhl-red: #D40511;
+            --dhl-yellow: #FFCC00;
+            --dhl-dark: #1a1a1a;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background: #f3f6fa;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            color: var(--dhl-dark);
+        }
+
+        /* Header */
+        .billing-header {
+            background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%);
+            color: #fff;
+            padding: 1.25rem 1.5rem;
+            border-radius: 0 0 24px 24px;
+            box-shadow: 0 8px 30px rgba(212,5,17,0.2);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+        .billing-header .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .billing-header .brand img {
+            height: 38px;
+            filter: brightness(0) invert(1);
+        }
+        .billing-header .brand h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            margin: 0;
+        }
+        .billing-header .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.85rem;
+            flex-wrap: wrap;
+        }
+        .billing-header .user-info .email {
+            opacity: 0.9;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .billing-header .btn-outline-light {
+            border-color: rgba(255,255,255,0.35);
+            color: #fff;
+            font-size: 0.75rem;
+            padding: 0.3rem 0.9rem;
+            border-radius: 40px;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        .billing-header .btn-outline-light:hover {
+            background: rgba(255,255,255,0.15);
+            border-color: #fff;
+        }
+
+        /* Stats */
+        .stats-row {
+            margin-top: -0.75rem;
+            padding: 0 0.5rem;
+        }
+        .stat-card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 1.1rem 1.2rem 0.9rem;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+            border-left: 4px solid var(--dhl-red);
+            transition: transform 0.15s ease;
+            height: 100%;
+        }
+        .stat-card:hover { transform: translateY(-3px); }
+        .stat-card .stat-number {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--dhl-dark);
+            line-height: 1.2;
+        }
+        .stat-card .stat-label {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            font-weight: 600;
+            color: #6b7280;
+            letter-spacing: 0.5px;
+        }
+        .stat-card .stat-icon {
+            font-size: 1.6rem;
+            color: var(--dhl-red);
+            opacity: 0.6;
+        }
+        .stat-card.due { border-left-color: #dc2626; }
+        .stat-card.due .stat-number { color: #dc2626; }
+        .stat-card.due .stat-icon { color: #dc2626; }
+        .stat-card.paid { border-left-color: #22c55e; }
+        .stat-card.paid .stat-number { color: #16a34a; }
+        .stat-card.paid .stat-icon { color: #22c55e; }
+
+        /* Invoice Card */
+        .invoice-card {
+            background: #fff;
+            border-radius: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+            overflow: hidden;
+            margin-top: 1.5rem;
+        }
+        .invoice-card .card-header {
+            background: transparent;
+            border: none;
+            padding: 1.25rem 1.5rem 0.5rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .invoice-card .card-header h5 {
+            font-weight: 700;
+            font-size: 1.05rem;
+            color: var(--dhl-dark);
+            margin: 0;
+        }
+        .invoice-card .card-header .actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .payment-method-select {
+            font-size: 0.8rem;
+            padding: 0.35rem 0.8rem;
+            border-radius: 40px;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            min-width: 150px;
+        }
+        .payment-method-select:focus {
+            border-color: var(--dhl-red);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(212,5,17,0.1);
+        }
+
+        .btn-pay {
+            background: var(--dhl-red);
+            color: #fff;
+            border: none;
+            padding: 0.4rem 1.2rem;
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+        .btn-pay:hover:not(:disabled) {
+            background: #b0040e;
+            transform: scale(1.02);
+        }
+        .btn-pay:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-pay.outline {
+            background: transparent;
+            color: var(--dhl-red);
+            border: 1px solid var(--dhl-red);
+        }
+        .btn-pay.outline:hover:not(:disabled) {
+            background: var(--dhl-red);
+            color: #fff;
+        }
+
+        /* Table */
+        .invoice-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .invoice-table th {
+            background: #f8fafc;
+            color: #4a5568;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+            padding: 0.75rem 0.75rem;
+            border-bottom: 2px solid #e2e8f0;
+            white-space: nowrap;
+        }
+        .invoice-table td {
+            padding: 0.7rem 0.75rem;
+            vertical-align: middle;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .invoice-table tr:last-child td { border-bottom: none; }
+        .invoice-table tr:hover { background: #fafbfc; }
+
+        .checkbox-custom {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--dhl-red);
+            cursor: pointer;
+        }
+
+        .status-badge {
+            padding: 0.2rem 0.7rem;
+            border-radius: 30px;
+            font-weight: 600;
+            font-size: 0.7rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            white-space: nowrap;
+        }
+        .status-badge.paid { background: #dcfce7; color: #16a34a; }
+        .status-badge.unpaid { background: #fef3c7; color: #92400e; }
+        .status-badge.pending { background: #fef9c3; color: #854d0e; }
+        .status-badge.failed { background: #fee2e2; color: #dc2626; }
+
+        .invoice-mobile-card {
+            display: none;
+            background: #fff;
+            border-radius: 14px;
+            padding: 1rem 1.2rem;
+            margin-bottom: 0.75rem;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+            border: 1px solid #f0f0f0;
+        }
+        .invoice-mobile-card .row-line {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+            font-size: 0.8rem;
+        }
+        .invoice-mobile-card .row-line .label {
+            color: #6b7280;
+            font-weight: 500;
+        }
+        .invoice-mobile-card .row-line .value {
+            font-weight: 600;
+            color: var(--dhl-dark);
+        }
+        .invoice-mobile-card .actions {
+            margin-top: 0.6rem;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            border-top: 1px solid #f0f0f0;
+            padding-top: 0.6rem;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem 1rem 1rem;
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+        .footer a {
+            color: var(--dhl-red);
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .footer a:hover { text-decoration: underline; }
+
+        /* Responsive */
+        @media (max-width: 992px) {
+            .invoice-table th:nth-child(4),
+            .invoice-table td:nth-child(4) { display: none; } /* Origin */
+        }
+
+        @media (max-width: 768px) {
+            .billing-header .brand h1 { font-size: 1rem; }
+            .billing-header .user-info .email { max-width: 120px; }
+
+            .stat-card { padding: 0.8rem 1rem 0.6rem; }
+            .stat-card .stat-number { font-size: 1.3rem; }
+            .stat-card .stat-icon { font-size: 1.3rem; }
+
+            .invoice-table th:nth-child(5),
+            .invoice-table td:nth-child(5),
+            .invoice-table th:nth-child(6),
+            .invoice-table td:nth-child(6) { display: none; } /* Service, Distance */
+        }
+
+        @media (max-width: 576px) {
+            .invoice-table-wrapper { display: none; }
+            .invoice-mobile-card { display: block; }
+
+            .billing-header { padding: 0.75rem 1rem; border-radius: 0 0 18px 18px; }
+            .billing-header .brand img { height: 28px; }
+            .billing-header .brand h1 { font-size: 0.9rem; }
+            .billing-header .user-info .email { max-width: 80px; font-size: 0.7rem; }
+            .billing-header .btn-outline-light { font-size: 0.65rem; padding: 0.2rem 0.6rem; }
+
+            .stat-card { padding: 0.6rem 0.8rem 0.4rem; border-left-width: 3px; }
+            .stat-card .stat-number { font-size: 1.1rem; }
+            .stat-card .stat-label { font-size: 0.55rem; }
+            .stat-card .stat-icon { font-size: 1.1rem; }
+
+            .invoice-card .card-header { padding: 0.75rem 1rem; }
+            .invoice-card .card-header h5 { font-size: 0.9rem; }
+            .invoice-card .card-header .actions { width: 100%; justify-content: stretch; }
+            .payment-method-select { flex: 1; min-width: 0; }
+            #paySelectedBtn { flex: 1; justify-content: center; }
+        }
+
+        @media (max-width: 400px) {
+            .billing-header .user-info .email { max-width: 60px; }
+            .stat-card .stat-number { font-size: 0.95rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid px-2 px-sm-3 px-md-4 py-2 py-md-3">
+
+        <!-- HEADER -->
+        <header class="billing-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="brand">
+                <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL">
+                <h1>My Invoices</h1>
+            </div>
+            <div class="user-info">
+                <span class="email"><i class="bi bi-person-circle me-1"></i> {{ email }}</span>
+                <a href="{{ url_for('billing') }}" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-arrow-left me-1"></i> Change
+                </a>
+            </div>
+        </header>
+
+        <!-- STATS -->
+        <div class="row g-2 g-sm-3 stats-row">
+            <div class="col-4">
+                <div class="stat-card">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-number">{{ invoices|length }}</div>
+                            <div class="stat-label">Total</div>
+                        </div>
+                        <div class="stat-icon"><i class="bi bi-receipt"></i></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="stat-card due">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-number">${{ "%.0f"|format(total_due) }}</div>
+                            <div class="stat-label">Due</div>
+                        </div>
+                        <div class="stat-icon"><i class="bi bi-exclamation-triangle"></i></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="stat-card paid">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-number">{{ invoices|selectattr('shipment.payment_status', 'equalto', 'paid')|list|length }}</div>
+                            <div class="stat-label">Paid</div>
+                        </div>
+                        <div class="stat-icon"><i class="bi bi-check-circle"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- INVOICE LIST -->
+        <div class="invoice-card">
+            <div class="card-header">
+                <h5><i class="bi bi-list-ul me-2 text-danger"></i>Your Shipments</h5>
+                <div class="actions">
+                    <select class="payment-method-select" id="paymentMethodSelect">
+                        <option value="Credit Card">💳 Credit Card</option>
+                        <option value="Bank Transfer">🏦 Bank Transfer</option>
+                        <option value="PayPal">📱 PayPal</option>
+                        <option value="Cash">💵 Cash</option>
+                    </select>
+                    <button class="btn-pay" id="paySelectedBtn" disabled onclick="paySelected()">
+                        <i class="bi bi-credit-card me-1"></i> Pay Selected
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+
+                <!-- DESKTOP TABLE -->
+                <div class="invoice-table-wrapper table-responsive">
+                    <table class="invoice-table">
+                        <thead>
+                            <tr>
+                                <th style="width:30px;"><input type="checkbox" id="selectAll" class="checkbox-custom"></th>
+                                <th class="d-none d-sm-table-cell">Invoice</th>
+                                <th>Tracking</th>
+                                <th class="d-none d-lg-table-cell">Origin</th>
+                                <th>Destination</th>
+                                <th class="d-none d-md-table-cell">Service</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for inv in invoices %}
+                            <tr data-paid="{{ inv.shipment.payment_status == 'paid' }}">
+                                <td><input type="checkbox" class="invoice-select checkbox-custom" value="{{ inv.shipment.tracking_number }}" {% if inv.shipment.payment_status == 'paid' %}disabled{% endif %}></td>
+                                <td class="d-none d-sm-table-cell"><code style="font-size:0.7rem;">INV-{{ loop.index }}</code></td>
+                                <td><code style="font-size:0.7rem;">{{ inv.shipment.tracking_number }}</code></td>
+                                <td class="d-none d-lg-table-cell">{{ inv.shipment.origin_location or 'N/A' }}</td>
+                                <td>{{ inv.shipment.delivery_location }}</td>
+                                <td class="d-none d-md-table-cell"><span class="badge bg-light text-dark">{{ inv.service_level }}</span></td>
+                                <td><strong>${{ "%.2f"|format(inv.cost) }}</strong></td>
+                                <td>
+                                    <span class="status-badge {{ inv.shipment.payment_status }}">
+                                        <i class="bi {{ 'bi-check-circle' if inv.shipment.payment_status == 'paid' else 'bi-clock' if inv.shipment.payment_status == 'pending' else 'bi-exclamation-triangle' if inv.shipment.payment_status == 'failed' else 'bi-clock' }} me-1"></i>
+                                        {{ inv.shipment.payment_status|title }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if inv.shipment.payment_status != 'paid' %}
+                                    <button class="btn-pay" onclick="paySingle('{{ inv.shipment.tracking_number }}')">
+                                        <i class="bi bi-credit-card me-1"></i> Pay
+                                    </button>
+                                    {% else %}
+                                    <span class="text-muted" style="font-size:0.7rem;">Paid</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="9" class="text-center py-4 text-muted">No shipments found for this email.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- MOBILE CARDS -->
+                <div class="px-3 py-2">
+                    {% for inv in invoices %}
+                    <div class="invoice-mobile-card">
+                        <div class="row-line">
+                            <span class="label">Tracking</span>
+                            <span class="value"><code>{{ inv.shipment.tracking_number }}</code></span>
+                        </div>
+                        <div class="row-line">
+                            <span class="label">Destination</span>
+                            <span class="value">{{ inv.shipment.delivery_location }}</span>
+                        </div>
+                        <div class="row-line">
+                            <span class="label">Service</span>
+                            <span class="value">{{ inv.service_level }}</span>
+                        </div>
+                        <div class="row-line">
+                            <span class="label">Amount</span>
+                            <span class="value"><strong>${{ "%.2f"|format(inv.cost) }}</strong></span>
+                        </div>
+                        <div class="row-line">
+                            <span class="label">Status</span>
+                            <span class="value">
+                                <span class="status-badge {{ inv.shipment.payment_status }}">
+                                    <i class="bi {{ 'bi-check-circle' if inv.shipment.payment_status == 'paid' else 'bi-clock' if inv.shipment.payment_status == 'pending' else 'bi-exclamation-triangle' if inv.shipment.payment_status == 'failed' else 'bi-clock' }} me-1"></i>
+                                    {{ inv.shipment.payment_status|title }}
+                                </span>
+                            </span>
+                        </div>
+                        <div class="row-line" style="margin-top:4px;">
+                            <span class="label">Select</span>
+                            <span><input type="checkbox" class="invoice-select checkbox-custom" value="{{ inv.shipment.tracking_number }}" {% if inv.shipment.payment_status == 'paid' %}disabled{% endif %}></span>
+                        </div>
+                        <div class="actions">
+                            {% if inv.shipment.payment_status != 'paid' %}
+                            <button class="btn-pay w-100" onclick="paySingle('{{ inv.shipment.tracking_number }}')">
+                                <i class="bi bi-credit-card me-1"></i> Pay Now
+                            </button>
+                            {% else %}
+                            <span class="text-muted w-100 text-center">Paid</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4 text-muted">No shipments found for this email.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <small>Questions? <a href="#" class="text-decoration-none">Contact DHL Express Support</a></small>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const selectAll = document.getElementById('selectAll');
+            const checkboxes = document.querySelectorAll('.invoice-select');
+            const payBtn = document.getElementById('paySelectedBtn');
+
+            function updatePayButton() {
+                const checked = document.querySelectorAll('.invoice-select:checked');
+                payBtn.disabled = checked.length === 0;
+            }
+
+            if (selectAll) {
+                selectAll.addEventListener('change', function() {
+                    checkboxes.forEach(cb => {
+                        if (!cb.disabled) cb.checked = this.checked;
+                    });
+                    updatePayButton();
+                });
+            }
+
+            checkboxes.forEach(cb => {
+                cb.addEventListener('change', updatePayButton);
+            });
+
+            updatePayButton();
+        });
+
+        function getSelectedTrackingNumbers() {
+            const checked = document.querySelectorAll('.invoice-select:checked');
+            return Array.from(checked).map(cb => cb.value);
+        }
+
+        function paySelected() {
+            const trackingNumbers = getSelectedTrackingNumbers();
+            if (!trackingNumbers.length) return;
+            const email = "{{ email }}";
+            const totalDue = {{ total_due }};
+            const paymentMethod = document.getElementById('paymentMethodSelect').value;
+            if (!confirm(`Pay for ${trackingNumbers.length} invoice(s) totaling $${totalDue.toFixed(2)} using ${paymentMethod}?`)) return;
+            processPayment(email, trackingNumbers, paymentMethod);
+        }
+
+        function paySingle(trackingNumber) {
+            const email = "{{ email }}";
+            const paymentMethod = document.getElementById('paymentMethodSelect').value;
+            if (!confirm(`Pay invoice for shipment ${trackingNumber} using ${paymentMethod}?`)) return;
+            processPayment(email, [trackingNumber], paymentMethod);
+        }
+
+        function processPayment(email, trackingNumbers, paymentMethod) {
+            const payBtn = document.querySelector('#paySelectedBtn') || event.target;
+            payBtn.disabled = true;
+            payBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
+
+            fetch('{{ url_for("billing_pay") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, tracking_numbers: trackingNumbers, payment_method: paymentMethod })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Payment successful! ${data.paid_count} invoice(s) marked as paid.`);
+                    location.reload();
+                } else {
+                    alert('Payment failed: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('Error processing payment: ' + err.message);
+            })
+            .finally(() => {
+                payBtn.disabled = false;
+                payBtn.innerHTML = '<i class="bi bi-credit-card me-1"></i> Pay Selected';
+            });
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
