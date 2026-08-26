@@ -300,6 +300,8 @@ class RunnerHooks:
     sleep: Callable[[float], None]
     now: Callable[[], datetime] = field(default_factory=lambda: datetime.now)
     generate_pod: Callable[[], str] = field(default=lambda: "SIGNATURE ON FILE")
+    # NEW: hook to refresh the concurrency lock, prevents TTL expiry
+    refresh_lock: Callable[[], bool] = field(default=lambda: True)
 
 
 class SimulationRunner:
@@ -307,6 +309,7 @@ class SimulationRunner:
     MIN_TICK_SECONDS = 3
     MAX_TICK_SECONDS = 90
     CHECKPOINT_MIN_GAP = timedelta(minutes=2)
+    LOCK_REFRESH_INTERVAL_SECONDS = 300  # 5 minutes
 
     def __init__(self, tracking_number: str, hooks: RunnerHooks, sim_days_cap: float = 10.0):
         self.tn = tracking_number
@@ -366,6 +369,16 @@ class SimulationRunner:
         # Remove any empty strings
         checkpoints = [c for c in checkpoints if c]
 
+        # --- Resume from persisted progress ---
+        try:
+            persisted_progress = float(self.hooks.get_flag("progress", "0.0") or "0.0")
+        except Exception:
+            persisted_progress = 0.0
+        persisted_progress = max(0.0, min(1.0, persisted_progress))
+        total_seconds = plan.total_duration.total_seconds() or 1.0
+        start_elapsed = timedelta(seconds=persisted_progress * total_seconds)
+        # ---
+
         current_status = shipment.status
         delivery_attempts = 0
         stage = Stage.PICKUP
@@ -382,6 +395,9 @@ class SimulationRunner:
                 pickup_request_logged = True
             if "Package collected" in norm or "Picked up" in norm:
                 pickup_complete_logged = True
+
+        # Track when we last refreshed the Redis lock
+        last_lock_refresh = start_time
 
         while self.hooks.now() < deadline:
             live = self.hooks.get_live_shipment()
@@ -406,13 +422,18 @@ class SimulationRunner:
                 self.hooks.sleep(10)
                 continue
 
+            # --- Refresh the Redis lock periodically ---
+            now = self.hooks.now()
+            if (now - last_lock_refresh).total_seconds() >= self.LOCK_REFRESH_INTERVAL_SECONDS:
+                self.hooks.refresh_lock()
+                last_lock_refresh = now
+
             speed_multiplier = self._read_speed_multiplier()
-            elapsed_wall = self.hooks.now() - start_time
-            elapsed_sim = elapsed_wall * speed_multiplier
+            elapsed_wall = now - start_time
+            elapsed_sim = start_elapsed + (elapsed_wall * speed_multiplier)
 
             leg, frac, in_customs = plan.locate(elapsed_sim)
             progress = plan.progress_fraction(elapsed_sim)
-            now = self.hooks.now()
 
             # --- pickup stage ---
             if leg is plan.legs[0] and elapsed_sim < plan.pickup_pad:
