@@ -497,8 +497,17 @@ class Shipment(db.Model):
     webhook_url = db.Column(db.Text, nullable=True)
     email_notifications = db.Column(db.Boolean, default=True)
     carrier = db.Column(db.String(20), default="DHL")
-    # ✅ NEW: photo_url column for parcel image
     photo_url = db.Column(db.String(255), nullable=True)
+
+    # ========== NEW FIELDS ==========
+    sender_name = db.Column(db.String(100), nullable=True)
+    sender_location = db.Column(db.String(200), nullable=True)
+    receiver_name = db.Column(db.String(100), nullable=True)
+    receiver_address = db.Column(db.String(200), nullable=True)
+    receiver_phone = db.Column(db.String(30), nullable=True)
+    receiver_email = db.Column(db.String(120), nullable=True)
+    weight_kg = db.Column(db.Float, nullable=True)
+    shipment_date = db.Column(db.DateTime, nullable=True)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -518,7 +527,16 @@ class Shipment(db.Model):
             'email_notifications': self.email_notifications,
             'carrier': self.carrier,
             'checkpoints': (self.checkpoints or "").split(";") if self.checkpoints else [],
-            'photo_url': self.photo_url,   # ✅ added
+            'photo_url': self.photo_url,
+            # New fields
+            'sender_name': self.sender_name,
+            'sender_location': self.sender_location,
+            'receiver_name': self.receiver_name,
+            'receiver_address': self.receiver_address,
+            'receiver_phone': self.receiver_phone,
+            'receiver_email': self.receiver_email,
+            'weight_kg': self.weight_kg,
+            'shipment_date': self.shipment_date.isoformat() if self.shipment_date else None
         }
 
 # === REDIS HELPERS ===
@@ -731,7 +749,11 @@ def get_shipment_details(tracking_number: str) -> Optional[Dict[str, Any]]:
 
 def save_shipment(tracking_number: str, status: str, checkpoints: str = '', delivery_location: Optional[str] = None,
                   recipient_email: Optional[str] = None, origin_location: Optional[str] = None,
-                  webhook_url: Optional[str] = None, carrier: str = "DHL") -> bool:
+                  webhook_url: Optional[str] = None, carrier: str = "DHL",
+                  sender_name: Optional[str] = None, sender_location: Optional[str] = None,
+                  receiver_name: Optional[str] = None, receiver_address: Optional[str] = None,
+                  receiver_phone: Optional[str] = None, receiver_email: Optional[str] = None,
+                  weight_kg: Optional[float] = None, shipment_date: Optional[datetime] = None) -> bool:
     try:
         shipment = Shipment(
             tracking_number=tracking_number,
@@ -742,7 +764,15 @@ def save_shipment(tracking_number: str, status: str, checkpoints: str = '', deli
             origin_location=origin_location or "Lagos, NG",
             webhook_url=webhook_url,
             email_notifications=True,
-            carrier=carrier
+            carrier=carrier,
+            sender_name=sender_name,
+            sender_location=sender_location,
+            receiver_name=receiver_name,
+            receiver_address=receiver_address,
+            receiver_phone=receiver_phone,
+            receiver_email=receiver_email,
+            weight_kg=weight_kg,
+            shipment_date=shipment_date
         )
         db.session.add(shipment)
         db.session.commit()
@@ -767,7 +797,11 @@ def save_shipment(tracking_number: str, status: str, checkpoints: str = '', deli
 
 def update_shipment(tracking_number: str, status: Optional[str] = None, delivery_location: Optional[str] = None,
                     recipient_email: Optional[str] = None, origin_location: Optional[str] = None,
-                    webhook_url: Optional[str] = None, carrier: Optional[str] = None) -> bool:
+                    webhook_url: Optional[str] = None, carrier: Optional[str] = None,
+                    sender_name: Optional[str] = None, sender_location: Optional[str] = None,
+                    receiver_name: Optional[str] = None, receiver_address: Optional[str] = None,
+                    receiver_phone: Optional[str] = None, receiver_email: Optional[str] = None,
+                    weight_kg: Optional[float] = None, shipment_date: Optional[datetime] = None) -> bool:
     try:
         shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
         if not shipment:
@@ -784,6 +818,22 @@ def update_shipment(tracking_number: str, status: Optional[str] = None, delivery
             shipment.webhook_url = webhook_url
         if carrier:
             shipment.carrier = carrier
+        if sender_name is not None:
+            shipment.sender_name = sender_name
+        if sender_location is not None:
+            shipment.sender_location = sender_location
+        if receiver_name is not None:
+            shipment.receiver_name = receiver_name
+        if receiver_address is not None:
+            shipment.receiver_address = receiver_address
+        if receiver_phone is not None:
+            shipment.receiver_phone = receiver_phone
+        if receiver_email is not None:
+            shipment.receiver_email = receiver_email
+        if weight_kg is not None:
+            shipment.weight_kg = weight_kg
+        if shipment_date is not None:
+            shipment.shipment_date = shipment_date
         shipment.last_updated = datetime.utcnow()
         db.session.commit()
         try:
