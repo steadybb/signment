@@ -548,30 +548,60 @@
       #map { height: 180px; }
     }
 
-    body.compact-stats .stat-card,
+    /* Compact stats – applied when body has class 'compact-stats' */
+    body.compact-stats .stat-card {
+      padding: 0.5rem !important;
+      border-radius: 10px !important;
+    }
+    body.compact-stats .stat-card h3 {
+      font-size: 0.9rem !important;
+      margin-bottom: 0.1rem;
+    }
+    body.compact-stats .stat-card .label {
+      display: none !important;
+    }
+    body.compact-stats .row.g-3 .col-md-3 {
+      flex: 0 0 50%;
+      max-width: 50%;
+    }
+    /* Also apply compact stats on small screens automatically */
     @media (max-width: 576px) {
       .stat-card {
         padding: 0.5rem !important;
         border-radius: 10px !important;
       }
-      .stat-card h3 { font-size: 0.9rem !important; margin-bottom: 0.1rem; }
-      .stat-card .label { display: none !important; }
-      .stat-card .icon { font-size: 1.1rem !important; opacity: 0.9; }
-      .stat-card .stat-change { font-size: 0.6rem; }
-      .stat-card::after { width: 50px; height: 50px; transform: translate(20%, -20%); }
-      .stat-card .icon, .stat-card h3 { display: inline-block; vertical-align: middle; }
-      .stat-card .icon { margin-left: 4px; }
-      .row.g-3 .col-md-3 { flex: 0 0 50%; max-width: 50%; }
+      .stat-card h3 {
+        font-size: 0.9rem !important;
+        margin-bottom: 0.1rem;
+      }
+      .stat-card .label {
+        display: none !important;
+      }
+      .stat-card .icon {
+        font-size: 1.1rem !important;
+        opacity: 0.9;
+      }
+      .stat-card .stat-change {
+        font-size: 0.6rem;
+      }
+      .stat-card::after {
+        width: 50px;
+        height: 50px;
+        transform: translate(20%, -20%);
+      }
+      .stat-card .icon, .stat-card h3 {
+        display: inline-block;
+        vertical-align: middle;
+      }
+      .stat-card .icon {
+        margin-left: 4px;
+      }
+      .row.g-3 .col-md-3 {
+        flex: 0 0 50%;
+        max-width: 50%;
+      }
     }
 
-    body.compact-stats .stat-card {
-      padding: 0.5rem !important;
-      border-radius: 10px !important;
-    }
-    body.compact-stats .stat-card h3 { font-size: 0.9rem !important; margin-bottom: 0.1rem; }
-    body.compact-stats .stat-card .label { display: none !important; }
-    body.compact-stats .row.g-3 .col-md-3 { flex: 0 0 50%; max-width: 50%; }
-    
     .truck-marker { 
       background: transparent; 
       border: none; 
@@ -867,7 +897,8 @@
                   </td>
                   <td>
                     <div class="d-flex align-items-center gap-1">
-                      <input type="range" class="speed-slider" min="1" max="50" 
+                      <!-- Speed slider: max 100 => 10.0x -->
+                      <input type="range" class="speed-slider" min="1" max="100" step="1"
                              value="{{ (s.speed[:-1]|float * 10)|int }}" 
                              onchange="updateSpeed('{{ s.tracking_number }}', this.value / 10)">
                       <span class="speed-value" style="font-family: monospace; font-weight:700; font-size:0.65rem; min-width: 25px;">{{ s.speed }}</span>
@@ -1320,6 +1351,24 @@
     }
     setInterval(updateClock, 1000);
     updateClock();
+
+    // ============================================================
+    // COMPACT STATS TOGGLE
+    // ============================================================
+    document.addEventListener('DOMContentLoaded', function() {
+      const toggle = document.getElementById('compactToggle');
+      if (toggle) {
+        toggle.addEventListener('click', function() {
+          document.body.classList.toggle('compact-stats');
+          const icon = this.querySelector('i');
+          if (document.body.classList.contains('compact-stats')) {
+            icon.className = 'bi bi-arrows-expand';
+          } else {
+            icon.className = 'bi bi-arrows-collapse';
+          }
+        });
+      }
+    });
 
     // ============================================================
     // MODALS
@@ -1901,17 +1950,18 @@
       if (data.tracking_number) {
         updateMap(data);
         updateTableRow(data);
-        updateStats(data);
+        // recompute stats from actual row states
+        calculateStats();
       }
     });
 
     function updateTableRow(data) {
       const row = document.querySelector(`tr[data-tn="${data.tracking_number}"]`);
       if (!row) return;
-
       const status = data.status || row.dataset.status;
       const paused = data.paused || false;
-
+      // Keep dataset.status in sync so calculateStats() stays accurate
+      row.dataset.status = status;
       const badge = row.querySelector('.status-badge');
       const statusIcons = {
         'Delivered': 'bi-check-circle',
@@ -1950,6 +2000,7 @@
         const cls = stageMap[data.stage] || 'pickup';
         stageEl.className = `stage-badge ${cls}`;
         stageEl.textContent = (data.stage || 'Pickup').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+        row.dataset.stage = data.stage;
       }
 
       if (data.progress !== undefined) {
@@ -1968,18 +2019,21 @@
       }
     }
 
-    function updateStats(data) {
-      const status = data.status;
-      const countMap = {
-        'In_Transit': 'in-transit-count',
-        'Out_for_Delivery': 'in-transit-count',
-        'Delivered': 'delivered-count',
-        'Exception': 'exception-count'
-      };
-      if (countMap[status]) {
-        const el = document.getElementById(countMap[status]);
-        el.textContent = parseInt(el.textContent) + 1;
-      }
+    // Recalculate stats from table rows (accurate and stable)
+    function calculateStats() {
+      const rows = document.querySelectorAll('#shipment-table tbody tr[data-tn]');
+      let inTransit = 0, delivered = 0, exceptions = 0;
+      
+      rows.forEach(row => {
+        const status = row.dataset.status;
+        if (status === 'In_Transit' || status === 'Out_for_Delivery') inTransit++;
+        else if (status === 'Delivered') delivered++;
+        else if (status === 'Exception') exceptions++;
+      });
+      
+      document.getElementById('in-transit-count').textContent = inTransit;
+      document.getElementById('delivered-count').textContent = delivered;
+      document.getElementById('exception-count').textContent = exceptions;
     }
 
     // ============================================================
@@ -2384,6 +2438,8 @@
               if (testSocket){
                 testSocket.on('connect', function(){ sendError({type:'socket_event', socket_status:'connected'}); try{testSocket.disconnect();}catch(e){} });
                 testSocket.on('connect_error', function(err){ sendError({type:'socket_event', socket_status:'connect_error', message: String(err)}); });
+                // Clean up if connect_error occurs (disconnect on error)
+                testSocket.on('connect_error', function(){ try{ testSocket.disconnect(); }catch(e){} });
               }
             }catch(err){ sendError({type:'socket_init_error', message: String(err)}); }
           }
