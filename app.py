@@ -3168,6 +3168,9 @@ def admin_geocoding_status():
         }
     })
 
+# ============================================================
+# CRITICAL FIX: Parse shipment_date from string to datetime
+# ============================================================
 def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
                            sender_name=None, sender_location=None,
                            receiver_name=None, receiver_address=None, receiver_phone=None,
@@ -3192,7 +3195,22 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         tracking_number = generate_dhl_tracking()
 
     now = datetime.now()
-    shipment_date = shipment_date or now
+    # --- FIX: Parse shipment_date if it's a string ---
+    if isinstance(shipment_date, str):
+        try:
+            # Try strict ISO format
+            shipment_date = datetime.fromisoformat(shipment_date.replace('Z', '+00:00'))
+        except ValueError:
+            try:
+                # Try format from HTML datetime-local (YYYY-MM-DDTHH:MM)
+                shipment_date = datetime.strptime(shipment_date, '%Y-%m-%dT%H:%M')
+            except ValueError:
+                # Fallback to current time
+                shipment_date = now
+    elif shipment_date is None:
+        shipment_date = now
+    # now shipment_date is a datetime object
+
     norm_origin, origin_coords = resolve_location(origin)
     norm_destination, dest_coords = resolve_location(destination)
 
@@ -3394,7 +3412,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         receiver_phone=receiver_phone,
         receiver_email=receiver_email or recipient_email,  # fallback
         weight_kg=weight_kg,
-        shipment_date=shipment_date
+        shipment_date=shipment_date  # now a datetime object
     )
 
     try:
@@ -3513,6 +3531,7 @@ def api_bulk_create():
         recipient_email = shipment_data.get('recipient_email')
         service_level = shipment_data.get('service_level', 'DHL Express')
 
+        # Note: bulk creation does not yet support extended fields; only core fields
         result, status_code = create_shipment_record(origin, destination, recipient_email, service_level)
         if result.get('success'):
             created.append(result['tracking_number'])
@@ -3526,6 +3545,10 @@ def api_bulk_create():
         'total_created': len(created),
         'total_errors': len(errors)
     }), 200
+
+# ============================================================
+# EMAIL HISTORY & NOTIFICATIONS (unchanged)
+# ============================================================
 
 @app.route('/admin/api/shipments/email-history/<tn>')
 @admin_required
