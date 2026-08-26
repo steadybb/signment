@@ -390,6 +390,19 @@
       color: #9ca3af;
     }
     
+    /* Billing badge */
+    .billing-badge {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .billing-badge.paid { background: #dcfce7; color: #16a34a; }
+    .billing-badge.unpaid { background: #fee2e2; color: #dc2626; }
+    .billing-badge.pending { background: #fef3c7; color: #92400e; }
+    .billing-badge.failed { background: #fef2f2; color: #b91c1c; }
+    
     /* ============================================================
        FIXED MOBILE RESPONSIVE
     ============================================================ */
@@ -431,7 +444,7 @@
         -webkit-overflow-scrolling: touch;
       }
       .table-responsive table {
-        min-width: 700px;
+        min-width: 800px;
       }
       .table td, .table th { 
         padding: 0.4rem;
@@ -490,7 +503,7 @@
         padding: 0.2rem 0.35rem; 
         font-size: 0.6rem;
       }
-      .table-responsive table { min-width: 600px; }
+      .table-responsive table { min-width: 700px; }
       
       .speed-slider { width: 50px; }
       .proof-signature { max-width: 80px; font-size: 0.55rem; }
@@ -514,10 +527,11 @@
       .modal-dialog { margin: 1rem; max-width: calc(100% - 2rem); }
       .modal-lg { max-width: 100%; }
       
-      .table-responsive table th:nth-child(4),
-      .table-responsive table td:nth-child(4),
+      /* hide some less important columns on very small screens */
       .table-responsive table th:nth-child(5),
-      .table-responsive table td:nth-child(5) {
+      .table-responsive table td:nth-child(5),
+      .table-responsive table th:nth-child(7),
+      .table-responsive table td:nth-child(7) {
         display: none !important;
       }
     }
@@ -540,7 +554,7 @@
         padding: 0.15rem 0.25rem; 
         font-size: 0.55rem;
       }
-      .table-responsive table { min-width: 500px; }
+      .table-responsive table { min-width: 600px; }
       
       .speed-slider { width: 40px; }
       .speed-value { font-size: 0.6rem !important; min-width: 20px !important; }
@@ -821,6 +835,7 @@
                 <th>Status</th>
                 <th>Stage</th>
                 <th>Service</th>
+                <th>Billing</th>
                 <th>Delivery Window</th>
                 <th>Proof of Delivery</th>
                 <th>Progress</th>
@@ -836,7 +851,9 @@
                     data-stage="{{ s.stage|default('pickup') }}"
                     data-delivered="{{ s.status == 'Delivered' }}"
                     data-exception="{{ s.status == 'Exception' }}"
-                    data-paused="{{ s.paused|default(false)|lower }}">
+                    data-paused="{{ s.paused|default(false)|lower }}"
+                    data-invoice-amount="{{ s.invoice_amount|default(0) }}"
+                    data-payment-status="{{ s.payment_status|default('unpaid') }}">
                   <td>
                     <code style="font-size:0.7rem; background:#f1f5f9; padding:2px 6px; border-radius:4px; white-space:nowrap;">
                       {{ s.tracking_number }}
@@ -868,6 +885,14 @@
                       {%- endif %}">
                       {{ s.service_level or 'DHL Express' }}
                     </span>
+                  </td>
+                  <td>
+                    <div style="font-size:0.7rem;">
+                      <div><strong>${{ "%.2f"|format(s.invoice_amount|default(0)) }}</strong></div>
+                      <span class="billing-badge {% if s.payment_status == 'paid' %}paid{% elif s.payment_status == 'pending' %}pending{% elif s.payment_status == 'failed' %}failed{% else %}unpaid{% endif %}">
+                        {{ (s.payment_status or 'unpaid')|title }}
+                      </span>
+                    </div>
                   </td>
                   <td>
                     <span class="delivery-window">
@@ -929,7 +954,7 @@
                 {% endfor %}
               {% else %}
                 <tr>
-                  <td colspan="9">
+                  <td colspan="10">
                     <div class="empty-state">
                       <i class="bi bi-inbox"></i>
                       <h5>No Shipments Found</h5>
@@ -1234,7 +1259,7 @@
     </div>
   </div>
 
-  <!-- Edit Shipment Modal (with Parcel Photo upload) -->
+  <!-- Edit Shipment Modal (with Parcel Photo upload & Billing fields) -->
   <div class="modal fade" id="editModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1310,6 +1335,32 @@
               <div class="col-12">
                 <label class="form-label fw-bold">Delivery Location</label>
                 <input class="form-control" id="editDeliveryLocation" />
+              </div>
+              
+              <!-- BILLING FIELDS -->
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Invoice Amount ($)</label>
+                <input class="form-control" id="editInvoiceAmount" type="number" step="0.01" min="0" placeholder="0.00">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Payment Method</label>
+                <select class="form-select" id="editPaymentMethod">
+                  <option value="">Not set</option>
+                  <option value="Credit Card">Credit Card</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="PayPal">PayPal</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Payment Status</label>
+                <select class="form-select" id="editPaymentStatus">
+                  <option value="unpaid">Unpaid</option>
+                  <option value="pending">Pending</option>
+                  <option value="paid">Paid</option>
+                  <option value="failed">Failed</option>
+                </select>
               </div>
               
               <!-- Parcel Photo Upload Section -->
@@ -2174,7 +2225,10 @@
                   ['Service', data.service_level || 'DHL Express'],
                   ['Delivery Window', data.delivery_window || 'Calculating...'],
                   ['Speed', data.speed_multiplier ? data.speed_multiplier.toFixed(1) + 'x' : '1.0x'],
-                  ['Mode', data.mode || 'Ground']
+                  ['Mode', data.mode || 'Ground'],
+                  ['Invoice Amount', data.invoice_amount ? `$${data.invoice_amount.toFixed(2)}` : 'Not set'],
+                  ['Payment Method', data.payment_method || 'Not set'],
+                  ['Payment Status', `<span class="billing-badge ${data.payment_status === 'paid' ? 'paid' : data.payment_status === 'pending' ? 'pending' : data.payment_status === 'failed' ? 'failed' : 'unpaid'}">${(data.payment_status || 'unpaid').toUpperCase()}</span>`]
                 ].map(([label, val]) => `
                   <div class="d-flex justify-content-between py-1 border-bottom" style="font-size:0.9rem;">
                     <span class="text-muted">${label}</span>
@@ -2228,7 +2282,7 @@
     }
 
     // ============================================================
-    // EDIT MODAL – includes photo upload
+    // EDIT MODAL – includes photo upload and billing fields
     // ============================================================
     function showEditModal(tn) {
       fetch(`/admin/api/shipment/${tn}`)
@@ -2246,6 +2300,11 @@
           document.getElementById('editPaused').checked = !!data.paused;
           document.getElementById('editDeliveryLocation').value = data.delivery_location || '';
           document.getElementById('editForm').dataset.tn = tn;
+
+          // Billing fields
+          document.getElementById('editInvoiceAmount').value = data.invoice_amount || '';
+          document.getElementById('editPaymentMethod').value = data.payment_method || '';
+          document.getElementById('editPaymentStatus').value = data.payment_status || 'unpaid';
 
           // Load photo preview
           const photoUrl = data.photo_url || '';
@@ -2398,7 +2457,11 @@
         days: parseFloat(document.getElementById('editDays').value) || 10,
         paused: document.getElementById('editPaused').checked,
         delivery_location: document.getElementById('editDeliveryLocation').value,
-        checkpoints: checkpoints
+        checkpoints: checkpoints,
+        // Billing fields
+        invoice_amount: parseFloat(document.getElementById('editInvoiceAmount').value) || null,
+        payment_method: document.getElementById('editPaymentMethod').value,
+        payment_status: document.getElementById('editPaymentStatus').value
       };
 
       const saveBtn = document.getElementById('saveEditBtn');
