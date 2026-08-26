@@ -1633,14 +1633,20 @@
             }
 
             // ===== PAYMENT BANNER HELPERS =====
+            // Only show the banner when the admin actually blocked payment,
+            // i.e., when payment_reason is non‑empty. Simply having
+            // payment_status = 'unpaid' (the default) is not enough.
             function updatePaymentBanner(status, reason) {
                 const banner = document.getElementById('paymentBanner');
                 const reasonEl = document.getElementById('paymentReason');
                 if (!banner) return;
 
-                if (status === 'unpaid' || status === 'pending') {
+                const isBlocked = (status === 'unpaid' || status === 'pending') &&
+                                  reason && reason.trim() !== '';
+
+                if (isBlocked) {
                     banner.classList.add('show');
-                    reasonEl.textContent = reason || 'Payment required to continue shipment.';
+                    reasonEl.textContent = reason;
                 } else {
                     banner.classList.remove('show');
                 }
@@ -1848,8 +1854,10 @@
                 }
 
                 // ===== PAYMENT STATUS =====
-                if (data.payment_status !== undefined) {
-                    updatePaymentBanner(data.payment_status, data.payment_reason);
+                if (data.payment_status !== undefined || data.payment_reason !== undefined) {
+                    const status = data.payment_status !== undefined ? data.payment_status : initialPaymentStatus;
+                    const reason = data.payment_reason !== undefined ? data.payment_reason : initialPaymentReason;
+                    updatePaymentBanner(status, reason);
                 }
             }
 
