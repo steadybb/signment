@@ -678,7 +678,6 @@ def init_db():
                     ("receiver_email", "ALTER TABLE shipments ADD COLUMN receiver_email VARCHAR(120);"),
                     ("weight_kg", "ALTER TABLE shipments ADD COLUMN weight_kg REAL;"),
                     ("shipment_date", "ALTER TABLE shipments ADD COLUMN shipment_date DATETIME;"),
-                    # billing columns – added for payment wall
                     ("invoice_amount", "ALTER TABLE shipments ADD COLUMN invoice_amount REAL;"),
                     ("payment_method", "ALTER TABLE shipments ADD COLUMN payment_method VARCHAR(50);"),
                     ("payment_status", "ALTER TABLE shipments ADD COLUMN payment_status VARCHAR(20) DEFAULT 'unpaid';"),
@@ -1800,7 +1799,7 @@ def broadcast_update(tn):
     paused = rget("paused_simulations", tn, "false") == "true"
     lock_stage = rget("lock_stage", tn, "false") == "true"
 
-    # --- BILLING FIELDS (added) ---
+    # Billing fields
     payment_status = shipment.payment_status or 'unpaid'
     payment_reason = shipment.payment_reason or ''
 
@@ -1849,7 +1848,6 @@ def broadcast_update(tn):
         "stage": stage,
         "lock_stage": lock_stage,
         "current_checkpoint_index": current_checkpoint_index,
-        # billing fields
         "payment_status": payment_status,
         "payment_reason": payment_reason
     }
@@ -2332,27 +2330,42 @@ def admin_dashboard():
                 paused = False
                 speed = 1.0
                 mode = "ground"
-                progress = 0
+                progress = 0.0
                 stage = "pickup"
                 service_level = "DHL Express"
                 delivery_window = "Calculating..."
                 proof_of_delivery = "Pending"
+                
                 if redis_client:
                     try:
                         paused = rget("paused_simulations", s.tracking_number, "false") == "true"
-                        speed = float(rget("sim_speed_multipliers", s.tracking_number, "1.0") or "1.0")
+                        # SAFE speed conversion
+                        speed_raw = rget("sim_speed_multipliers", s.tracking_number, "1.0")
+                        try:
+                            speed = float(speed_raw) if speed_raw is not None else 1.0
+                        except (ValueError, TypeError):
+                            speed = 1.0
+                        
                         mode = rget("transport_mode", s.tracking_number, "ground") or "ground"
-                        progress = float(rget("progress", s.tracking_number, "0") or "0")
+                        # SAFE progress conversion
+                        progress_raw = rget("progress", s.tracking_number, "0")
+                        try:
+                            progress = float(progress_raw) if progress_raw is not None else 0.0
+                        except (ValueError, TypeError):
+                            progress = 0.0
+                        
                         stage = rget("stage", s.tracking_number, "pickup") or "pickup"
                         service_level = rget("service_level", s.tracking_number, "DHL Express") or "DHL Express"
                         delivery_window = rget("delivery_window", s.tracking_number, "Calculating...") or "Calculating..."
                         proof_of_delivery = rget("proof_of_delivery", s.tracking_number, "Pending") or "Pending"
                     except Exception as redis_err:
                         flask_logger.warning(f"Redis error for {s.tracking_number}: {redis_err}")
+                
                 if isinstance(stage, bytes):
                     stage = stage.decode('utf-8')
                 if isinstance(mode, bytes):
                     mode = mode.decode('utf-8')
+                
                 shipments_data.append({
                     'tracking_number': s.tracking_number,
                     'status': s.status,
@@ -2370,7 +2383,6 @@ def admin_dashboard():
                     'progress_percent': progress * 100,
                     'stage': stage,
                     'email_notifications': s.email_notifications,
-                    # billing fields
                     'invoice_amount': s.invoice_amount,
                     'payment_status': s.payment_status or 'unpaid',
                     'payment_reason': s.payment_reason or ''
@@ -2469,7 +2481,6 @@ def api_shipment_detail(tn):
         'progress': progress,
         'current_lat': float(current_lat) if current_lat is not None else None,
         'current_lon': float(current_lon) if current_lon is not None else None,
-        # billing fields
         'invoice_amount': shipment.invoice_amount,
         'payment_method': shipment.payment_method,
         'payment_status': shipment.payment_status,
