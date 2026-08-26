@@ -2094,6 +2094,9 @@
       }
     });
 
+    // ============================================================
+    // UPDATED updateTableRow - includes billing fields
+    // ============================================================
     function updateTableRow(data) {
       const row = document.querySelector(`tr[data-tn="${data.tracking_number}"]`);
       if (!row) return;
@@ -2155,6 +2158,21 @@
         const slider = row.querySelector('.speed-slider');
         slider.value = data.speed_multiplier * 10;
         row.querySelector('.speed-value').textContent = data.speed_multiplier.toFixed(1) + 'x';
+      }
+
+      // ───── BILLING UPDATES (NEW) ─────
+      if (data.payment_status !== undefined) {
+        const billingBadge = row.querySelector('.billing-badge');
+        if (billingBadge) {
+          const status = data.payment_status || 'unpaid';
+          billingBadge.className = `billing-badge ${status}`;
+          billingBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+        row.dataset.paymentStatus = data.payment_status || 'unpaid';
+      }
+      if (data.invoice_amount !== undefined) {
+        const amountEl = row.querySelector('td:nth-child(5) div:first-child strong');
+        if (amountEl) amountEl.textContent = `$${data.invoice_amount.toFixed(2)}`;
       }
     }
 
