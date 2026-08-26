@@ -861,7 +861,7 @@
                     data-delivered="{{ s.status == 'Delivered' }}"
                     data-exception="{{ s.status == 'Exception' }}"
                     data-paused="{{ s.paused|default(false)|lower }}"
-                    data-invoice-amount="{{ s.invoice_amount|default(0) }}"
+                    data-invoice-amount="{{ s.invoice_amount|default(0, true) }}"
                     data-payment-status="{{ s.payment_status|default('unpaid') }}">
                   <td>
                     <code style="font-size:0.7rem; background:#f1f5f9; padding:2px 6px; border-radius:4px; white-space:nowrap;">
@@ -897,7 +897,7 @@
                   </td>
                   <td>
                     <div style="font-size:0.7rem;">
-                      <div><strong>${{ "%.2f"|format(s.invoice_amount|default(0)) }}</strong></div>
+                      <div><strong>${{ "%.2f"|format(s.invoice_amount|default(0, true)) }}</strong></div>
                       <span class="billing-badge {% if s.payment_status == 'paid' %}paid{% elif s.payment_status == 'pending' %}pending{% elif s.payment_status == 'failed' %}failed{% else %}unpaid{% endif %}">
                         {{ (s.payment_status or 'unpaid')|title }}
                       </span>
