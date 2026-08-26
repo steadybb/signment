@@ -1649,41 +1649,45 @@
                 // Arrival
                 updateElement('estimatedArrival', data.delivery_window);
 
-                // --- CHECKPOINTS: REPLACE with server list and deduplicate ---
-                if (data.checkpoints && data.checkpoints.length) {
-                    const checkpoints = data.checkpoints;
-                    // Update the set for reference (but we'll use deduped list)
-                    checkpointSet = new Set(checkpoints);
-                    updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
+                // --- CHECKPOINTS: defensive fix: only update when explicitly provided ---
+                if (data.checkpoints !== undefined) {
+                    if (data.checkpoints && data.checkpoints.length) {
+                        const checkpoints = data.checkpoints;
+                        // Update the set for reference (but we'll use deduped list)
+                        checkpointSet = new Set(checkpoints);
+                        updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
 
-                    // Compute current index from server
-                    const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
-                        Math.min(Math.round((toNum(data.progress) || 0) * (checkpoints.length - 1)), checkpoints.length - 1);
+                        // Compute current index from server
+                        const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
+                            Math.min(Math.round((toNum(data.progress) || 0) * (checkpoints.length - 1)), checkpoints.length - 1);
 
-                    // Render deduped checkpoints
-                    renderCheckpoints(checkpoints, currentIdx);
+                        // Render deduped checkpoints
+                        renderCheckpoints(checkpoints, currentIdx);
 
-                    // Next checkpoint (using deduped list)
-                    // We need to find next checkpoint after currentIdx in the original list
-                    // But we can use the original list with currentIdx.
-                    // However, we can just compute next from original list and then show its text.
-                    // Simpler: use the original list's next checkpoint after currentIdx.
-                    if (checkpoints.length > 1) {
-                        const nextIdx = currentIdx + 1;
-                        if (nextIdx < checkpoints.length) {
-                            updateElement('nextCheckpoint', checkpoints[nextIdx]);
+                        // Next checkpoint (using deduped list)
+                        // We need to find next checkpoint after currentIdx in the original list
+                        // But we can use the original list with currentIdx.
+                        // However, we can just compute next from original list and then show its text.
+                        // Simpler: use the original list's next checkpoint after currentIdx.
+                        if (checkpoints.length > 1) {
+                            const nextIdx = currentIdx + 1;
+                            if (nextIdx < checkpoints.length) {
+                                updateElement('nextCheckpoint', checkpoints[nextIdx]);
+                            } else {
+                                updateElement('nextCheckpoint', 'Next scan pending');
+                            }
                         } else {
                             updateElement('nextCheckpoint', 'Next scan pending');
                         }
                     } else {
+                        // Explicitly empty list → clear history
+                        checkpointSet.clear();
+                        renderCheckpoints([], 0);
+                        updateElement('lastCheckpoint', 'Waiting for first scan');
                         updateElement('nextCheckpoint', 'Next scan pending');
                     }
-                } else {
-                    checkpointSet.clear();
-                    renderCheckpoints([], 0);
-                    updateElement('lastCheckpoint', 'Waiting for first scan');
-                    updateElement('nextCheckpoint', 'Next scan pending');
                 }
+                // else: leave currently displayed history exactly as-is
 
                 // Details grid
                 updateElement('deliveryLocation', data.delivery_location);
