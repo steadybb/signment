@@ -1780,17 +1780,18 @@
                 let lat = toNum(data.current_lat);
                 let lon = toNum(data.current_lon);
 
+                // Attempt interpolation if no real coordinates are provided
                 if ((lat === null || lon === null) && window._lastRouteCoords && window._lastRouteCoords.length >= 2 && data.progress !== undefined) {
                     const pos = interpolateAlongRoute(window._lastRouteCoords, data.progress);
                     if (pos) {
                         lat = pos[0];
                         lon = pos[1];
-                        document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
-                        document.getElementById('positionStatusText').textContent = 'Moving now (interpolated)';
+                        // Used only for debug logging; no longer exposed to user
                         debugLog('Marker position interpolated from route');
                     }
                 }
 
+                // Update position if we have valid coordinates and progress is acceptable
                 if (lat !== null && lon !== null && progressOk) {
                     document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
                     document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
