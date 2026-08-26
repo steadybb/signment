@@ -82,7 +82,14 @@ def update_shipment_with_context(tracking_number, **kwargs):
 
 def save_shipment_with_context(tracking_number, status, checkpoints, delivery_location,
                                recipient_email=None, origin_location=None,
-                               webhook_url=None, carrier="DHL"):
+                               webhook_url=None, carrier="DHL",
+                               sender_name=None, sender_location=None,
+                               receiver_name=None, receiver_address=None,
+                               receiver_phone=None, receiver_email=None,
+                               weight_kg=None, shipment_date=None):
+    """
+    Save a new shipment with optional extended fields.
+    """
     with app.app_context():
         try:
             shipment = Shipment(
@@ -96,7 +103,16 @@ def save_shipment_with_context(tracking_number, status, checkpoints, delivery_lo
                 origin_location=origin_location or 'Lagos, NG',
                 webhook_url=webhook_url,
                 email_notifications=bool(recipient_email),
-                carrier=carrier or 'DHL'
+                carrier=carrier or 'DHL',
+                # New fields
+                sender_name=sender_name,
+                sender_location=sender_location,
+                receiver_name=receiver_name,
+                receiver_address=receiver_address,
+                receiver_phone=receiver_phone,
+                receiver_email=receiver_email,
+                weight_kg=weight_kg,
+                shipment_date=shipment_date
             )
             db.session.add(shipment)
             db.session.commit()
@@ -179,6 +195,7 @@ def handle_add_shipment(message):
     if not tn or status not in config.valid_statuses:
         bot.reply_to(message, "Invalid tracking number or status.")
         return
+    # Save using the extended function (extra fields remain None)
     if save_shipment_with_context(tn, status, '', dest, email, origin, webhook, "DHL"):
         bot.reply_to(message, f"✅ Shipment `{tn}` added.", parse_mode='Markdown')
     else:
@@ -206,9 +223,13 @@ def handle_search_query(message):
         bot.reply_to(message, f"Error: {e}")
 
 def handle_guided_add(message):
-    """Guided flow for adding shipment via 'Add Shipment' button."""
+    """
+    Guided flow for adding shipment via 'Add Shipment' button.
+    Accepts: tracking_number status destination [origin] [email] [webhook]
+    (Extended fields not supported through this simple interface,
+    but the function can be extended later.)
+    """
     try:
-        # Expect format: tracking_number status destination origin email webhook
         parts = message.text.strip().split()
         if len(parts) < 3:
             bot.reply_to(message, "Please provide: `tracking_number status destination` (origin, email, webhook optional)")
