@@ -509,6 +509,11 @@ class Shipment(db.Model):
     weight_kg = db.Column(db.Float, nullable=True)
     shipment_date = db.Column(db.DateTime, nullable=True)
 
+    # ========== BILLING FIELDS ==========
+    invoice_amount = db.Column(db.Float, nullable=True)
+    payment_method = db.Column(db.String(50), nullable=True)
+    payment_status = db.Column(db.String(20), default='unpaid')
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'id': self.id,
@@ -536,7 +541,11 @@ class Shipment(db.Model):
             'receiver_phone': self.receiver_phone,
             'receiver_email': self.receiver_email,
             'weight_kg': self.weight_kg,
-            'shipment_date': self.shipment_date.isoformat() if self.shipment_date else None
+            'shipment_date': self.shipment_date.isoformat() if self.shipment_date else None,
+            # Billing fields
+            'invoice_amount': self.invoice_amount,
+            'payment_method': self.payment_method,
+            'payment_status': self.payment_status
         }
 
 # === REDIS HELPERS ===
@@ -753,7 +762,9 @@ def save_shipment(tracking_number: str, status: str, checkpoints: str = '', deli
                   sender_name: Optional[str] = None, sender_location: Optional[str] = None,
                   receiver_name: Optional[str] = None, receiver_address: Optional[str] = None,
                   receiver_phone: Optional[str] = None, receiver_email: Optional[str] = None,
-                  weight_kg: Optional[float] = None, shipment_date: Optional[datetime] = None) -> bool:
+                  weight_kg: Optional[float] = None, shipment_date: Optional[datetime] = None,
+                  invoice_amount: Optional[float] = None, payment_method: Optional[str] = None,
+                  payment_status: str = 'unpaid') -> bool:
     try:
         shipment = Shipment(
             tracking_number=tracking_number,
@@ -772,7 +783,11 @@ def save_shipment(tracking_number: str, status: str, checkpoints: str = '', deli
             receiver_phone=receiver_phone,
             receiver_email=receiver_email,
             weight_kg=weight_kg,
-            shipment_date=shipment_date
+            shipment_date=shipment_date,
+            # Billing fields
+            invoice_amount=invoice_amount,
+            payment_method=payment_method,
+            payment_status=payment_status
         )
         db.session.add(shipment)
         db.session.commit()
@@ -801,7 +816,9 @@ def update_shipment(tracking_number: str, status: Optional[str] = None, delivery
                     sender_name: Optional[str] = None, sender_location: Optional[str] = None,
                     receiver_name: Optional[str] = None, receiver_address: Optional[str] = None,
                     receiver_phone: Optional[str] = None, receiver_email: Optional[str] = None,
-                    weight_kg: Optional[float] = None, shipment_date: Optional[datetime] = None) -> bool:
+                    weight_kg: Optional[float] = None, shipment_date: Optional[datetime] = None,
+                    invoice_amount: Optional[float] = None, payment_method: Optional[str] = None,
+                    payment_status: Optional[str] = None) -> bool:
     try:
         shipment = Shipment.query.filter_by(tracking_number=tracking_number).first()
         if not shipment:
@@ -834,6 +851,13 @@ def update_shipment(tracking_number: str, status: Optional[str] = None, delivery
             shipment.weight_kg = weight_kg
         if shipment_date is not None:
             shipment.shipment_date = shipment_date
+        # Billing fields
+        if invoice_amount is not None:
+            shipment.invoice_amount = invoice_amount
+        if payment_method is not None:
+            shipment.payment_method = payment_method
+        if payment_status is not None:
+            shipment.payment_status = payment_status
         shipment.last_updated = datetime.utcnow()
         db.session.commit()
         try:
