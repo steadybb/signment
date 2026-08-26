@@ -1135,7 +1135,8 @@
             const trackingNumber = {{ shipment.tracking_number | tojson }};
             const shipmentStatus = {{ shipment.status | tojson }};
             const shipmentDeliveryLocation = {{ shipment.delivery_location | tojson }};
-            const shipmentLastUpdated = {{ shipment.last_updated.isoformat() if shipment.last_updated else '' | tojson }};
+            // FIX: wrap conditional in parentheses so tojson applies to the whole result
+            const shipmentLastUpdated = {{ (shipment.last_updated.isoformat() if shipment.last_updated else '') | tojson }};
             const initialCurrentCheckpointIndex = {{ current_checkpoint_index | default(0) }};
 
             // ===== SHOW CONTENT =====
@@ -1705,6 +1706,9 @@
             }
 
             // ===== TRACKING UPDATE HANDLER =====
+            let currentProgress = initialProgress;
+            let checkpointSet = new Set(initialCheckpoints);
+
             function applyTrackingUpdate(data) {
                 if (!data) return;
 
@@ -1888,21 +1892,7 @@
                 return pts[pts.length-1];
             }
 
-            function easeInOutQuad(t){ return t<0.5 ? 2*t*t : -1 + (4-2*t)*t; }
-
-            function moveMarkerSmooth(tn, toPos, duration = 800) {
-                const marker = markers[tn];
-                if (!marker) return;
-                const fromLL = marker.getLatLng();
-                const from = [fromLL.lat, fromLL.lng];
-                const start = performance.now();
-                markerAnims[tn] = { from, to: toPos, start, duration };
-            }
-
             // ===== INITIAL PAGE STATE =====
-            let currentProgress = initialProgress;
-            let checkpointSet = new Set(initialCheckpoints);
-
             function setInitialPageState() {
                 try {
                     const initialData = {
