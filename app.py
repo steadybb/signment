@@ -678,11 +678,10 @@ def init_db():
                     ("receiver_email", "ALTER TABLE shipments ADD COLUMN receiver_email VARCHAR(120);"),
                     ("weight_kg", "ALTER TABLE shipments ADD COLUMN weight_kg REAL;"),
                     ("shipment_date", "ALTER TABLE shipments ADD COLUMN shipment_date DATETIME;"),
-                    # billing columns
+                    # billing columns – added for payment wall
                     ("invoice_amount", "ALTER TABLE shipments ADD COLUMN invoice_amount REAL;"),
                     ("payment_method", "ALTER TABLE shipments ADD COLUMN payment_method VARCHAR(50);"),
                     ("payment_status", "ALTER TABLE shipments ADD COLUMN payment_status VARCHAR(20) DEFAULT 'unpaid';"),
-                    # payment reason (for payment wall)
                     ("payment_reason", "ALTER TABLE shipments ADD COLUMN payment_reason TEXT;"),
                 ]
                 for col, stmt in alterations:
@@ -1801,7 +1800,7 @@ def broadcast_update(tn):
     paused = rget("paused_simulations", tn, "false") == "true"
     lock_stage = rget("lock_stage", tn, "false") == "true"
 
-    # Payment fields
+    # --- BILLING FIELDS (added) ---
     payment_status = shipment.payment_status or 'unpaid'
     payment_reason = shipment.payment_reason or ''
 
@@ -1850,6 +1849,7 @@ def broadcast_update(tn):
         "stage": stage,
         "lock_stage": lock_stage,
         "current_checkpoint_index": current_checkpoint_index,
+        # billing fields
         "payment_status": payment_status,
         "payment_reason": payment_reason
     }
@@ -2722,6 +2722,9 @@ def admin_geocoding_status():
         'rate_limiter_status': {api: len(timestamps) for api, timestamps in geocode_rate_limiter.items()}
     })
 
+# ============================================================
+# CRITICAL FIX: Parse shipment_date from string to datetime
+# ============================================================
 def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
                            sender_name=None, sender_location=None,
                            receiver_name=None, receiver_address=None, receiver_phone=None,
