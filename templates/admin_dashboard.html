@@ -1097,54 +1097,107 @@
     </div>
   </div>
 
-  <!-- Create Shipment Modal -->
+  <!-- ============================================================ -->
+  <!-- CREATE SHIPMENT MODAL – FULL CONTROL (expanded)               -->
+  <!-- ============================================================ -->
   <div class="modal fade" id="createModal" tabindex="-1" data-bs-backdrop="static">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-xl">
       <div class="modal-content">
         <div class="modal-header" style="background:var(--dhl-red);color:white;">
-          <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Create New Shipment</h5>
+          <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Create New Shipment – Full Details</h5>
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
           <form id="createForm">
+            <!-- TWO COLUMNS: Left = origin/destination/service, Right = sender/receiver/details -->
             <div class="row g-3">
-              <div class="col-md-6">
-                <label class="form-label fw-bold">Origin <span class="text-danger">*</span></label>
-                <input list="citiesList" type="text" class="form-control" id="origin" required placeholder="Enter origin (e.g. Lagos, NG)">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label fw-bold">Destination <span class="text-danger">*</span></label>
-                <input list="citiesList" type="text" class="form-control" id="destination" required placeholder="Enter destination (e.g. London, UK)">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label fw-bold">Service Level</label>
-                <select class="form-select" id="serviceLevel">
-                  <option value="DHL Express">DHL Express</option>
-                  <option value="DHL Express 9:00">DHL Express 9:00</option>
-                  <option value="DHL Express 12:00">DHL Express 12:00</option>
-                  <option value="DHL Economy Select">DHL Economy Select</option>
-                </select>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label fw-bold">Recipient Email (Optional)</label>
-                <input type="email" class="form-control" id="recipientEmail" 
-                       placeholder="recipient@example.com">
-              </div>
-              <div class="col-12">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" id="bulkCreate">
-                  <label class="form-check-label" for="bulkCreate">
-                    Bulk Create Mode
-                  </label>
+              <!-- Left column: Core shipment fields -->
+              <div class="col-lg-6">
+                <h6 class="fw-bold text-danger mb-3"><i class="bi bi-truck me-1"></i>Shipment Core</h6>
+                <div class="mb-3">
+                  <label class="form-label fw-bold">Origin <span class="text-danger">*</span></label>
+                  <input list="citiesList" type="text" class="form-control" id="origin" required placeholder="e.g. Lagos, NG">
                 </div>
-              </div>
-              <div class="col-12" id="bulkContainer" style="display:none;">
-                <label class="form-label fw-bold">Multiple Shipments (JSON format)</label>
-                <textarea class="form-control" id="bulkData" rows="5" placeholder='[
-  {"origin": "Lagos, NG", "destination": "London, UK", "service_level": "DHL Express"},
+                <div class="mb-3">
+                  <label class="form-label fw-bold">Destination <span class="text-danger">*</span></label>
+                  <input list="citiesList" type="text" class="form-control" id="destination" required placeholder="e.g. London, UK">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label fw-bold">Service Level</label>
+                  <select class="form-select" id="serviceLevel">
+                    <option value="DHL Express">DHL Express</option>
+                    <option value="DHL Express 9:00">DHL Express 9:00</option>
+                    <option value="DHL Express 12:00">DHL Express 12:00</option>
+                    <option value="DHL Economy Select">DHL Economy Select</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label fw-bold">Recipient Email <span class="text-muted">(for notifications)</span></label>
+                  <input type="email" class="form-control" id="recipientEmail" placeholder="recipient@example.com">
+                </div>
+                <!-- Bulk create toggle -->
+                <div class="form-check mb-3">
+                  <input class="form-check-input" type="checkbox" id="bulkCreate">
+                  <label class="form-check-label" for="bulkCreate">Bulk Create Mode</label>
+                </div>
+                <div id="bulkContainer" style="display:none;">
+                  <label class="form-label fw-bold">Multiple Shipments (JSON)</label>
+                  <textarea class="form-control" id="bulkData" rows="5" placeholder='[
+  {"origin": "Lagos, NG", "destination": "London, UK", "service_level": "DHL Express", "recipient_email": "cust@example.com"},
   {"origin": "Dubai, UAE", "destination": "New York, NY", "service_level": "DHL Express 12:00"}
 ]' style="font-family: monospace; font-size: 0.85rem;"></textarea>
-                <small class="text-muted">Each shipment must have origin and destination fields</small>
+                  <small class="text-muted">Each object must have at least origin and destination.</small>
+                </div>
+              </div>
+
+              <!-- Right column: Sender, Receiver, Shipment Details -->
+              <div class="col-lg-6">
+                <!-- Sender -->
+                <h6 class="fw-bold text-danger mb-3"><i class="bi bi-person-up me-1"></i>Sender</h6>
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Name</label>
+                    <input type="text" class="form-control" id="senderName" placeholder="Sender name">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Location</label>
+                    <input type="text" class="form-control" id="senderLocation" placeholder="City, Country">
+                  </div>
+                </div>
+
+                <!-- Receiver -->
+                <h6 class="fw-bold mt-3" style="color:#0ea5e9;"><i class="bi bi-person-down me-1"></i>Receiver</h6>
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Name</label>
+                    <input type="text" class="form-control" id="receiverName" placeholder="Receiver name">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Address</label>
+                    <input type="text" class="form-control" id="receiverAddress" placeholder="Street, City, Country">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Phone</label>
+                    <input type="text" class="form-control" id="receiverPhone" placeholder="+123456789">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Email</label>
+                    <input type="email" class="form-control" id="receiverEmail" placeholder="receiver@example.com">
+                  </div>
+                </div>
+
+                <!-- Shipment Details -->
+                <h6 class="fw-bold mt-3" style="color:#8b5cf6;"><i class="bi bi-box me-1"></i>Shipment Details</h6>
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Weight (kg)</label>
+                    <input type="number" step="0.1" min="0" class="form-control" id="weightKg" placeholder="e.g. 12.5">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label fw-bold">Shipment Date</label>
+                    <input type="datetime-local" class="form-control" id="shipmentDate">
+                  </div>
+                </div>
               </div>
             </div>
           </form>
@@ -1381,17 +1434,20 @@
     let currentEmailTn = null;
 
     // ============================================================
-    // CREATE SHIPMENT
+    // CREATE SHIPMENT – FULL CONTROL
     // ============================================================
     function showCreateModal() {
       document.getElementById('createResult').style.display = 'none';
       document.getElementById('createForm').reset();
+      // Pre-fill shipment date with now
+      const now = new Date();
+      const localStr = now.toISOString().slice(0, 16);
+      document.getElementById('shipmentDate').value = localStr;
       createModal.show();
       fetch('/admin/api/cities')
         .then(r => r.json())
         .then(cities => {
           const dl = document.getElementById('citiesList');
-          // Deduplicate cities
           const uniqueCities = [...new Set(cities)];
           dl.innerHTML = uniqueCities.map(c => `<option value="${c}"></option>`).join('');
         })
@@ -1468,7 +1524,9 @@
         try {
           const shipments = JSON.parse(document.getElementById('bulkData').value);
           if (!shipments.length) throw new Error('At least one shipment required');
-          
+          // For bulk, we still use the standard create_shipment_record for each, but we'll send to bulk endpoint
+          // The bulk endpoint expects an array of shipments with at least origin/destination.
+          // We'll send whatever fields are present.
           fetch('/admin/api/bulk_create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1493,11 +1551,20 @@
         return;
       }
 
+      // Single shipment – collect all fields
       const data = {
-        origin: document.getElementById('origin').value,
-        destination: document.getElementById('destination').value,
+        origin: document.getElementById('origin').value.trim(),
+        destination: document.getElementById('destination').value.trim(),
         service_level: document.getElementById('serviceLevel').value,
-        recipient_email: document.getElementById('recipientEmail').value
+        recipient_email: document.getElementById('recipientEmail').value.trim(),
+        sender_name: document.getElementById('senderName').value.trim(),
+        sender_location: document.getElementById('senderLocation').value.trim(),
+        receiver_name: document.getElementById('receiverName').value.trim(),
+        receiver_address: document.getElementById('receiverAddress').value.trim(),
+        receiver_phone: document.getElementById('receiverPhone').value.trim(),
+        receiver_email: document.getElementById('receiverEmail').value.trim(),
+        weight_kg: parseFloat(document.getElementById('weightKg').value) || undefined,
+        shipment_date: document.getElementById('shipmentDate').value || undefined
       };
 
       if (!data.origin || !data.destination) {
