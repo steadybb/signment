@@ -9,7 +9,7 @@
     <!-- Bootstrap Icons (for sender/receiver/shipment details icons) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <style>
-        /* ===== [STYLES – unchanged, just kept as is] ===== */
+        /* ===== [STYLES – unchanged, kept as is] ===== */
         :root {
             --dhl-red: #D40511;
             --dhl-yellow: #FFCC00;
@@ -1124,8 +1124,8 @@
             let checkpointSet = new Set();
 
             // Initial payment status from server (if any)
-            const initialPaymentStatus = "{{ payment_status | default('') }}";
-            const initialPaymentReason = "{{ payment_reason | default('') }}";
+            const initialPaymentStatus = {{ payment_status | tojson }};
+            const initialPaymentReason = {{ payment_reason | tojson }};
 
             // ===== SHOW CONTENT =====
             function showContent() {
@@ -1270,7 +1270,7 @@
                 showToast('Reconnecting…', 'info', 2000);
             });
 
-            const trackingNumber = "{{ shipment.tracking_number }}";
+            const trackingNumber = {{ shipment.tracking_number | tojson }};
 
             function requestTracking() {
                 if (!trackingNumber) {
@@ -1902,18 +1902,18 @@
                     }
 
                     const initialData = {
-                        status: "{{ shipment.status }}",
-                        stage: "{{ shipment.stage|default('pickup') }}",
+                        status: {{ shipment.status | tojson }},
+                        stage: {{ stage | default('pickup') | tojson }},
                         progress: initialProgress,
-                        current_lat: {{ current_lat | default('null') }},
-                        current_lon: {{ current_lon | default('null') }},
-                        current_location: "{{ current_location | default('Calculating...') }}",
-                        delivery_window: "{{ delivery_window | default('Calculating...') }}",
-                        delivery_location: "{{ shipment.delivery_location }}",
-                        service_level: "{{ service_level | default('DHL Express') }}",
-                        proof_of_delivery: "{{ proof_of_delivery | default('Pending') }}",
+                        current_lat: {{ current_lat | tojson }},
+                        current_lon: {{ current_lon | tojson }},
+                        current_location: {{ current_location | default('Calculating...') | tojson }},
+                        delivery_window: {{ delivery_window | default('Calculating...') | tojson }},
+                        delivery_location: {{ shipment.delivery_location | tojson }},
+                        service_level: {{ service_level | default('DHL Express') | tojson }},
+                        proof_of_delivery: {{ proof_of_delivery | default('Pending') | tojson }},
                         checkpoints: initialCheckpoints,
-                        last_updated: "{{ shipment.last_updated.isoformat() if shipment.last_updated else '' }}",
+                        last_updated: {{ shipment.last_updated.isoformat() if shipment.last_updated else '' | tojson }},
                         current_checkpoint_index: {{ current_checkpoint_index | default(0) }},
                         // Payment info (from server)
                         payment_status: initialPaymentStatus,
