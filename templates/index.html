@@ -42,10 +42,10 @@
             will-change: transform;
         }
         
-        /* Content Overlay */
+        /* Content Overlay – reduced opacity to let background show through */
         .content-overlay {
             position: relative;
-            background: rgba(255, 255, 255, 0.85);
+            background: rgba(255, 255, 255, 0.75); /* was 0.85 */
             min-height: 100vh;
             display: flex;
             flex-direction: column;
@@ -547,7 +547,7 @@
             .track-box button { font-size: 16px; padding: 10px; }
         }
         
-        /* ─── FIX: Mobile fallback image ─── */
+        /* ─── FIX: Mobile fallback image + reduced opacity ─── */
         @media (max-width: 420px) {
             .video-background {
                 display: block;
@@ -556,7 +556,9 @@
                 background-position: center;
             }
             body { background: #f5f5f5; }
-            .content-overlay { background: rgba(255, 255, 255, 0.95); }
+            .content-overlay {
+                background: rgba(255, 255, 255, 0.85); /* was 0.95 – more transparent */
+            }
         }
 
         /* Utility classes */
