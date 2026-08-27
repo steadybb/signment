@@ -67,6 +67,7 @@
         #resultOverlay h4 { font-weight: 700; color: var(--dhl-dark); }
         #resultOverlay p { color: #6b7280; max-width: 400px; }
         #resultOverlay .btn-pay { width: 100%; justify-content: center; }
+        #resultOverlay .btn-secondary { width: 100%; margin-top: 0.5rem; }
 
         @media (max-width: 576px) {
             .payment-card { padding: 1.2rem 1rem; margin: 1rem 0.5rem; }
@@ -77,6 +78,19 @@
             #resultOverlay h4 { font-size: 1.2rem; }
         }
     </style>
+
+    <!-- Tawk.to chat – added to enable support button -->
+    <script type="text/javascript">
+        var Tawk_API = Tawk_API || {}, Tawk_LoadStart = new Date();
+        (function() {
+            var s1 = document.createElement("script"), s0 = document.getElementsByTagName("script")[0];
+            s1.async = true;
+            s1.src = 'https://embed.tawk.to/6a861b2f7c139f344337f50e/default';
+            s1.charset = 'UTF-8';
+            s1.setAttribute('crossorigin', '*');
+            s0.parentNode.insertBefore(s1, s0);
+        })();
+    </script>
 </head>
 <body>
     <header class="payment-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -177,7 +191,10 @@
                 <div class="pending-icon"><i class="bi bi-clock-history"></i></div>
                 <h4>Payment Submitted</h4>
                 <p>Your crypto payment details have been received. Our team will verify the transaction and update your invoice status shortly.</p>
-                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-pay mt-3">
+                <a href="#" class="btn btn-pay" onclick="openTawkTo(); return false;" style="background:var(--dhl-red);">
+                    <i class="bi bi-chat-dots me-1"></i> Contact Support
+                </a>
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">
                     <i class="bi bi-arrow-left me-1"></i> Back to Invoices
                 </a>
             </div>
@@ -362,6 +379,17 @@
                 }
             }, 4000);
         });
+
+        // ============================================================
+        // OPEN TAWK.TO CHAT
+        // ============================================================
+        function openTawkTo() {
+            if (window.Tawk_API && window.Tawk_API.maximize) {
+                window.Tawk_API.maximize();
+            } else {
+                window.location.href = '/';
+            }
+        }
 
         if (trackingNumbers.length === 0) {
             document.getElementById('cardErrors').textContent = 'No shipments selected. Please go back and select at least one invoice.';
