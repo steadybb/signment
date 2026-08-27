@@ -43,10 +43,21 @@ def init_payment_routes(app):
                 distance = estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
                 service_level = rget('service_level', s.tracking_number, 'DHL Express')
                 cost = calculate_shipment_cost(distance, service_level)
+            
+            # Build a serializable shipment dict (only fields needed by the template)
+            shipment_dict = {
+                'tracking_number': s.tracking_number,
+                'payment_status': s.payment_status,
+                'delivery_location': s.delivery_location,
+                'origin_location': s.origin_location,
+                'status': s.status,
+                'recipient_email': s.recipient_email,
+                # add any other fields your billing.html JS uses
+            }
             invoices.append({
-                'shipment': s,
+                'shipment': shipment_dict,   # now a plain dict, JSON-serializable
                 'cost': cost,
-                'service_level': rget('service_level', s.tracking_number, 'DHL Express'),
+                'service_level': service_level,
                 'distance': estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
             })
             if s.payment_status != 'paid':
