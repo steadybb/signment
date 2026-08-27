@@ -410,7 +410,64 @@
     .billing-badge.failed { background: #fef2f2; color: #b91c1c; }
     
     /* ============================================================
-       FIXED MOBILE RESPONSIVE
+       MOBILE CARDS (same as billing.html)
+    ============================================================ */
+    .invoice-mobile-card {
+      background: #fff;
+      padding: 1rem 1.2rem;
+      margin-bottom: 0.75rem;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+      border: 1px solid #f0f0f0;
+      border-radius: 0;
+    }
+    .invoice-mobile-card .row-line {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.25rem 0;
+      font-size: 0.8rem;
+    }
+    .invoice-mobile-card .row-line .label {
+      color: #6b7280;
+      font-weight: 500;
+    }
+    .invoice-mobile-card .row-line .value {
+      font-weight: 600;
+      color: var(--dhl-dark);
+    }
+    .invoice-mobile-card .actions {
+      margin-top: 0.6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-top: 1px solid #f0f0f0;
+      padding-top: 0.6rem;
+    }
+
+    /* Dropdown icon no caret + compact */
+    .dropdown-toggle-icon::after { display: none; }
+    .dropdown-toggle-icon { width: auto; padding: 4px 12px; text-align: center; }
+    .dropdown-menu { min-width: 190px; font-size: 0.85rem; }
+
+    /* Sticky first column on tablet (optional) */
+    @media (max-width: 991.98px) and (min-width: 768px) {
+      .table-responsive table th:first-child,
+      .table-responsive table td:first-child {
+        position: sticky;
+        left: 0;
+        background: white;
+        z-index: 2;
+        box-shadow: 2px 0 4px rgba(0,0,0,0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        .table-responsive table th:first-child,
+        .table-responsive table td:first-child {
+          background: #16213e;
+        }
+      }
+    }
+
+    /* ============================================================
+       RESPONSIVE OVERRIDES
     ============================================================ */
     @media (max-width: 992px) {
       .dhl-header { padding: 1rem; }
@@ -445,42 +502,8 @@
       .stat-card { padding: 0.75rem; }
       .stat-card h3 { font-size: 1.1rem; }
       
-      .table-responsive {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .table-responsive table {
-        min-width: 900px;
-      }
-      .table td, .table th { 
-        padding: 0.4rem;
-        font-size: 0.7rem;
-        white-space: nowrap;
-      }
-      #map { height: 250px; }
-      .speed-slider { width: 40px; }
-      .toast-container { max-width: 300px; right: 10px; }
-      .btn-pause, .btn-resume, .btn-view, .btn-email,
-      .btn-block, .btn-paid { 
-        font-size: 0.55rem !important;
-        padding: 2px 6px !important;
-      }
-      
-      .status-badge {
-        font-size: 0.65rem !important;
-        padding: 2px 8px !important;
-        white-space: nowrap !important;
-      }
-      .stage-badge {
-        font-size: 0.5rem !important;
-        padding: 1px 6px !important;
-        white-space: nowrap !important;
-      }
-      .service-level-badge {
-        font-size: 0.5rem !important;
-        padding: 1px 6px !important;
-        white-space: nowrap !important;
-      }
+      .invoice-mobile-card { padding: 0.8rem; margin-bottom: 0.5rem; }
+      .invoice-mobile-card .row-line { font-size: 0.75rem; }
     }
     
     @media (max-width: 576px) {
@@ -506,25 +529,13 @@
       .stat-card .icon { font-size: 1.25rem; }
       .stat-card .label { font-size: 0.65rem; }
       
-      .table td, .table th { 
-        padding: 0.2rem 0.35rem; 
-        font-size: 0.6rem;
-      }
-      .table-responsive table { min-width: 800px; }
+      .invoice-mobile-card { padding: 0.6rem; }
+      .invoice-mobile-card .row-line { font-size: 0.7rem; }
+      .invoice-mobile-card .actions .dropdown-toggle-icon { font-size: 0.75rem; padding: 2px 8px; }
       
       .speed-slider { width: 50px; }
       .proof-signature { max-width: 80px; font-size: 0.55rem; }
       .delivery-window { font-size: 0.55rem; }
-      
-      .btn-pause, .btn-resume, .btn-view, .btn-email,
-      .btn-block, .btn-paid { 
-        font-size: 0.5rem !important;
-        padding: 1px 4px !important;
-      }
-      .btn-pause i, .btn-resume i, .btn-view i, .btn-email i,
-      .btn-block i, .btn-paid i {
-        font-size: 0.6rem;
-      }
       
       .toast-container { 
         top: auto; 
@@ -535,14 +546,6 @@
       }
       .modal-dialog { margin: 1rem; max-width: calc(100% - 2rem); }
       .modal-lg { max-width: 100%; }
-      
-      /* hide some less important columns on very small screens */
-      .table-responsive table th:nth-child(5),
-      .table-responsive table td:nth-child(5),
-      .table-responsive table th:nth-child(7),
-      .table-responsive table td:nth-child(7) {
-        display: none !important;
-      }
     }
 
     @media (max-width: 420px) {
@@ -558,12 +561,6 @@
       .stat-card h3 { font-size: 0.85rem; }
       .stat-card .icon { font-size: 1rem; }
       .stat-card .label { font-size: 0.55rem; }
-      
-      .table td, .table th { 
-        padding: 0.15rem 0.25rem; 
-        font-size: 0.55rem;
-      }
-      .table-responsive table { min-width: 700px; }
       
       .speed-slider { width: 40px; }
       .speed-value { font-size: 0.6rem !important; min-width: 20px !important; }
@@ -657,6 +654,8 @@
       .alert-light { background: #1e293b; color: #e2e8f0; border-color: #334155; }
       .btn-outline-secondary { color: #94a3b8; border-color: #334155; }
       .btn-outline-secondary:hover { background: #334155; color: white; }
+      .invoice-mobile-card { background: #16213e; border-color: #1e293b; }
+      .invoice-mobile-card .row-line .value { color: #e2e8f0; }
     }
 
     /* Checkpoint editor */
@@ -685,29 +684,6 @@
       border: 1px solid #e2e8f0;
       padding: 4px;
       background: white;
-    }
-
-    /* === FIX 1: Dropdown icon no caret and compact === */
-    .dropdown-toggle-icon::after { display: none; }
-    .dropdown-toggle-icon { width: 32px; padding: 4px 0; text-align: center; }
-    .dropdown-menu { min-width: 190px; font-size: 0.85rem; }
-
-    /* === FIX 2: Sticky first column on mobile === */
-    @media (max-width: 768px) {
-      .table-responsive table th:first-child,
-      .table-responsive table td:first-child {
-        position: sticky;
-        left: 0;
-        background: white;
-        z-index: 2;
-        box-shadow: 2px 0 4px rgba(0,0,0,0.06);
-      }
-      @media (prefers-color-scheme: dark) {
-        .table-responsive table th:first-child,
-        .table-responsive table td:first-child {
-          background: #16213e;
-        }
-      }
     }
   </style>
 </head>
@@ -847,7 +823,7 @@
       </div>
     </div>
 
-    <!-- Shipment Table -->
+    <!-- Shipment Section: table on desktop, cards on mobile -->
     <div class="card border-0 shadow-sm">
       <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center pt-3">
         <h6 class="mb-0 fw-bold"><i class="bi bi-list-ul me-2 text-danger"></i>Shipments</h6>
@@ -859,7 +835,8 @@
         </div>
       </div>
       <div class="card-body p-0">
-        <div class="table-responsive">
+        <!-- === DESKTOP TABLE (hidden on mobile) === -->
+        <div class="d-none d-md-block table-responsive">
           <table class="table table-hover table-sm mb-0" id="shipment-table">
             <thead>
               <tr>
@@ -954,17 +931,15 @@
                   </td>
                   <td>
                     <div class="d-flex align-items-center gap-1">
-                      <!-- Speed slider: max 100 => 10.0x -->
                       <input type="range" class="speed-slider" min="1" max="100" step="1"
                              value="{{ (s.speed[:-1]|float * 10)|int }}" 
                              onchange="updateSpeed('{{ s.tracking_number }}', this.value / 10)">
                       <span class="speed-value" style="font-family: monospace; font-weight:700; font-size:0.65rem; min-width: 25px;">{{ s.speed }}</span>
                     </div>
                   </td>
-                  <!-- Controls: desktop row, mobile dropdown -->
                   <td>
-                    <!-- Desktop / tablet: full button row -->
-                    <div class="d-none d-md-flex gap-1 flex-wrap">
+                    <!-- Desktop: full button row (same as before) -->
+                    <div class="d-flex gap-1 flex-wrap">
                       {% if s.paused %}
                       <button class="btn btn-resume btn-sm" onclick="togglePause('{{ s.tracking_number }}', false)" title="Resume">
                         <i class="bi bi-play-fill"></i>
@@ -990,38 +965,6 @@
                         <i class="bi bi-check-circle"></i> Paid
                       </button>
                     </div>
-
-                    <!-- Mobile: dropdown with all actions -->
-                    <div class="dropdown d-md-none">
-                      <button class="btn btn-view btn-sm dropdown-toggle-icon" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions">
-                        <i class="bi bi-three-dots-vertical"></i>
-                      </button>
-                      <ul class="dropdown-menu dropdown-menu-end">
-                        <li>
-                          {% if s.paused %}
-                          <a class="dropdown-item" href="#" onclick="event.preventDefault(); togglePause('{{ s.tracking_number }}', false);">
-                            <i class="bi bi-play-fill me-2"></i>Resume
-                          </a>
-                          {% else %}
-                          <a class="dropdown-item" href="#" onclick="event.preventDefault(); togglePause('{{ s.tracking_number }}', true);">
-                            <i class="bi bi-pause-fill me-2"></i>Pause
-                          </a>
-                          {% endif %}
-                        </li>
-                        <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); showDetails('{{ s.tracking_number }}');"><i class="bi bi-eye me-2"></i>View details</a></li>
-                        {% if s.recipient_email and s.recipient_email != '-' %}
-                        <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); showEmailModal('{{ s.tracking_number }}');"><i class="bi bi-envelope me-2"></i>Send email</a></li>
-                        {% endif %}
-                        <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); blockPayment('{{ s.tracking_number }}');"><i class="bi bi-credit-card me-2"></i>Block for payment</a></li>
-                        <li>
-                          <a class="dropdown-item {% if s.payment_status == 'paid' or s.payment_status == 'failed' %}disabled{% endif %}" href="#"
-                             {% if not (s.payment_status == 'paid' or s.payment_status == 'failed') %}onclick="event.preventDefault(); markPaid('{{ s.tracking_number }}');"{% endif %}>
-                            <i class="bi bi-check-circle me-2"></i>Mark as paid
-                          </a>
-                        </li>
-                      </ul>
-                    </div>
                   </td>
                 </tr>
                 {% endfor %}
@@ -1042,7 +985,146 @@
             </tbody>
           </table>
         </div>
+
+        <!-- === MOBILE CARDS === -->
+        <div class="d-md-none shipment-cards">
+          {% if shipments %}
+            {% for s in shipments %}
+            <div class="invoice-mobile-card" data-tn="{{ s.tracking_number }}">
+              <div class="row-line">
+                <span class="label">Waybill</span>
+                <span class="value"><code>{{ s.tracking_number }}</code></span>
+              </div>
+              <div class="row-line">
+                <span class="label">Status</span>
+                <span class="value">
+                  <span class="status-badge bg-{% if s.status == 'Delivered' %}success{% elif s.status == 'Exception' %}danger{% elif s.status == 'Delayed' %}warning{% elif s.status == 'On_Hold' %}warning{% elif s.paused %}secondary{% else %}primary{% endif %} text-white">
+                    <i class="bi {% if s.status == 'Delivered' %}bi-check-circle{% elif s.status == 'In_Transit' %}bi-truck{% elif s.status == 'Out_for_Delivery' %}bi-box-arrow-up{% elif s.status == 'Exception' %}bi-exclamation-triangle{% elif s.status == 'Delayed' %}bi-clock{% elif s.status == 'On_Hold' %}bi-pause-circle{% else %}bi-hourglass-split{% endif %} me-1"></i>
+                    {{ s.status }}{% if s.paused %} <i class="bi bi-pause-circle ms-1"></i>{% endif %}
+                  </span>
+                </span>
+              </div>
+              <div class="row-line">
+                <span class="label">Stage</span>
+                <span class="value">
+                  <span class="stage-badge 
+                    {%- if s.stage == 'pickup' %} pickup
+                    {%- elif s.stage == 'transit' %} transit
+                    {%- elif s.stage == 'customs' %} customs
+                    {%- elif s.stage == 'delivery' %} delivery
+                    {%- elif s.stage == 'delivered' %} delivered
+                    {%- elif s.stage == 'exception' %} exception
+                    {%- else %} pickup{%- endif %}">
+                    {{ s.stage|default('Pickup')|replace('_', ' ')|title }}
+                  </span>
+                </span>
+              </div>
+              <div class="row-line">
+                <span class="label">Service</span>
+                <span class="value">
+                  <span class="service-level-badge 
+                    {%- if '9:00' in s.service_level or '12:00' in s.service_level %} premium
+                    {%- elif 'Express' in s.service_level %} express
+                    {%- elif 'Economy' in s.service_level %} economy
+                    {%- endif %}">
+                    {{ s.service_level or 'DHL Express' }}
+                  </span>
+                </span>
+              </div>
+              <div class="row-line">
+                <span class="label">Billing</span>
+                <span class="value">
+                  <div><strong>${{ "%.2f"|format(s.invoice_amount|default(0, true)) }}</strong></div>
+                  <span class="billing-badge {% if s.payment_status == 'paid' %}paid{% elif s.payment_status == 'pending' %}pending{% elif s.payment_status == 'failed' %}failed{% else %}unpaid{% endif %}">
+                    {{ (s.payment_status or 'unpaid')|title }}
+                  </span>
+                </span>
+              </div>
+              <div class="row-line">
+                <span class="label">Delivery Window</span>
+                <span class="value">{{ s.delivery_window or 'Calculating...' }}</span>
+              </div>
+              <div class="row-line">
+                <span class="label">Proof of Delivery</span>
+                <span class="value">
+                  {% if s.proof_of_delivery %}
+                  <span class="proof-signature">{{ s.proof_of_delivery }}</span>
+                  {% else %}
+                  <span class="text-muted" style="font-size:0.6rem;">Pending</span>
+                  {% endif %}
+                </span>
+              </div>
+              <div class="row-line">
+                <span class="label">Progress</span>
+                <span class="value">
+                  <div style="min-width:60px; display:inline-block;">
+                    <div class="progress" style="height:5px;">
+                      <div class="progress-bar" role="progressbar" style="width:{{ s.progress_percent|default(0) }}%;"></div>
+                    </div>
+                    <small class="text-muted" style="font-size:0.5rem;">{{ "%.0f"|format(s.progress_percent|default(0)) }}%</small>
+                  </div>
+                </span>
+              </div>
+              <div class="row-line">
+                <span class="label">Speed</span>
+                <span class="value">
+                  <div class="d-flex align-items-center gap-1">
+                    <input type="range" class="speed-slider" min="1" max="100" step="1"
+                           value="{{ (s.speed[:-1]|float * 10)|int }}" 
+                           onchange="updateSpeed('{{ s.tracking_number }}', this.value / 10)">
+                    <span class="speed-value" style="font-family: monospace; font-weight:700; font-size:0.65rem; min-width:25px;">{{ s.speed }}</span>
+                  </div>
+                </span>
+              </div>
+              <div class="actions">
+                <!-- Mobile dropdown (same as before) -->
+                <div class="dropdown">
+                  <button class="btn btn-view btn-sm dropdown-toggle-icon w-100" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-three-dots-vertical me-1"></i> Actions
+                  </button>
+                  <ul class="dropdown-menu dropdown-menu-end w-100">
+                    <li>
+                      {% if s.paused %}
+                      <a class="dropdown-item" href="#" onclick="event.preventDefault(); togglePause('{{ s.tracking_number }}', false);">
+                        <i class="bi bi-play-fill me-2"></i>Resume
+                      </a>
+                      {% else %}
+                      <a class="dropdown-item" href="#" onclick="event.preventDefault(); togglePause('{{ s.tracking_number }}', true);">
+                        <i class="bi bi-pause-fill me-2"></i>Pause
+                      </a>
+                      {% endif %}
+                    </li>
+                    <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); showDetails('{{ s.tracking_number }}');"><i class="bi bi-eye me-2"></i>View details</a></li>
+                    {% if s.recipient_email and s.recipient_email != '-' %}
+                    <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); showEmailModal('{{ s.tracking_number }}');"><i class="bi bi-envelope me-2"></i>Send email</a></li>
+                    {% endif %}
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="#" onclick="event.preventDefault(); blockPayment('{{ s.tracking_number }}');"><i class="bi bi-credit-card me-2"></i>Block for payment</a></li>
+                    <li>
+                      <a class="dropdown-item {% if s.payment_status == 'paid' or s.payment_status == 'failed' %}disabled{% endif %}" href="#"
+                         {% if not (s.payment_status == 'paid' or s.payment_status == 'failed') %}onclick="event.preventDefault(); markPaid('{{ s.tracking_number }}');"{% endif %}>
+                        <i class="bi bi-check-circle me-2"></i>Mark as paid
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="empty-state">
+              <i class="bi bi-inbox"></i>
+              <h5>No Shipments Found</h5>
+              <p class="text-muted">Create your first shipment using the <strong>New Shipment</strong> button above.</p>
+              <button class="btn btn-create mt-2" onclick="showCreateModal()">
+                <i class="bi bi-plus-lg me-1"></i> Create First Shipment
+              </button>
+            </div>
+          {% endif %}
+        </div>
       </div>
+
+      <!-- Pagination (works for both views) -->
       {% if shipments and total_pages > 1 %}
       <div class="card-footer bg-transparent border-0">
         <nav>
@@ -1114,7 +1196,7 @@
     </div>
   </div>
 
-  <!-- === MODALS === -->
+  <!-- === MODALS (unchanged) === -->
 
   <!-- EMAIL SEND MODAL -->
   <div class="modal fade" id="emailModal" tabindex="-1">
