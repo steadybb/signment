@@ -134,29 +134,48 @@
     }
     .table tr:hover { background: #f8fafc; }
     
-    .btn-pause, .btn-resume, .btn-create, .btn-view, .btn-email,
-    .btn-block, .btn-paid {
-      font-size: 0.7rem;
-      padding: 4px 10px;
-      border-radius: 20px;
-      font-weight: 600;
+    /* Compact icon-only action buttons */
+    .btn-icon {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
       border: none;
+      font-size: 0.85rem;
       transition: all 0.2s;
-      white-space: nowrap;
     }
-    .btn-pause { background: #fee2e2; color: #dc2626; }
-    .btn-pause:hover { background: #fecaca; transform: scale(1.05); }
-    .btn-resume { background: #dcfce7; color: #16a34a; }
-    .btn-resume:hover { background: #bbf7d0; transform: scale(1.05); }
-    .btn-view { background: #f1f5f9; color: #475569; }
-    .btn-view:hover { background: #e2e8f0; transform: scale(1.05); }
-    .btn-email { background: #dbeafe; color: #2563eb; }
-    .btn-email:hover { background: #bfdbfe; transform: scale(1.05); }
-    .btn-block { background: #fef3c7; color: #92400e; }
-    .btn-block:hover { background: #fde68a; transform: scale(1.05); }
-    .btn-paid { background: #dcfce7; color: #16a34a; }
-    .btn-paid:hover { background: #bbf7d0; transform: scale(1.05); }
-    .btn-paid:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-icon.btn-pause { background: #fee2e2; color: #dc2626; }
+    .btn-icon.btn-pause:hover { background: #fecaca; transform: scale(1.08); }
+    .btn-icon.btn-resume { background: #dcfce7; color: #16a34a; }
+    .btn-icon.btn-resume:hover { background: #bbf7d0; transform: scale(1.08); }
+    .btn-icon.btn-more { background: #f1f5f9; color: #475569; }
+    .btn-icon.btn-more:hover { background: #e2e8f0; transform: scale(1.08); }
+    .btn-icon.dropdown-toggle-nocaret::after { display: none; }
+
+    .dropdown-menu.actions-menu {
+      min-width: 180px;
+      font-size: 0.82rem;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      padding: 6px;
+    }
+    .dropdown-menu.actions-menu .dropdown-item {
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+    .dropdown-menu.actions-menu .dropdown-item.disabled {
+      opacity: 0.4;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .dropdown-menu.actions-menu { background: #16213e; color: #e2e8f0; }
+      .dropdown-menu.actions-menu .dropdown-item { color: #e2e8f0; }
+      .dropdown-menu.actions-menu .dropdown-item:hover { background: #1e293b; color: #fff; }
+    }
+    
     .btn-create { background: var(--dhl-red); color: white; padding: 8px 20px; }
     .btn-create:hover { background: #b0040e; color: white; transform: scale(1.02); }
     
@@ -460,11 +479,7 @@
       #map { height: 250px; }
       .speed-slider { width: 40px; }
       .toast-container { max-width: 300px; right: 10px; }
-      .btn-pause, .btn-resume, .btn-view, .btn-email,
-      .btn-block, .btn-paid { 
-        font-size: 0.55rem !important;
-        padding: 2px 6px !important;
-      }
+      .btn-icon { width: 26px; height: 26px; font-size: 0.75rem; }
       
       .status-badge {
         font-size: 0.65rem !important;
@@ -516,15 +531,7 @@
       .proof-signature { max-width: 80px; font-size: 0.55rem; }
       .delivery-window { font-size: 0.55rem; }
       
-      .btn-pause, .btn-resume, .btn-view, .btn-email,
-      .btn-block, .btn-paid { 
-        font-size: 0.5rem !important;
-        padding: 1px 4px !important;
-      }
-      .btn-pause i, .btn-resume i, .btn-view i, .btn-email i,
-      .btn-block i, .btn-paid i {
-        font-size: 0.6rem;
-      }
+      .btn-icon { width: 22px; height: 22px; font-size: 0.65rem; }
       
       .toast-container { 
         top: auto; 
@@ -938,33 +945,52 @@
                       <span class="speed-value" style="font-family: monospace; font-weight:700; font-size:0.65rem; min-width: 25px;">{{ s.speed }}</span>
                     </div>
                   </td>
+                  <!-- NEW COMPACT CONTROLS CELL -->
                   <td>
-                    <div class="d-flex gap-1 flex-wrap">
+                    <div class="d-flex align-items-center gap-1">
                       {% if s.paused %}
-                      <button class="btn btn-resume btn-sm" onclick="togglePause('{{ s.tracking_number }}', false)" title="Resume">
+                      <button class="btn btn-icon btn-resume" onclick="togglePause('{{ s.tracking_number }}', false)" title="Resume">
                         <i class="bi bi-play-fill"></i>
                       </button>
                       {% else %}
-                      <button class="btn btn-pause btn-sm" onclick="togglePause('{{ s.tracking_number }}', true)" title="Pause">
+                      <button class="btn btn-icon btn-pause" onclick="togglePause('{{ s.tracking_number }}', true)" title="Pause">
                         <i class="bi bi-pause-fill"></i>
                       </button>
                       {% endif %}
-                      <button class="btn btn-view btn-sm" onclick="showDetails('{{ s.tracking_number }}')" title="View">
-                        <i class="bi bi-eye"></i>
-                      </button>
-                      {% if s.recipient_email and s.recipient_email != '-' %}
-                      <button class="btn btn-email btn-sm" onclick="showEmailModal('{{ s.tracking_number }}')" title="Email">
-                        <i class="bi bi-envelope"></i>
-                      </button>
-                      {% endif %}
-                      <!-- ========== PAYMENT WALL BUTTONS ========== -->
-                      <button class="btn btn-block btn-sm" onclick="blockPayment('{{ s.tracking_number }}')" title="Block for Payment">
-                        <i class="bi bi-credit-card"></i> Block
-                      </button>
-                      <button class="btn btn-paid btn-sm" onclick="markPaid('{{ s.tracking_number }}')" title="Mark as Paid"
-                              {% if s.payment_status == 'paid' or s.payment_status == 'failed' %}disabled{% endif %}>
-                        <i class="bi bi-check-circle"></i> Paid
-                      </button>
+
+                      <div class="dropdown">
+                        <button class="btn btn-icon btn-more dropdown-toggle-nocaret" type="button"
+                                data-bs-toggle="dropdown" data-bs-boundary="viewport" aria-expanded="false" title="More actions">
+                          <i class="bi bi-three-dots-vertical"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end actions-menu">
+                          <li>
+                            <a class="dropdown-item" href="#" onclick="showDetails('{{ s.tracking_number }}'); return false;">
+                              <i class="bi bi-eye me-2"></i>View Details
+                            </a>
+                          </li>
+                          {% if s.recipient_email and s.recipient_email != '-' %}
+                          <li>
+                            <a class="dropdown-item" href="#" onclick="showEmailModal('{{ s.tracking_number }}'); return false;">
+                              <i class="bi bi-envelope me-2"></i>Send Email
+                            </a>
+                          </li>
+                          {% endif %}
+                          <li><hr class="dropdown-divider"></li>
+                          <li>
+                            <a class="dropdown-item" href="#" onclick="blockPayment('{{ s.tracking_number }}'); return false;">
+                              <i class="bi bi-credit-card me-2"></i>Block for Payment
+                            </a>
+                          </li>
+                          <li>
+                            <a class="dropdown-item {% if s.payment_status == 'paid' or s.payment_status == 'failed' %}disabled{% endif %}"
+                               href="#"
+                               onclick="{% if not (s.payment_status == 'paid' or s.payment_status == 'failed') %}markPaid('{{ s.tracking_number }}'); {% endif %}return false;">
+                              <i class="bi bi-check-circle me-2"></i>Mark as Paid
+                            </a>
+                          </li>
+                        </ul>
+                      </div>
                     </div>
                   </td>
                 </tr>
