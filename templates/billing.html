@@ -23,13 +23,24 @@
             color: var(--dhl-dark);
         }
 
-        /* Header */
+        /* --- BOX AESTHETIC: No rounded corners --- */
+        .billing-header,
+        .stat-card,
+        .invoice-card,
+        .invoice-mobile-card,
+        .btn-pay,
+        .btn-outline-light,
+        .payment-method-select,
+        .status-badge,
+        .checkbox-custom {
+            border-radius: 0 !important;
+        }
+
         .billing-header {
             background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%);
             color: #fff;
-            padding: 1.25rem 1.5rem;
-            border-radius: 0 0 24px 24px;
-            box-shadow: 0 8px 30px rgba(212,5,17,0.2);
+            padding: 1rem 1.5rem;
+            box-shadow: 0 2px 8px rgba(212,5,17,0.2);
             position: sticky;
             top: 0;
             z-index: 50;
@@ -64,34 +75,32 @@
             white-space: nowrap;
         }
         .billing-header .btn-outline-light {
-            border-color: rgba(255,255,255,0.35);
+            border: 1px solid rgba(255,255,255,0.35);
             color: #fff;
             font-size: 0.75rem;
             padding: 0.3rem 0.9rem;
-            border-radius: 40px;
             transition: all 0.2s;
             font-weight: 500;
+            background: transparent;
         }
         .billing-header .btn-outline-light:hover {
             background: rgba(255,255,255,0.15);
             border-color: #fff;
         }
 
-        /* Stats */
         .stats-row {
-            margin-top: -0.75rem;
+            margin-top: 1.5rem;
             padding: 0 0.5rem;
         }
         .stat-card {
             background: #fff;
-            border-radius: 16px;
-            padding: 1.1rem 1.2rem 0.9rem;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+            padding: 1rem 1.2rem 0.8rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
             border-left: 4px solid var(--dhl-red);
             transition: transform 0.15s ease;
             height: 100%;
         }
-        .stat-card:hover { transform: translateY(-3px); }
+        .stat-card:hover { transform: translateY(-2px); }
         .stat-card .stat-number {
             font-size: 1.6rem;
             font-weight: 700;
@@ -117,18 +126,16 @@
         .stat-card.paid .stat-number { color: #16a34a; }
         .stat-card.paid .stat-icon { color: #22c55e; }
 
-        /* Invoice Card */
         .invoice-card {
             background: #fff;
-            border-radius: 20px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
             overflow: hidden;
             margin-top: 1.5rem;
         }
         .invoice-card .card-header {
             background: transparent;
             border: none;
-            padding: 1.25rem 1.5rem 0.5rem 1.5rem;
+            padding: 1rem 1.5rem 0.5rem 1.5rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -150,7 +157,6 @@
         .payment-method-select {
             font-size: 0.8rem;
             padding: 0.35rem 0.8rem;
-            border-radius: 40px;
             border: 1px solid #d1d5db;
             background: #fff;
             min-width: 150px;
@@ -166,7 +172,6 @@
             color: #fff;
             border: none;
             padding: 0.4rem 1.2rem;
-            border-radius: 40px;
             font-weight: 600;
             font-size: 0.8rem;
             transition: all 0.2s;
@@ -177,12 +182,10 @@
         }
         .btn-pay:hover:not(:disabled) {
             background: #b0040e;
-            transform: scale(1.02);
         }
         .btn-pay:disabled {
             opacity: 0.5;
             cursor: not-allowed;
-            transform: none;
         }
         .btn-pay.outline {
             background: transparent;
@@ -194,7 +197,6 @@
             color: #fff;
         }
 
-        /* Table */
         .invoice-table {
             width: 100%;
             border-collapse: collapse;
@@ -228,7 +230,6 @@
 
         .status-badge {
             padding: 0.2rem 0.7rem;
-            border-radius: 30px;
             font-weight: 600;
             font-size: 0.7rem;
             display: inline-flex;
@@ -244,7 +245,6 @@
         .invoice-mobile-card {
             display: none;
             background: #fff;
-            border-radius: 14px;
             padding: 1rem 1.2rem;
             margin-bottom: 0.75rem;
             box-shadow: 0 1px 6px rgba(0,0,0,0.04);
@@ -286,31 +286,28 @@
         }
         .footer a:hover { text-decoration: underline; }
 
-        /* Responsive */
         @media (max-width: 992px) {
             .invoice-table th:nth-child(4),
-            .invoice-table td:nth-child(4) { display: none; } /* Origin */
+            .invoice-table td:nth-child(4) { display: none; }
         }
 
         @media (max-width: 768px) {
             .billing-header .brand h1 { font-size: 1rem; }
             .billing-header .user-info .email { max-width: 120px; }
-
             .stat-card { padding: 0.8rem 1rem 0.6rem; }
             .stat-card .stat-number { font-size: 1.3rem; }
             .stat-card .stat-icon { font-size: 1.3rem; }
-
             .invoice-table th:nth-child(5),
             .invoice-table td:nth-child(5),
             .invoice-table th:nth-child(6),
-            .invoice-table td:nth-child(6) { display: none; } /* Service, Distance */
+            .invoice-table td:nth-child(6) { display: none; }
         }
 
         @media (max-width: 576px) {
             .invoice-table-wrapper { display: none; }
             .invoice-mobile-card { display: block; }
 
-            .billing-header { padding: 0.75rem 1rem; border-radius: 0 0 18px 18px; }
+            .billing-header { padding: 0.75rem 1rem; }
             .billing-header .brand img { height: 28px; }
             .billing-header .brand h1 { font-size: 0.9rem; }
             .billing-header .user-info .email { max-width: 80px; font-size: 0.7rem; }
@@ -320,17 +317,49 @@
             .stat-card .stat-number { font-size: 1.1rem; }
             .stat-card .stat-label { font-size: 0.55rem; }
             .stat-card .stat-icon { font-size: 1.1rem; }
+            .stats-row { margin-top: 1.2rem; }
 
             .invoice-card .card-header { padding: 0.75rem 1rem; }
             .invoice-card .card-header h5 { font-size: 0.9rem; }
-            .invoice-card .card-header .actions { width: 100%; justify-content: stretch; }
-            .payment-method-select { flex: 1; min-width: 0; }
-            #paySelectedBtn { flex: 1; justify-content: center; }
+            .invoice-card .card-header .actions {
+                width: 100%;
+                display: flex;
+                gap: 8px;
+                flex-wrap: nowrap;
+            }
+            .payment-method-select {
+                flex: 1 1 0;
+                min-width: 0;
+                width: 0;
+                padding: 0.35rem 0.5rem;
+            }
+            #paySelectedBtn {
+                flex: 1 1 0;
+                min-width: 0;
+                width: 0;
+                justify-content: center;
+                padding: 0.35rem 0.5rem;
+                font-size: 0.75rem;
+            }
+
+            .invoice-mobile-card {
+                padding: 0.8rem;
+                margin-bottom: 0.5rem;
+            }
+            .invoice-mobile-card .row-line {
+                font-size: 0.75rem;
+                padding: 0.2rem 0;
+            }
+            .invoice-mobile-card .actions .btn-pay {
+                font-size: 0.75rem;
+                padding: 0.3rem 0.8rem;
+            }
         }
 
         @media (max-width: 400px) {
             .billing-header .user-info .email { max-width: 60px; }
             .stat-card .stat-number { font-size: 0.95rem; }
+            .stats-row { margin-top: 1rem; }
         }
     </style>
 </head>
@@ -340,7 +369,7 @@
         <!-- HEADER -->
         <header class="billing-header d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div class="brand">
-                <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL">
+                <img src="https://res.cloudinary.com/de1ucsg6q/image/upload/v1787778296/IMG_7646_scvhxj.jpg" alt="DHL">
                 <h1>My Invoices</h1>
             </div>
             <div class="user-info">
@@ -394,12 +423,13 @@
                 <h5><i class="bi bi-list-ul me-2 text-danger"></i>Your Shipments</h5>
                 <div class="actions">
                     <select class="payment-method-select" id="paymentMethodSelect">
-                        <option value="Credit Card">💳 Credit Card</option>
-                        <option value="Bank Transfer">🏦 Bank Transfer</option>
-                        <option value="PayPal">📱 PayPal</option>
-                        <option value="Cash">💵 Cash</option>
+                        <option value="credit_card">💳 Credit Card</option>
+                        <option value="bank_transfer">🏦 Bank Transfer</option>
+                        <option value="paypal">📱 PayPal</option>
+                        <option value="gift_card">🎁 Gift Card</option>
+                        <option value="crypto">₿ Crypto</option>
                     </select>
-                    <button class="btn-pay" id="paySelectedBtn" disabled onclick="paySelected()">
+                    <button class="btn-pay" id="paySelectedBtn" disabled onclick="handlePayClick()">
                         <i class="bi bi-credit-card me-1"></i> Pay Selected
                     </button>
                 </div>
@@ -440,7 +470,7 @@
                                 </td>
                                 <td>
                                     {% if inv.shipment.payment_status != 'paid' %}
-                                    <button class="btn-pay" onclick="paySingle('{{ inv.shipment.tracking_number }}')">
+                                    <button class="btn-pay" onclick="handlePaySingle('{{ inv.shipment.tracking_number }}')">
                                         <i class="bi bi-credit-card me-1"></i> Pay
                                     </button>
                                     {% else %}
@@ -490,7 +520,7 @@
                         </div>
                         <div class="actions">
                             {% if inv.shipment.payment_status != 'paid' %}
-                            <button class="btn-pay w-100" onclick="paySingle('{{ inv.shipment.tracking_number }}')">
+                            <button class="btn-pay w-100" onclick="handlePaySingle('{{ inv.shipment.tracking_number }}')">
                                 <i class="bi bi-credit-card me-1"></i> Pay Now
                             </button>
                             {% else %}
@@ -511,6 +541,43 @@
     </div>
 
     <script>
+        // ============================================================
+        // PAYMENT REDIRECT LOGIC
+        // ============================================================
+
+        function getSelectedTrackingNumbers() {
+            const checked = document.querySelectorAll('.invoice-select:checked');
+            return Array.from(checked).map(cb => cb.value);
+        }
+
+        function getPaymentMethodValue() {
+            return document.getElementById('paymentMethodSelect').value;
+        }
+
+        function getPaymentMethodLabel() {
+            const select = document.getElementById('paymentMethodSelect');
+            return select.options[select.selectedIndex].text;
+        }
+
+        function handlePayClick() {
+            const selected = getSelectedTrackingNumbers();
+            if (selected.length === 0) return;
+            const method = getPaymentMethodValue();
+            const email = "{{ email }}";
+            const trackingParam = selected.join(',');
+            // Redirect to the appropriate payment page
+            window.location.href = `/payment/${method}?email=${encodeURIComponent(email)}&tracking=${encodeURIComponent(trackingParam)}`;
+        }
+
+        function handlePaySingle(trackingNumber) {
+            const method = getPaymentMethodValue();
+            const email = "{{ email }}";
+            window.location.href = `/payment/${method}?email=${encodeURIComponent(email)}&tracking=${encodeURIComponent(trackingNumber)}`;
+        }
+
+        // ============================================================
+        // CHECKBOX SELECT ALL
+        // ============================================================
         document.addEventListener('DOMContentLoaded', function() {
             const selectAll = document.getElementById('selectAll');
             const checkboxes = document.querySelectorAll('.invoice-select');
@@ -536,57 +603,8 @@
 
             updatePayButton();
         });
-
-        function getSelectedTrackingNumbers() {
-            const checked = document.querySelectorAll('.invoice-select:checked');
-            return Array.from(checked).map(cb => cb.value);
-        }
-
-        function paySelected() {
-            const trackingNumbers = getSelectedTrackingNumbers();
-            if (!trackingNumbers.length) return;
-            const email = "{{ email }}";
-            const totalDue = {{ total_due }};
-            const paymentMethod = document.getElementById('paymentMethodSelect').value;
-            if (!confirm(`Pay for ${trackingNumbers.length} invoice(s) totaling $${totalDue.toFixed(2)} using ${paymentMethod}?`)) return;
-            processPayment(email, trackingNumbers, paymentMethod);
-        }
-
-        function paySingle(trackingNumber) {
-            const email = "{{ email }}";
-            const paymentMethod = document.getElementById('paymentMethodSelect').value;
-            if (!confirm(`Pay invoice for shipment ${trackingNumber} using ${paymentMethod}?`)) return;
-            processPayment(email, [trackingNumber], paymentMethod);
-        }
-
-        function processPayment(email, trackingNumbers, paymentMethod) {
-            const payBtn = document.querySelector('#paySelectedBtn') || event.target;
-            payBtn.disabled = true;
-            payBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
-
-            fetch('{{ url_for("billing_pay") }}', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, tracking_numbers: trackingNumbers, payment_method: paymentMethod })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    alert(`Payment successful! ${data.paid_count} invoice(s) marked as paid.`);
-                    location.reload();
-                } else {
-                    alert('Payment failed: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(err => {
-                alert('Error processing payment: ' + err.message);
-            })
-            .finally(() => {
-                payBtn.disabled = false;
-                payBtn.innerHTML = '<i class="bi bi-credit-card me-1"></i> Pay Selected';
-            });
-        }
     </script>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
