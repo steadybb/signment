@@ -15,7 +15,7 @@
             padding: 0;
             min-height: 100vh;
             color: var(--dhl-dark);
-            overflow-y: auto;
+            overflow-y: auto; /* allows scrolling */
         }
         body.overlay-active { overflow: hidden; }
 
@@ -27,7 +27,7 @@
         .payment-card .step-indicator { font-size: 0.8rem; color: #6b7280; margin-bottom: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.75rem; }
         .payment-card .step-indicator strong { color: var(--dhl-red); }
         .form-label { font-weight: 600; font-size: 0.85rem; color: #4a5568; }
-        .form-control, .form-select { border-radius: 0; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+        .form-control, .form-select { border-radius: 0; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; font-size: 0.9rem; background: #fff; }
         .form-control:focus, .form-select:focus { border-color: var(--dhl-red); box-shadow: 0 0 0 3px rgba(212,5,17,0.1); }
         .btn-pay { background: var(--dhl-red); color: #fff; border: none; padding: 0.6rem 1.8rem; font-weight: 600; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
         .btn-pay:hover:not(:disabled) { background: #b0040e; }
@@ -64,7 +64,7 @@
             padding: 2rem;
             z-index: 9999;
             text-align: center;
-            overflow: hidden;
+            overflow: hidden; /* prevent overlay scroll */
         }
         #resultOverlay.show { display: flex; }
         #resultOverlay .overlay-content {
