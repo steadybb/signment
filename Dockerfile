@@ -26,6 +26,7 @@ COPY worker.py .
 COPY utils.py .
 COPY forms.py .
 COPY simulator_engine.py .
+COPY payment_routes.py .
 COPY Procfile .
 COPY templates/ templates/
 COPY static/ static/
