@@ -9,7 +9,7 @@ from datetime import datetime
 from flask import render_template, request, jsonify, flash
 from werkzeug.utils import secure_filename
 from utils import (
-    Shipment, db, get_bot, rset, rget, invalidate_cache, broadcast_update,
+    Shipment, db, get_bot, rset, rget, invalidate_cache,
     validate_email, estimate_distance, redis_client
 )
 
