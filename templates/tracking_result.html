@@ -821,11 +821,13 @@
     <header class="header">
         <img src="{{ url_for('static', filename='dhl-logo.png') }}" alt="DHL Logo">
         <div class="header-actions">
+            {% if shipment %}
             <a href="{{ url_for('billing', email=shipment.recipient_email) if shipment.recipient_email else url_for('billing') }}"
                class="text-white-50 text-decoration-none me-2 d-flex align-items-center gap-1"
                style="color: #1a1a1a !important; font-weight: 500; font-size: 0.9rem;">
                 <i class="bi bi-credit-card"></i> <span class="d-none d-sm-inline">Invoices</span>
             </a>
+            {% endif %}
             <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="menuContent" type="button">☰</button>
         </div>
         <div id="menuContent" class="menu-content" role="menu" aria-labelledby="menuBtn">
