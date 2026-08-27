@@ -547,8 +547,14 @@
             .track-box button { font-size: 16px; padding: 10px; }
         }
         
+        /* ─── FIX: Mobile fallback image ─── */
         @media (max-width: 420px) {
-            .video-background { display: none; }
+            .video-background {
+                display: block;
+                background-image: url('{{ url_for('static', filename='fallback-image.jpg') }}');
+                background-size: cover;
+                background-position: center;
+            }
             body { background: #f5f5f5; }
             .content-overlay { background: rgba(255, 255, 255, 0.95); }
         }
