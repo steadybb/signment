@@ -358,6 +358,103 @@ def get_redis_metrics() -> Dict[str, Any]:
         'last_disable': globals().get('last_redis_disable')
     }
 
+# ============================================================
+# REDIS HELPER FUNCTIONS (shared across app & payment routes)
+# ============================================================
+
+# In-memory fallback for Redis (used when Redis is unavailable)
+in_memory_sim = {}
+in_memory_clients = {}
+
+def rget(field: str, tn: str, default=None):
+    """Get a value from Redis hash or in-memory fallback."""
+    global redis_client
+    try:
+        if not redis_client:
+            return in_memory_sim.get(tn, {}).get(field, default)
+        val = redis_client.hget(field, tn)
+        if val is None:
+            return in_memory_sim.get(tn, {}).get(field, default)
+        if isinstance(val, bytes):
+            return val.decode('utf-8')
+        return val
+    except Exception:
+        # Fallback to in‑memory
+        return in_memory_sim.get(tn, {}).get(field, default)
+
+def rset(field: str, tn: str, value):
+    """Set a value in Redis hash or in‑memory fallback."""
+    global redis_client
+    if not redis_client:
+        try:
+            in_memory_sim.setdefault(tn, {})[field] = value
+        except Exception:
+            pass
+        return
+    try:
+        redis_client.hset(field, tn, value)
+    except Exception:
+        # If Redis fails, store in memory
+        try:
+            in_memory_sim.setdefault(tn, {})[field] = value
+        except Exception:
+            pass
+
+def rkeys(pattern: str):
+    """Return keys matching pattern from Redis, or empty list on error."""
+    try:
+        if not redis_client:
+            return []
+        keys = redis_client.keys(pattern) or []
+        return [k.decode() if isinstance(k, bytes) else k for k in keys]
+    except Exception as e:
+        bot_logger.warning(f"Redis keys failed for pattern {pattern}: {e}")
+        return []
+
+def rhgetall(key: str):
+    """Return all fields of a Redis hash, or empty dict on error."""
+    try:
+        if not redis_client:
+            return {}
+        d = redis_client.hgetall(key) or {}
+        return { (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v) for k, v in d.items() }
+    except Exception as e:
+        bot_logger.warning(f"Redis hgetall failed for {key}: {e}")
+        return {}
+
+def rlist_lpop(key: str):
+    """Pop left from a Redis list, or None on error."""
+    try:
+        if not redis_client:
+            return None
+        v = redis_client.lpop(key)
+        if v is None:
+            return None
+        return v.decode() if isinstance(v, bytes) else v
+    except Exception as e:
+        bot_logger.warning(f"Redis lpop failed for {key}: {e}")
+        return None
+
+def rexists(key: str) -> bool:
+    """Check if a Redis key exists."""
+    try:
+        if not redis_client:
+            return False
+        return bool(redis_client.exists(key))
+    except Exception as e:
+        bot_logger.warning(f"Redis exists check failed for {key}: {e}")
+        return False
+
+def rhlen(key: str) -> int:
+    """Return the length of a Redis hash, or 0 on error."""
+    try:
+        if not redis_client:
+            return 0
+        return redis_client.hlen(key)
+    except Exception as e:
+        bot_logger.warning(f"Redis hlen failed for {key}: {e}")
+        return 0
+
 # === CONFIGURATION CLASS (EXPORTED) ===
 class BotConfig:
     def __init__(
