@@ -618,6 +618,13 @@ if bot is not None:
         fake_msg.text = f"/track {tracking_number}"
         track_shipment(fake_msg)
 
+    # === FALLBACK HANDLER FOR ANY MESSAGE CONTAINING "help" ===
+    @bot.message_handler(func=lambda message: message.text and 'help' in message.text.lower())
+    @rate_limit
+    def fallback_help(message):
+        # Reuse the help command logic
+        help_command(message)
+
     # === CALLBACK HANDLERS ===
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback(call):
