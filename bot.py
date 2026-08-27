@@ -195,7 +195,6 @@ def handle_add_shipment(message):
     if not tn or status not in config.valid_statuses:
         bot.reply_to(message, "Invalid tracking number or status.")
         return
-    # Save using the extended function (extra fields remain None)
     if save_shipment_with_context(tn, status, '', dest, email, origin, webhook, "DHL"):
         bot.reply_to(message, f"✅ Shipment `{tn}` added.", parse_mode='Markdown')
     else:
@@ -266,6 +265,29 @@ if bot is not None:
             return
         send_dynamic_menu(message.chat.id, page=1)
         bot_logger.info(f"Menu sent to admin {message.from_user.id}")
+
+    @bot.message_handler(commands=['help'])
+    @rate_limit
+    def help_command(message):
+        help_text = (
+            "*📚 Help Menu*\n\n"
+            "/start - Show menu\n"
+            "/track JD... - Track shipment\n"
+            "/notify JD... - Send notification\n"
+            "/stop JD... - Pause simulation\n"
+            "/continue JD... - Resume simulation\n"
+            "/setspeed JD... 2.0 - Set speed\n"
+            "/generate - New ID\n"
+            "/add - Create shipment\n"
+            "/list - View all shipments\n"
+            "/export - Download JSON\n"
+            "/logs - View logs\n"
+            "/stats - System statistics\n"
+            "/search - Search shipments\n"
+            "/bulk_action - Bulk operations\n"
+            "/myid - Get your user ID"
+        )
+        bot.reply_to(message, help_text, parse_mode='Markdown')
 
     @bot.message_handler(commands=['track'])
     @rate_limit
@@ -546,7 +568,6 @@ if bot is not None:
         if not is_admin(message.from_user.id):
             bot.reply_to(message, "Access denied.")
             return
-        # Use the handler
         handle_add_shipment(message)
 
     @bot.message_handler(commands=['export'])
@@ -593,7 +614,6 @@ if bot is not None:
     @rate_limit
     def direct_track(message):
         tracking_number = message.text.strip()
-        # Simulate /track command
         fake_msg = message
         fake_msg.text = f"/track {tracking_number}"
         track_shipment(fake_msg)
@@ -751,7 +771,6 @@ if bot is not None:
                 bot.edit_message_text("*Select bulk action*:", chat_id=call.message.chat.id,
                                      message_id=call.message.message_id, parse_mode='Markdown', reply_markup=markup)
             elif data == "stats":
-                # Reuse system_stats logic
                 try:
                     with app.app_context():
                         total = Shipment.query.count()
@@ -823,7 +842,6 @@ if bot is not None:
                     if shipment:
                         db.session.delete(shipment)
                         db.session.commit()
-                        # Clear Redis keys
                         if redis_client:
                             keys_to_delete = [
                                 "paused_simulations", "sim_speed_multipliers", "transport_mode",
