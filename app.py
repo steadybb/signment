@@ -131,6 +131,9 @@ app = utils_app
 Shipment = UtilsShipment
 config = bot_config
 
+# ========== FIX: Add Telegram admin chat ID to app config ==========
+app.config['TELEGRAM_ADMIN_CHAT_ID'] = os.getenv('TELEGRAM_ADMIN_CHAT_ID')
+
 # ========== Register payment routes ==========
 payment_routes.init_payment_routes(app)
 
