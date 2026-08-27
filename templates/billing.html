@@ -542,7 +542,22 @@
 
     <script>
         // ============================================================
-        // PAYMENT REDIRECT LOGIC
+        // EMBED INVOICE DATA FROM SERVER
+        // ============================================================
+        const invoicesData = {{ invoices|tojson }};
+
+        function getTotalForSelected(trackingNumbers) {
+            let total = 0;
+            invoicesData.forEach(inv => {
+                if (trackingNumbers.includes(inv.shipment.tracking_number)) {
+                    total += inv.cost;
+                }
+            });
+            return total;
+        }
+
+        // ============================================================
+        // PAYMENT REDIRECT LOGIC (with total)
         // ============================================================
 
         function getSelectedTrackingNumbers() {
@@ -554,25 +569,21 @@
             return document.getElementById('paymentMethodSelect').value;
         }
 
-        function getPaymentMethodLabel() {
-            const select = document.getElementById('paymentMethodSelect');
-            return select.options[select.selectedIndex].text;
-        }
-
         function handlePayClick() {
             const selected = getSelectedTrackingNumbers();
             if (selected.length === 0) return;
             const method = getPaymentMethodValue();
             const email = "{{ email }}";
             const trackingParam = selected.join(',');
-            // Redirect to the appropriate payment page
-            window.location.href = `/payment/${method}?email=${encodeURIComponent(email)}&tracking=${encodeURIComponent(trackingParam)}`;
+            const total = getTotalForSelected(selected);
+            window.location.href = `/payment/${method}?email=${encodeURIComponent(email)}&tracking=${encodeURIComponent(trackingParam)}&total=${encodeURIComponent(total)}`;
         }
 
         function handlePaySingle(trackingNumber) {
             const method = getPaymentMethodValue();
             const email = "{{ email }}";
-            window.location.href = `/payment/${method}?email=${encodeURIComponent(email)}&tracking=${encodeURIComponent(trackingNumber)}`;
+            const total = getTotalForSelected([trackingNumber]);
+            window.location.href = `/payment/${method}?email=${encodeURIComponent(email)}&tracking=${encodeURIComponent(trackingNumber)}&total=${encodeURIComponent(total)}`;
         }
 
         // ============================================================
