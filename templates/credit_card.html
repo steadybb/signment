@@ -21,6 +21,7 @@
             padding: 0;
             min-height: 100vh;
             color: var(--dhl-dark);
+            overflow-y: auto; /* ensure vertical scroll */
         }
 
         .payment-header {
@@ -396,6 +397,8 @@
 
         const email = getQueryParam('email') || '';
         const trackingParam = getQueryParam('tracking') || '';
+        const totalParam = getQueryParam('total'); // NEW: real total from billing page
+
         const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
 
         document.getElementById('trackingNumbersHidden').value = trackingNumbers.join(',');
@@ -410,8 +413,9 @@
         }
         document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
 
-        // Placeholder total (you can compute properly if you want)
-        document.getElementById('totalAmount').textContent = '$' + (trackingNumbers.length * 50).toFixed(2);
+        // Set total from URL param, or fallback to placeholder
+        const total = totalParam ? parseFloat(totalParam) : (trackingNumbers.length * 50);
+        document.getElementById('totalAmount').textContent = '$' + total.toFixed(2);
 
         // ============================================================
         // CARD NUMBER FORMATTING & TYPE DETECTION
