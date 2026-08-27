@@ -161,13 +161,14 @@
     .btn-create:hover { background: #b0040e; color: white; transform: scale(1.02); }
     
     .speed-slider {
-      width: 70px;
+      width: 100%;
       height: 4px;
       -webkit-appearance: none;
       appearance: none;
       background: #e2e8f0;
       border-radius: 2px;
       outline: none;
+      flex: 1;
     }
     .speed-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
@@ -341,6 +342,7 @@
       border-radius: 4px;
       background: #e2e8f0;
       overflow: hidden;
+      width: 100%;
     }
     .progress-bar {
       background: linear-gradient(90deg, var(--dhl-red), #ff4444);
@@ -358,6 +360,13 @@
       display: inline-block;
       overflow: hidden;
       text-overflow: ellipsis;
+      color: #1a1a1a; /* ensure visibility on white */
+    }
+    @media (prefers-color-scheme: dark) {
+      .proof-signature {
+        background: #2d3748;
+        color: #e2e8f0;
+      }
     }
     
     .delivery-window {
@@ -410,7 +419,7 @@
     .billing-badge.failed { background: #fef2f2; color: #b91c1c; }
     
     /* ============================================================
-       MOBILE CARDS (same as billing.html)
+       MOBILE CARDS (improved)
     ============================================================ */
     .invoice-mobile-card {
       background: #fff;
@@ -429,10 +438,39 @@
     .invoice-mobile-card .row-line .label {
       color: #6b7280;
       font-weight: 500;
+      flex-shrink: 0;
+      margin-right: 1rem;
     }
     .invoice-mobile-card .row-line .value {
       font-weight: 600;
       color: var(--dhl-dark);
+      flex: 1;
+      text-align: right;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    /* Make progress and speed controls fill the value space */
+    .invoice-mobile-card .row-line .value .progress-wrapper,
+    .invoice-mobile-card .row-line .value .speed-wrapper {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .invoice-mobile-card .row-line .value .progress-wrapper .progress {
+      flex: 1;
+    }
+    .invoice-mobile-card .row-line .value .speed-wrapper .speed-slider {
+      flex: 1;
+    }
+    /* Waybill number bigger */
+    .invoice-mobile-card .row-line .value code {
+      font-size: 1rem;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
     }
     .invoice-mobile-card .actions {
       margin-top: 0.6rem;
@@ -531,9 +569,9 @@
       
       .invoice-mobile-card { padding: 0.6rem; }
       .invoice-mobile-card .row-line { font-size: 0.7rem; }
+      .invoice-mobile-card .row-line .value code { font-size: 0.9rem; }
       .invoice-mobile-card .actions .dropdown-toggle-icon { font-size: 0.75rem; padding: 2px 8px; }
       
-      .speed-slider { width: 50px; }
       .proof-signature { max-width: 80px; font-size: 0.55rem; }
       .delivery-window { font-size: 0.55rem; }
       
@@ -562,7 +600,7 @@
       .stat-card .icon { font-size: 1rem; }
       .stat-card .label { font-size: 0.55rem; }
       
-      .speed-slider { width: 40px; }
+      .speed-slider { width: 100%; }
       .speed-value { font-size: 0.6rem !important; min-width: 20px !important; }
       
       #map { height: 180px; }
@@ -656,6 +694,8 @@
       .btn-outline-secondary:hover { background: #334155; color: white; }
       .invoice-mobile-card { background: #16213e; border-color: #1e293b; }
       .invoice-mobile-card .row-line .value { color: #e2e8f0; }
+      .invoice-mobile-card .row-line .value code { background: #1e293b; color: #e2e8f0; }
+      .proof-signature { background: #2d3748; color: #e2e8f0; }
     }
 
     /* Checkpoint editor */
@@ -938,7 +978,7 @@
                     </div>
                   </td>
                   <td>
-                    <!-- Desktop: full button row (same as before) -->
+                    <!-- Desktop: full button row -->
                     <div class="d-flex gap-1 flex-wrap">
                       {% if s.paused %}
                       <button class="btn btn-resume btn-sm" onclick="togglePause('{{ s.tracking_number }}', false)" title="Resume">
@@ -986,7 +1026,7 @@
           </table>
         </div>
 
-        <!-- === MOBILE CARDS === -->
+        <!-- === MOBILE CARDS (improved) === -->
         <div class="d-md-none shipment-cards">
           {% if shipments %}
             {% for s in shipments %}
@@ -1054,30 +1094,32 @@
                   {% endif %}
                 </span>
               </div>
+              <!-- PROGRESS row – full width -->
               <div class="row-line">
                 <span class="label">Progress</span>
                 <span class="value">
-                  <div style="min-width:60px; display:inline-block;">
+                  <div class="progress-wrapper">
                     <div class="progress" style="height:5px;">
                       <div class="progress-bar" role="progressbar" style="width:{{ s.progress_percent|default(0) }}%;"></div>
                     </div>
-                    <small class="text-muted" style="font-size:0.5rem;">{{ "%.0f"|format(s.progress_percent|default(0)) }}%</small>
+                    <small class="text-muted" style="font-size:0.5rem; flex-shrink:0;">{{ "%.0f"|format(s.progress_percent|default(0)) }}%</small>
                   </div>
                 </span>
               </div>
+              <!-- SPEED row – full width -->
               <div class="row-line">
                 <span class="label">Speed</span>
                 <span class="value">
-                  <div class="d-flex align-items-center gap-1">
+                  <div class="speed-wrapper">
                     <input type="range" class="speed-slider" min="1" max="100" step="1"
                            value="{{ (s.speed[:-1]|float * 10)|int }}" 
                            onchange="updateSpeed('{{ s.tracking_number }}', this.value / 10)">
-                    <span class="speed-value" style="font-family: monospace; font-weight:700; font-size:0.65rem; min-width:25px;">{{ s.speed }}</span>
+                    <span class="speed-value" style="font-family: monospace; font-weight:700; font-size:0.65rem; min-width:25px; flex-shrink:0;">{{ s.speed }}</span>
                   </div>
                 </span>
               </div>
               <div class="actions">
-                <!-- Mobile dropdown (same as before) -->
+                <!-- Mobile dropdown -->
                 <div class="dropdown">
                   <button class="btn btn-view btn-sm dropdown-toggle-icon w-100" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                     <i class="bi bi-three-dots-vertical me-1"></i> Actions
