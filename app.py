@@ -116,14 +116,29 @@ from utils import (
     DHL_CONFIG, config as bot_config, db, app as utils_app,
     Shipment as UtilsShipment, estimate_distance, generate_unique_id, search_shipments, get_recent_logs,
     should_send_email, spawn_simulation, add_socket_event, recent_socket_events, add_client_error, recent_client_errors,
-    EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES
+    EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES,
+    # Add Redis helper functions and in-memory fallbacks from utils
+    rget, rset, rkeys, rhgetall, rlist_lpop, rexists, rhlen,
+    in_memory_clients, in_memory_sim
 )
 
 from simulator_engine import SimulationRunner, RunnerHooks, Stage
 
+# ========== NEW: Import payment routes module ==========
+import payment_routes
+
 app = utils_app
 Shipment = UtilsShipment
 config = bot_config
+
+# ========== Register payment routes ==========
+payment_routes.init_payment_routes(app)
+
+# ========== Context processor for templates ==========
+@app.context_processor
+def utility_processor():
+    from datetime import datetime
+    return {'now': datetime.now}
 
 def limiter_request_identifier():
     try:
@@ -186,8 +201,7 @@ flask_logger = logging.getLogger('flask_app')
 sim_logger = logging.getLogger('simulator')
 
 geocode_cache = {}
-in_memory_clients = {}
-in_memory_sim = {}
+# in_memory_clients and in_memory_sim are now imported from utils
 sim_last_broadcast = {}
 
 geocode_rate_limiter = defaultdict(list)
@@ -499,84 +513,6 @@ def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, c
         socketio.emit('tracking_update', payload, namespace='/')
     except Exception:
         pass
-
-def rget(field, tn, default=None):
-    global redis_client
-    try:
-        if not redis_client:
-            return in_memory_sim.get(tn, {}).get(field, default)
-        val = redis_client.hget(field, tn)
-        if val is None:
-            return in_memory_sim.get(tn, {}).get(field, default)
-        if isinstance(val, bytes):
-            return val.decode('utf-8')
-        return val
-    except Exception:
-        redis_client = None
-        return in_memory_sim.get(tn, {}).get(field, default)
-
-def rset(field, tn, value):
-    global redis_client
-    if not redis_client:
-        try:
-            in_memory_sim.setdefault(tn, {})[field] = value
-        except Exception:
-            pass
-        return
-    try:
-        redis_client.hset(field, tn, value)
-    except Exception:
-        redis_client = None
-
-def rkeys(pattern):
-    try:
-        if not redis_client:
-            return []
-        keys = redis_client.keys(pattern) or []
-        return [k.decode() if isinstance(k, bytes) else k for k in keys]
-    except Exception as e:
-        flask_logger.warning(f"Redis keys failed for pattern {pattern}: {e}")
-        return []
-
-def rhgetall(key):
-    try:
-        if not redis_client:
-            return {}
-        d = redis_client.hgetall(key) or {}
-        return { (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v) for k, v in d.items() }
-    except Exception as e:
-        flask_logger.warning(f"Redis hgetall failed for {key}: {e}")
-        return {}
-
-def rlist_lpop(key):
-    try:
-        if not redis_client:
-            return None
-        v = redis_client.lpop(key)
-        if v is None:
-            return None
-        return v.decode() if isinstance(v, bytes) else v
-    except Exception as e:
-        flask_logger.warning(f"Redis lpop failed for {key}: {e}")
-        return None
-
-def rexists(key):
-    try:
-        if not redis_client:
-            return False
-        return bool(redis_client.exists(key))
-    except Exception as e:
-        flask_logger.warning(f"Redis exists check failed for {key}: {e}")
-        return False
-
-def rhlen(key):
-    try:
-        if not redis_client:
-            return 0
-        return redis_client.hlen(key)
-    except Exception as e:
-        flask_logger.warning(f"Redis hlen failed for {key}: {e}")
-        return 0
 
 def densify_route_coords(route_coords, max_segment_km=1.0):
     if not route_coords or len(route_coords) < 2:
@@ -1874,14 +1810,6 @@ def admin_required(f):
             return redirect(url_for('admin_login'))
         return f(*args, **kwargs)
     return decorated
-
-# ========== BILLING HELPER ==========
-def calculate_shipment_cost(distance_km: float, service_level: str) -> float:
-    if distance_km <= 0:
-        return 0.0
-    base_rate = 0.50 if 'Express' in service_level else 0.30
-    premium = 1.2 if '9:00' in service_level or '12:00' in service_level else 1.0
-    return round(distance_km * base_rate * premium, 2)
 
 # ========== ADMIN API ENDPOINTS ==========
 @app.route('/admin/api/redis_metrics')
@@ -3190,59 +3118,6 @@ def api_update_speed():
             flask_logger.warning(f"Failed to update speed for {tn}: {e}")
             return jsonify({'error': 'Failed to update speed state'}), 500
     return jsonify({'success': True, 'speed': speed_value})
-
-# ========== BILLING ROUTES ==========
-@app.route('/billing')
-def billing():
-    email = request.args.get('email') or request.form.get('email')
-    if not email:
-        return render_template('billing_login.html')
-    if not validate_email(email):
-        flash('Invalid email address.', 'error')
-        return render_template('billing_login.html')
-    shipments = Shipment.query.filter_by(recipient_email=email).order_by(Shipment.created_at.desc()).all()
-    invoices = []
-    total_due = 0.0
-    for s in shipments:
-        if s.invoice_amount is not None and s.invoice_amount > 0:
-            cost = s.invoice_amount
-        else:
-            distance = estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
-            service_level = rget('service_level', s.tracking_number, 'DHL Express')
-            cost = calculate_shipment_cost(distance, service_level)
-        invoices.append({
-            'shipment': s,
-            'cost': cost,
-            'service_level': rget('service_level', s.tracking_number, 'DHL Express'),
-            'distance': estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
-        })
-        if s.payment_status != 'paid':
-            total_due += cost
-    return render_template('billing.html', invoices=invoices, email=email, total_due=round(total_due, 2))
-
-@app.route('/billing/pay', methods=['POST'])
-def billing_pay():
-    data = request.get_json()
-    if not data:
-        return jsonify({'error': 'Invalid request'}), 400
-    email = data.get('email')
-    tracking_numbers = data.get('tracking_numbers', [])
-    payment_method = data.get('payment_method', 'Credit Card')
-    if not email or not tracking_numbers:
-        return jsonify({'error': 'Missing email or tracking numbers'}), 400
-    success_count = 0
-    for tn in tracking_numbers:
-        shipment = Shipment.query.filter_by(tracking_number=tn, recipient_email=email).first()
-        if shipment and shipment.payment_status != 'paid':
-            shipment.payment_status = 'paid'
-            shipment.payment_method = payment_method
-            db.session.commit()
-            # Resume simulation
-            rset('paused_simulations', tn, 'false')
-            invalidate_cache(tn)
-            broadcast_update(tn)
-            success_count += 1
-    return jsonify({'success': True, 'paid_count': success_count})
 
 # ========== SOCKET.IO ==========
 @socketio.on('connect')
