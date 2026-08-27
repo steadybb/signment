@@ -24,22 +24,13 @@
             padding: 0;
             line-height: 1.6;
             background-color: #f5f5f5;
+            background-image: url('{{ url_for('static', filename='fallback-image.jpg') }}');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
             position: relative;
             overflow-x: hidden;
             min-height: 100vh;
-        }
-        
-        /* Background Video */
-        .video-background {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            object-fit: cover;
-            z-index: -1;
-            background-color: #ffffff;
-            will-change: transform;
         }
         
         /* Content Overlay – reduced opacity to let background show through */
@@ -547,17 +538,11 @@
             .track-box button { font-size: 16px; padding: 10px; }
         }
         
-        /* ─── FIX: Mobile fallback image + reduced opacity ─── */
+        /* Mobile: adjust overlay opacity if needed (no video-related styles) */
         @media (max-width: 420px) {
-            .video-background {
-                display: block;
-                background-image: url('{{ url_for('static', filename='fallback-image.jpg') }}');
-                background-size: cover;
-                background-position: center;
-            }
-            body { background: #f5f5f5; }
+            body { background-color: #f5f5f5; }
             .content-overlay {
-                background: rgba(255, 255, 255, 0.85); /* was 0.95 – more transparent */
+                background: rgba(255, 255, 255, 0.85);
             }
         }
 
@@ -591,12 +576,6 @@
 <!-- ✅ FIX: Add recaptcha-locked class directly to <body> if reCAPTCHA is enabled -->
 <body class="{% if recaptcha_site_key %}recaptcha-locked{% endif %}">
 
-    <!-- Background Video -->
-    <video class="video-background" autoplay muted loop playsinline poster="{{ url_for('static', filename='fallback-image.jpg') }}">
-        <source src="{{ url_for('static', filename='background.mp4') }}" type="video/mp4">
-        Your browser does not support the video tag.
-    </video>
-    
     <!-- Content Overlay -->
     <div class="content-overlay">
         
