@@ -42,7 +42,7 @@ import time
 import csv
 import string
 from io import StringIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from math import radians, cos, sin, sqrt, atan2, ceil
@@ -184,15 +184,16 @@ def exempt_internal_endpoints():
     )
 
 async_mode = 'eventlet' if hasattr(eventlet, 'sleep') and eventlet.__class__.__name__ != '_FallbackEventlet' else 'threading'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
-
-cache_config = {'CACHE_TYPE': 'simple'}
+# FIX: Configure SocketIO message queue for cross-worker communication
 redis_url = (
     app.config.get('REDIS_URL') or
     os.getenv('REDIS_URL') or
     getattr(config, 'redis_url', None) or
     app.config.get('RATELIMIT_STORAGE_URI')
 )
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode, message_queue=redis_url if redis_url else None)
+
+cache_config = {'CACHE_TYPE': 'simple'}
 if redis_url:
     cache_config = {
         'CACHE_TYPE': 'RedisCache',
@@ -203,9 +204,45 @@ cache = Cache(app, config=cache_config)
 flask_logger = logging.getLogger('flask_app')
 sim_logger = logging.getLogger('simulator')
 
-geocode_cache = {}
-# in_memory_clients and in_memory_sim are now imported from utils
-sim_last_broadcast = {}
+# FIX: Move in-memory caches to Redis
+def get_geocode_cache_key(loc):
+    return f"geocode_cache:{loc}"
+
+def get_cached_geocode(loc):
+    if not redis_client:
+        return None
+    try:
+        data = redis_client.get(get_geocode_cache_key(loc))
+        if data:
+            return json.loads(data)
+    except Exception:
+        pass
+    return None
+
+def set_cached_geocode(loc, coord, ttl=86400):
+    if not redis_client:
+        return
+    try:
+        redis_client.setex(get_geocode_cache_key(loc), ttl, json.dumps(coord))
+    except Exception:
+        pass
+
+def get_sim_last_broadcast(tn):
+    if not redis_client:
+        return 0
+    try:
+        val = redis_client.get(f"sim_last_broadcast:{tn}")
+        return float(val) if val else 0
+    except Exception:
+        return 0
+
+def set_sim_last_broadcast(tn, timestamp):
+    if not redis_client:
+        return
+    try:
+        redis_client.setex(f"sim_last_broadcast:{tn}", 60, str(timestamp))
+    except Exception:
+        pass
 
 geocode_rate_limiter = defaultdict(list)
 
@@ -451,7 +488,7 @@ def track_geocode_metrics(provider, address, success, duration):
         if redis_client:
             key = f"geocode_metrics:{provider}"
             redis_client.lpush(key, json.dumps({
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'address': (address or '')[:50],
                 'success': bool(success),
                 'duration_ms': round(duration * 1000, 2)
@@ -475,10 +512,10 @@ def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, c
         if not clients:
             return
         now = time.time()
-        last = sim_last_broadcast.get(tn, 0)
+        last = get_sim_last_broadcast(tn)
         if now - last < SIM_BROADCAST_INTERVAL_SEC:
             return
-        sim_last_broadcast[tn] = now
+        set_sim_last_broadcast(tn, now)
         payload = {'tracking_number': tn}
         if status is not None:
             payload['status'] = status
@@ -583,7 +620,13 @@ def handle_app_exception(error):
     flask_logger.exception("Unhandled exception during request %s %s", request.method, request.path)
     if app.debug:
         raise error
-    return jsonify({"error": "Internal server error"}), 500
+    return json_error_response("Internal server error", 500)
+
+def json_error_response(message, status_code=400, details=None):
+    response = {"error": message}
+    if details:
+        response["details"] = details
+    return jsonify(response), status_code
 
 required = ['SECRET_KEY', 'SQLALCHEMY_DATABASE_URI']
 for var in required:
@@ -667,11 +710,12 @@ def init_db():
     raise Exception("DB init failed")
 
 def verify_recaptcha(token):
-    if 'your-secret-key' in app.config['RECAPTCHA_SECRET_KEY']:
-        return True
+    secret = app.config.get('RECAPTCHA_SECRET_KEY')
+    if not secret or 'your-secret-key' in secret:
+        return False
     try:
         r = requests.post(app.config['RECAPTCHA_VERIFY_URL'], data={
-            'secret': app.config['RECAPTCHA_SECRET_KEY'],
+            'secret': secret,
             'response': token
         }, timeout=5)
         return r.json().get('success', False)
@@ -741,18 +785,19 @@ def geocode_locations(checkpoints):
     api_key = app.config.get('GEOCODING_API_KEY')
     last_time = [0]
     for cp in checkpoints:
-        if cp in geocode_cache:
-            coords.append(geocode_cache[cp])
+        cached = get_cached_geocode(cp)
+        if cached:
+            coords.append(cached)
             continue
         loc = cp.split(' - ')[1] if ' - ' in cp else cp
-        cache_key = f"geocode:{loc}"
         try:
             if time.time() - last_time[0] < 1:
                 time.sleep(1 - (time.time() - last_time[0]))
             last_time[0] = time.time()
-            if redis_client and (cached := redis_client.get(cache_key)):
-                coord = json.loads(cached)
-                geocode_cache[cp] = coord
+            cache_key = f"geocode:{loc}"
+            if redis_client and (cached_loc := redis_client.get(cache_key)):
+                coord = json.loads(cached_loc)
+                set_cached_geocode(cp, coord)
                 coords.append(coord)
                 continue
             coord = cached_geocode(loc) if api_key else None
@@ -764,7 +809,7 @@ def geocode_locations(checkpoints):
                 if fallback:
                     coord = {'lat': float(fallback['lat']), 'lon': float(fallback['lon']), 'desc': cp}
             if coord:
-                geocode_cache[cp] = coord
+                set_cached_geocode(cp, coord)
                 if redis_client:
                     redis_client.set(cache_key, json.dumps(coord), ex=86400)
                 coords.append(coord)
@@ -772,245 +817,48 @@ def geocode_locations(checkpoints):
             pass
     return coords
 
-KNOWN_LOCATION_COORDS = {
-    "Dublin, IE": {"lat": 53.349805, "lon": -6.26031},
-    "Berlin, DE": {"lat": 52.5200, "lon": 13.4050},
-    "Lagos, NG": {"lat": 6.5244, "lon": 3.3792},
-    "Abuja, NG": {"lat": 9.0765, "lon": 7.3986},
-    "Port Harcourt, NG": {"lat": 4.8156, "lon": 7.0498},
-    "Taraba, NG": {"lat": 8.8932, "lon": 11.3596},
-    "London, UK": {"lat": 51.5074, "lon": -0.1278},
-    "Paris, FR": {"lat": 48.8566, "lon": 2.3522},
-    "Madrid, ES": {"lat": 40.4168, "lon": -3.7038},
-    "Rome, IT": {"lat": 41.9028, "lon": 12.4964},
-    "Milan, IT": {"lat": 45.4642, "lon": 9.1900},
-    "Amsterdam, NL": {"lat": 52.3676, "lon": 4.9041},
-    "Brussels, BE": {"lat": 50.8503, "lon": 4.3517},
-    "Lisbon, PT": {"lat": 38.7223, "lon": -9.1393},
-    "Athens, GR": {"lat": 37.9838, "lon": 23.7275},
-    "Stockholm, SE": {"lat": 59.3293, "lon": 18.0686},
-    "Oslo, NO": {"lat": 59.9139, "lon": 10.7522},
-    "Warsaw, PL": {"lat": 52.2297, "lon": 21.0122},
-    "Prague, CZ": {"lat": 50.0755, "lon": 14.4378},
-    "Vienna, AT": {"lat": 48.2082, "lon": 16.3738},
-    "Zurich, CH": {"lat": 47.3769, "lon": 8.5417},
-    "Cairo, EG": {"lat": 30.0444, "lon": 31.2357},
-    "Johannesburg, ZA": {"lat": -26.2041, "lon": 28.0473},
-    "Nairobi, KE": {"lat": -1.2921, "lon": 36.8219},
-    "Dubai, UAE": {"lat": 25.2048, "lon": 55.2708},
-    "Mumbai, IN": {"lat": 19.0760, "lon": 72.8777},
-    "Delhi, IN": {"lat": 28.6139, "lon": 77.2090},
-    "Singapore, SG": {"lat": 1.3521, "lon": 103.8198},
-    "Hong Kong, HK": {"lat": 22.3193, "lon": 114.1694},
-    "Tokyo, JP": {"lat": 35.6762, "lon": 139.6503},
-    "Seoul, KR": {"lat": 37.5665, "lon": 126.9780},
-    "Sydney, AU": {"lat": -33.8688, "lon": 151.2093},
-    "New York, NY": {"lat": 40.7128, "lon": -74.0060},
-    "Los Angeles, CA": {"lat": 34.0522, "lon": -118.2437},
-    "Toronto, CA": {"lat": 43.6532, "lon": -79.3832},
-    "Miami, FL": {"lat": 25.7617, "lon": -80.1918},
-    "Sao Paulo, BR": {"lat": -23.5505, "lon": -46.6333},
-    "Mexico City, MX": {"lat": 19.4326, "lon": -99.1332},
-    "Jerusalem, IL": {"lat": 31.7683, "lon": 35.2137},
-    "Tel Aviv, IL": {"lat": 32.0853, "lon": 34.7818},
-    "Haifa, IL": {"lat": 32.7940, "lon": 34.9896},
-    "Eilat, IL": {"lat": 29.5581, "lon": 34.9482},
-    "Rehovot, IL": {"lat": 31.8928, "lon": 34.8111},
-    "Rishon LeZion, IL": {"lat": 31.9730, "lon": 34.7925},
-    "Petah Tikva, IL": {"lat": 32.0840, "lon": 34.8878},
-    "Ashdod, IL": {"lat": 31.8014, "lon": 34.6435},
-    "Ashkelon, IL": {"lat": 31.6688, "lon": 34.5743},
-    "Beersheba, IL": {"lat": 31.2529, "lon": 34.7915},
-    "Netanya, IL": {"lat": 32.3215, "lon": 34.8532},
-    "Holon, IL": {"lat": 32.0158, "lon": 34.7874},
-    "Bnei Brak, IL": {"lat": 32.0833, "lon": 34.8333},
-    "Herzliya, IL": {"lat": 32.1624, "lon": 34.8447},
-    "Kfar Saba, IL": {"lat": 32.1750, "lon": 34.9069},
-    "Ra'anana, IL": {"lat": 32.1848, "lon": 34.8706},
-    "Modiin, IL": {"lat": 31.8996, "lon": 35.0104},
-    "Nazareth, IL": {"lat": 32.6996, "lon": 35.3035},
-    "Tiberias, IL": {"lat": 32.7950, "lon": 35.5311},
-    "Acre, IL": {"lat": 32.9272, "lon": 35.0763},
-    "Nahariya, IL": {"lat": 33.0059, "lon": 35.0941},
-    "Safed, IL": {"lat": 32.9646, "lon": 35.4960},
-    "Kiryat Shmona, IL": {"lat": 33.2074, "lon": 35.5708},
-    "Caesarea, IL": {"lat": 32.5010, "lon": 34.9020},
-    "Kano, NG": {"lat": 12.0022, "lon": 8.5920},
-    "Ibadan, NG": {"lat": 7.3775, "lon": 3.9470},
-    "Accra, GH": {"lat": 5.6037, "lon": -0.1870},
-    "Kumasi, GH": {"lat": 6.6885, "lon": -1.6244},
-    "Dakar, SN": {"lat": 14.7167, "lon": -17.4677},
-    "Addis Ababa, ET": {"lat": 9.0320, "lon": 38.7469},
-    "Dar es Salaam, TZ": {"lat": -6.7924, "lon": 39.2083},
-    "Kampala, UG": {"lat": 0.3476, "lon": 32.5825},
-    "Casablanca, MA": {"lat": 33.5731, "lon": -7.5898},
-    "Tunis, TN": {"lat": 36.8065, "lon": 10.1815},
-    "Algiers, DZ": {"lat": 36.7538, "lon": 3.0588},
-    "Moscow, RU": {"lat": 55.7558, "lon": 37.6173},
-    "Istanbul, TR": {"lat": 41.0082, "lon": 28.9784},
-    "Bucharest, RO": {"lat": 44.4268, "lon": 26.1025},
-    "Budapest, HU": {"lat": 47.4979, "lon": 19.0402},
-    "Athens, GR": {"lat": 37.9838, "lon": 23.7275},
-    "Barcelona, ES": {"lat": 41.3874, "lon": 2.1686},
-    "Manchester, UK": {"lat": 53.4808, "lon": -2.2426},
-    "Zurich, CH": {"lat": 47.3769, "lon": 8.5417},
-    "Chicago, US": {"lat": 41.8781, "lon": -87.6298},
-    "Houston, US": {"lat": 29.7604, "lon": -95.3698},
-    "Atlanta, US": {"lat": 33.7490, "lon": -84.3880},
-    "Washington, US": {"lat": 38.9072, "lon": -77.0369},
-    "Vancouver, CA": {"lat": 49.2827, "lon": -123.1207},
-    "Montreal, CA": {"lat": 45.5017, "lon": -73.5673},
-    "Lima, PE": {"lat": -12.0464, "lon": -77.0428},
-    "Buenos Aires, AR": {"lat": -34.6037, "lon": -58.3816},
-    "Santiago, CL": {"lat": -33.4489, "lon": -70.6693},
-    "Rio de Janeiro, BR": {"lat": -22.9068, "lon": -43.1729},
-    "Bangkok, TH": {"lat": 13.7563, "lon": 100.5018},
-    "Kuala Lumpur, MY": {"lat": 3.1390, "lon": 101.6869},
-    "Jakarta, ID": {"lat": -6.2088, "lon": 106.8456},
-    "Manila, PH": {"lat": 14.5995, "lon": 120.9842},
-    "Taipei, TW": {"lat": 25.0330, "lon": 121.5654},
-    "Beijing, CN": {"lat": 39.9042, "lon": 116.4074},
-    "Shanghai, CN": {"lat": 31.2304, "lon": 121.4737},
-    "Perth, AU": {"lat": -31.9505, "lon": 115.8605},
-    "Auckland, NZ": {"lat": -36.8509, "lon": 174.7645},
-    "Benin City, NG": {"lat": 6.3350, "lon": 5.6037},
-    "Enugu, NG": {"lat": 6.4584, "lon": 7.5464},
-    "Kaduna, NG": {"lat": 10.5105, "lon": 7.4165},
-    "Jos, NG": {"lat": 9.8965, "lon": 8.8583},
-    "Tamale, GH": {"lat": 9.4075, "lon": -0.8533},
-    "Mombasa, KE": {"lat": -4.0435, "lon": 39.6682},
-    "Kigali, RW": {"lat": -1.9441, "lon": 30.0619},
-    "Harare, ZW": {"lat": -17.8252, "lon": 31.0335},
-    "Lusaka, ZM": {"lat": -15.3875, "lon": 28.3228},
-    "Maputo, MZ": {"lat": -25.9692, "lon": 32.5732},
-    "Cape Town, ZA": {"lat": -33.9249, "lon": 18.4241},
-    "Durban, ZA": {"lat": -29.8587, "lon": 31.0218},
-    "Pretoria, ZA": {"lat": -25.7479, "lon": 28.2293},
-    "Tripoli, LY": {"lat": 32.8872, "lon": 13.1913},
-    "Khartoum, SD": {"lat": 15.5007, "lon": 32.5599},
-    "Kiev, UA": {"lat": 50.4501, "lon": 30.5234},
-    "Sofia, BG": {"lat": 42.6977, "lon": 23.3219},
-    "Belgrade, RS": {"lat": 44.7866, "lon": 20.4489},
-    "Zagreb, HR": {"lat": 45.8150, "lon": 15.9819},
-    "Ljubljana, SI": {"lat": 46.0569, "lon": 14.5058},
-    "Bratislava, SK": {"lat": 48.1486, "lon": 17.1077},
-    "Tallinn, EE": {"lat": 59.4370, "lon": 24.7536},
-    "Riga, LV": {"lat": 56.9496, "lon": 24.1052},
-    "Vilnius, LT": {"lat": 54.6872, "lon": 25.2797},
-    "Reykjavik, IS": {"lat": 64.1466, "lon": -21.9426},
-    "Edinburgh, UK": {"lat": 55.9533, "lon": -3.1883},
-    "Birmingham, UK": {"lat": 52.4862, "lon": -1.8904},
-    "Hamburg, DE": {"lat": 53.5511, "lon": 9.9937},
-    "Munich, DE": {"lat": 48.1351, "lon": 11.5820},
-    "Cologne, DE": {"lat": 50.9375, "lon": 6.9603},
-    "Stuttgart, DE": {"lat": 48.7758, "lon": 9.1829},
-    "Rotterdam, NL": {"lat": 51.9244, "lon": 4.4777},
-    "Geneva, CH": {"lat": 46.2044, "lon": 6.1432},
-    "Porto, PT": {"lat": 41.1579, "lon": -8.6291},
-    "Valencia, ES": {"lat": 39.4699, "lon": -0.3763},
-    "Seville, ES": {"lat": 37.3891, "lon": -5.9845},
-    "Naples, IT": {"lat": 40.8518, "lon": 14.2681},
-    "Turin, IT": {"lat": 45.0703, "lon": 7.6869},
-    "Lyon, FR": {"lat": 45.7640, "lon": 4.8357},
-    "Marseille, FR": {"lat": 43.2965, "lon": 5.3698},
-    "Copenhagen, DK": {"lat": 55.6761, "lon": 12.5683},
-    "Riyadh, SA": {"lat": 24.7136, "lon": 46.6753},
-    "Jeddah, SA": {"lat": 21.4858, "lon": 39.1925},
-    "Doha, QA": {"lat": 25.2854, "lon": 51.5310},
-    "Kuwait City, KW": {"lat": 29.3759, "lon": 47.9774},
-    "Muscat, OM": {"lat": 23.5880, "lon": 58.3829},
-    "Manama, BH": {"lat": 26.2235, "lon": 50.5876},
-    "Amman, JO": {"lat": 31.9454, "lon": 35.9284},
-    "Beirut, LB": {"lat": 33.8938, "lon": 35.5018},
-    "Baghdad, IQ": {"lat": 33.3152, "lon": 44.3661},
-    "Karachi, PK": {"lat": 24.8607, "lon": 67.0011},
-    "Lahore, PK": {"lat": 31.5204, "lon": 74.3587},
-    "Islamabad, PK": {"lat": 33.6844, "lon": 73.0479},
-    "Dhaka, BD": {"lat": 23.8103, "lon": 90.4125},
-    "Colombo, LK": {"lat": 6.9271, "lon": 79.8612},
-    "Kathmandu, NP": {"lat": 27.7172, "lon": 85.3240},
-    "Hanoi, VN": {"lat": 21.0278, "lon": 105.8342},
-    "Ho Chi Minh City, VN": {"lat": 10.8231, "lon": 106.6297},
-    "Phnom Penh, KH": {"lat": 11.5564, "lon": 104.9282},
-    "Yangon, MM": {"lat": 16.8409, "lon": 96.1735},
-    "Osaka, JP": {"lat": 34.6937, "lon": 135.5023},
-    "Kyoto, JP": {"lat": 35.0116, "lon": 135.7681},
-    "Busan, KR": {"lat": 35.1796, "lon": 129.0756},
-    "Guangzhou, CN": {"lat": 23.1291, "lon": 113.2644},
-    "Shenzhen, CN": {"lat": 22.5431, "lon": 114.0579},
-    "Ulaanbaatar, MN": {"lat": 47.8864, "lon": 106.9057},
-    "Boston, US": {"lat": 42.3601, "lon": -71.0589},
-    "San Francisco, US": {"lat": 37.7749, "lon": -122.4194},
-    "Seattle, US": {"lat": 47.6062, "lon": -122.3321},
-    "Dallas, US": {"lat": 32.7767, "lon": -96.7970},
-    "Denver, US": {"lat": 39.7392, "lon": -104.9903},
-    "Phoenix, US": {"lat": 33.4484, "lon": -112.0740},
-    "Philadelphia, US": {"lat": 39.9526, "lon": -75.1652},
-    "Detroit, US": {"lat": 42.3314, "lon": -83.0458},
-    "Calgary, CA": {"lat": 51.0447, "lon": -114.0719},
-    "Ottawa, CA": {"lat": 45.4215, "lon": -75.6972},
-    "Panama City, PA": {"lat": 8.9824, "lon": -79.5199},
-    "Bogota, CO": {"lat": 4.7110, "lon": -74.0721},
-    "Quito, EC": {"lat": -0.1807, "lon": -78.4678},
-    "Montevideo, UY": {"lat": -34.9011, "lon": -56.1645},
-    "Asuncion, PY": {"lat": -25.2637, "lon": -57.5759},
-    "Caracas, VE": {"lat": 10.4806, "lon": -66.9036},
-    "Christchurch, NZ": {"lat": -43.5321, "lon": 172.6362},
-    "Brisbane, AU": {"lat": -27.4698, "lon": 153.0251},
-    "Melbourne, AU": {"lat": -37.8136, "lon": 144.9631},
-    "Adelaide, AU": {"lat": -34.9285, "lon": 138.6007},
-    "Hadera, IL": {"lat": 32.4340, "lon": 34.9196},
-    "Karmiel, IL": {"lat": 32.9199, "lon": 35.2972},
-    "Yavne, IL": {"lat": 31.8781, "lon": 34.7398},
-    "Lod, IL": {"lat": 31.9514, "lon": 34.8953},
-    "Ramla, IL": {"lat": 31.9292, "lon": 34.8656},
-    "Sderot, IL": {"lat": 31.5250, "lon": 34.5969},
-    "Dimona, IL": {"lat": 31.0686, "lon": 35.0331},
-    "Arad, IL": {"lat": 31.2588, "lon": 35.2128},
-    "Maale Adumim, IL": {"lat": 31.7770, "lon": 35.2980},
-    "Beit Shemesh, IL": {"lat": 31.7456, "lon": 34.9867},
-    "Nagoya, JP": {"lat": 35.1815, "lon": 136.9066},
-    "Fukuoka, JP": {"lat": 33.5904, "lon": 130.4017},
-    "Chongqing, CN": {"lat": 29.5630, "lon": 106.5516},
-    "Chennai, IN": {"lat": 13.0827, "lon": 80.2707},
-    "Bengaluru, IN": {"lat": 12.9716, "lon": 77.5946},
-    "Kolkata, IN": {"lat": 22.5726, "lon": 88.3639},
-    "Tehran, IR": {"lat": 35.6892, "lon": 51.3890},
-    "Baku, AZ": {"lat": 40.4093, "lon": 49.8671},
-    "Tbilisi, GE": {"lat": 41.7151, "lon": 44.8271},
-    "Yerevan, AM": {"lat": 40.1872, "lon": 44.5152}
-}
+# ========== Redis active simulation tracking ==========
+def is_simulation_active(tn):
+    if not redis_client:
+        return False
+    try:
+        return redis_client.sismember("active_simulations", tn)
+    except Exception:
+        return False
 
-try:
-    import re as _re
-    for _known in list(KNOWN_LOCATION_COORDS.keys()):
+def mark_simulation_start(tn):
+    if not redis_client:
+        return
+    try:
+        redis_client.sadd("active_simulations", tn)
+        redis_client.expire("active_simulations", 3600)
+    except Exception:
+        pass
+
+def mark_simulation_stop(tn):
+    if not redis_client:
+        return
+    try:
+        redis_client.srem("active_simulations", tn)
+    except Exception:
+        pass
+
+original_spawn = spawn_simulation
+def spawn_simulation_with_check(tn):
+    if is_simulation_active(tn):
+        flask_logger.debug(f"Simulation already active for {tn}, skipping spawn")
+        return
+    mark_simulation_start(tn)
+    def wrapped():
         try:
-            canonical = _known
-            city_part = _known.split(',', 1)[0].strip()
-            full_lower = _known.lower()
-            city_lower = city_part.lower()
-            try:
-                city_unidecode = _unidecode(city_part).lower()
-                full_unidecode = _unidecode(_known).lower()
-            except Exception:
-                city_unidecode = city_lower
-                full_unidecode = full_lower
-            cleaned_city = _re.sub(r'[^a-z0-9 ]', ' ', city_unidecode).strip()
-            cleaned_full = _re.sub(r'[^a-z0-9 ,]', ' ', full_unidecode).strip()
-            variants = set([full_lower, full_unidecode, city_lower, city_unidecode, cleaned_city, cleaned_full])
-            for tok in cleaned_city.split():
-                if tok:
-                    variants.add(tok)
-            for key in variants:
-                if not key:
-                    continue
-                if key in HIGH_VALUE_TRANSLITERATION_MAP:
-                    continue
-                HIGH_VALUE_TRANSLITERATION_MAP[key] = canonical
-        except Exception:
-            continue
-except Exception:
-    pass
+            original_spawn(tn)
+        finally:
+            mark_simulation_stop(tn)
+    if hasattr(eventlet, 'spawn'):
+        eventlet.spawn(wrapped)
+    else:
+        threading.Thread(target=wrapped, daemon=True).start()
+spawn_simulation = spawn_simulation_with_check
 
 def normalize_location(loc):
     if not loc:
@@ -1041,14 +889,19 @@ def normalize_location(loc):
                     elif display:
                         normalized = display
         else:
-            url = f" /search?q={quote_plus(loc)}"
-            res = requests.get(url, timeout=5).json()
-            if res:
-                item = res[0]
-                display = item.get('display_name')
-                if display:
-                    parts = [p.strip() for p in display.split(',')]
-                    normalized = f"{parts[0]}, {parts[1]}" if len(parts) >= 2 else display
+            # FIX: Use proper Nominatim URL
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {'q': loc, 'format': 'json', 'limit': 1}
+            headers = {'User-Agent': 'DHL-Tracking-System/2.0'}
+            resp = requests.get(url, params=params, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data:
+                    item = data[0]
+                    display = item.get('display_name')
+                    if display:
+                        parts = [p.strip() for p in display.split(',')]
+                        normalized = f"{parts[0]}, {parts[1]}" if len(parts) >= 2 else display
     except Exception:
         normalized = loc
     if normalized in KNOWN_LOCATION_COORDS:
@@ -1518,32 +1371,35 @@ def _handle_new_checkpoint(tn, checkpoint):
         flask_logger.warning(f"Email handling failed for {tn}: {e}")
 
 def simulate_tracking(tn):
-    with app.app_context():
-        def _on_position_update(progress, city, lat, lon, stage):
-            live = Shipment.query.filter_by(tracking_number=tn).first()
-            checkpoints = (live.checkpoints or '').split(';') if live and live.checkpoints else []
-            sim_emit_light(tn, progress=progress, current_location=city,
-                           current_lat=lat, current_lon=lon, stage=stage,
-                           checkpoints=checkpoints)
+    try:
+        with app.app_context():
+            def _on_position_update(progress, city, lat, lon, stage):
+                live = Shipment.query.filter_by(tracking_number=tn).first()
+                checkpoints = (live.checkpoints or '').split(';') if live and live.checkpoints else []
+                sim_emit_light(tn, progress=progress, current_location=city,
+                               current_lat=lat, current_lon=lon, stage=stage,
+                               checkpoints=checkpoints)
 
-        hooks = RunnerHooks(
-            get_live_shipment=lambda: Shipment.query.filter_by(tracking_number=tn).first(),
-            save_shipment=lambda status, checkpoints: _save_shipment_state(tn, status, checkpoints),
-            get_flag=lambda field, default: rget(field, tn, default),
-            set_flag=lambda field, value: rset(field, tn, value),
-            resolve_location=resolve_location,
-            build_route_hubs=DHLRealisticSimulator.build_route_hubs,
-            on_position_update=_on_position_update,
-            on_checkpoint_added=lambda checkpoint: _handle_new_checkpoint(tn, checkpoint),
-            on_status_changed=lambda status: None,
-            broadcast=lambda: broadcast_update(tn),
-            sleep=eventlet.sleep,
-            now=datetime.now,
-            generate_pod=DHLRealisticSimulator.generate_pod_info
-        )
-        sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')))
-        runner = SimulationRunner(tn, hooks, sim_days_cap=sim_days)
-        runner.run()
+            hooks = RunnerHooks(
+                get_live_shipment=lambda: Shipment.query.filter_by(tracking_number=tn).first(),
+                save_shipment=lambda status, checkpoints: _save_shipment_state(tn, status, checkpoints),
+                get_flag=lambda field, default: rget(field, tn, default),
+                set_flag=lambda field, value: rset(field, tn, value),
+                resolve_location=resolve_location,
+                build_route_hubs=DHLRealisticSimulator.build_route_hubs,
+                on_position_update=_on_position_update,
+                on_checkpoint_added=lambda checkpoint: _handle_new_checkpoint(tn, checkpoint),
+                on_status_changed=lambda status: None,
+                broadcast=lambda: broadcast_update(tn),
+                sleep=eventlet.sleep,
+                now=datetime.now,
+                generate_pod=DHLRealisticSimulator.generate_pod_info
+            )
+            sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')))
+            runner = SimulationRunner(tn, hooks, sim_days_cap=sim_days)
+            runner.run()
+    finally:
+        mark_simulation_stop(tn)
 
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
     location = latest_checkpoint.split(' - ')[1] if ' - ' in latest_checkpoint else destination
@@ -1653,20 +1509,9 @@ def send_email_via_resend(recipient, subject, html_body=None, plain_body=None):
     response.raise_for_status()
     return True
 
-def send_email_notification(recipient, subject, html_body=None, plain_body=None, tracking_number=None, email_type=None, message=None):
-    if EMAIL_TEST_MODE:
-        flask_logger.info(f"📧 TEST MODE - Email would be sent to: {recipient}")
-        flask_logger.info(f"   Subject: {subject}")
-        flask_logger.info(f"   Tracking: {tracking_number}")
-        return True
-    if not EMAIL_ENABLED:
-        flask_logger.info(f"📧 Email disabled - would send to {recipient}: {subject}")
-        return True
-    email_provider = 'resend' if app.config.get('RESEND_API_KEY') else app.config.get('EMAIL_PROVIDER', 'smtp')
+def send_email_via_smtp(recipient, subject, html_body=None, plain_body=None):
     if not all([app.config['SMTP_HOST'], app.config['SMTP_USER'], app.config['SMTP_PASS']]):
-        flask_logger.warning("SMTP not configured")
-        if email_provider != 'resend':
-            return False
+        return False
     msg = MIMEMultipart("alternative")
     msg['From'] = app.config['SMTP_FROM']
     msg['To'] = recipient
@@ -1675,44 +1520,92 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
         msg.attach(MIMEText(plain_body, "plain"))
     if html_body:
         msg.attach(MIMEText(html_body, "html"))
-    @retry(reraise=True, stop=stop_after_attempt(int(os.getenv('SMTP_MAX_RETRIES', '3'))), wait=wait_exponential(multiplier=2, max=30))
-    def _send():
-        if email_provider == 'resend':
-            send_email_via_resend(recipient, subject, html_body, plain_body)
-        else:
-            with open_smtp_connection() as server:
-                server.send_message(msg)
+    with open_smtp_connection() as server:
+        server.send_message(msg)
+    return True
+
+def _store_email_history(tracking_number, email_type, recipient, subject, message):
+    if not tracking_number:
+        return
     try:
-        _send()
-        flask_logger.info(f"Email sent to {recipient}")
-        if tracking_number:
-            try:
-                history_key = f"email_history:{tracking_number}"
-                entry = {
-                    'timestamp': datetime.now().isoformat(),
-                    'type': email_type or 'status_update',
-                    'recipient': recipient,
-                    'subject': subject,
-                    'message': message
-                }
-                if redis_client:
-                    redis_client.lpush(history_key, json.dumps(entry))
-                    redis_client.ltrim(history_key, 0, 99)
-            except Exception as history_exc:
-                flask_logger.warning('Failed to store email history for %s: %s', tracking_number, history_exc)
-        return True
+        history_key = f"email_history:{tracking_number}"
+        entry = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'type': email_type or 'status_update',
+            'recipient': recipient,
+            'subject': subject,
+            'message': message
+        }
+        if redis_client:
+            redis_client.lpush(history_key, json.dumps(entry))
+            redis_client.ltrim(history_key, 0, 99)
     except Exception as e:
-        flask_logger.error(f"Email failed after retries: {e}")
-        flask_logger.debug(traceback.format_exc())
+        flask_logger.warning(f'Failed to store email history for {tracking_number}: {e}')
+
+def send_email_notification(recipient, subject, html_body=None, plain_body=None,
+                            tracking_number=None, email_type=None, message=None):
+    if EMAIL_TEST_MODE:
+        flask_logger.info(f"📧 TEST MODE - Email would be sent to: {recipient}")
+        flask_logger.info(f"   Subject: {subject}")
+        flask_logger.info(f"   Tracking: {tracking_number}")
+        return True
+    if not EMAIL_ENABLED:
+        flask_logger.info(f"📧 Email disabled - would send to {recipient}: {subject}")
+        return True
+
+    resend_key = app.config.get('RESEND_API_KEY')
+    smtp_configured = all([app.config['SMTP_HOST'], app.config['SMTP_USER'], app.config['SMTP_PASS']])
+
+    if resend_key:
         try:
-            console.print(Panel(f"[error]Failed to send email to {recipient}[/error]", title="Email Error"))
-        except Exception:
-            pass
-        return False
+            success = send_email_via_resend(recipient, subject, html_body, plain_body)
+            if success:
+                flask_logger.info(f"Email sent via Resend to {recipient}")
+                _store_email_history(tracking_number, email_type, recipient, subject, message)
+                return True
+        except Exception as e:
+            flask_logger.warning(f"Resend failed: {e}, falling back to SMTP")
+
+    if smtp_configured:
+        try:
+            success = send_email_via_smtp(recipient, subject, html_body, plain_body)
+            if success:
+                flask_logger.info(f"Email sent via SMTP to {recipient}")
+                _store_email_history(tracking_number, email_type, recipient, subject, message)
+                return True
+        except Exception as e:
+            flask_logger.error(f"SMTP also failed: {e}")
+
+    flask_logger.error(f"Failed to send email to {recipient} via all providers")
+    return False
+
+def get_cached_route_coords(tn):
+    if not redis_client:
+        return None
+    try:
+        data = redis_client.get(f"route_coords:{tn}")
+        if data:
+            return json.loads(data)
+    except Exception:
+        pass
+    return None
+
+def set_cached_route_coords(tn, coords, ttl=300):
+    if not redis_client:
+        return
+    try:
+        redis_client.setex(f"route_coords:{tn}", ttl, json.dumps(coords))
+    except Exception:
+        pass
 
 def get_route_coords_for_shipment(shipment):
+    cached = get_cached_route_coords(shipment.tracking_number)
+    if cached:
+        return cached
+
     coords = geocode_locations((shipment.checkpoints or "").split(";"))
     if len(coords) >= 2:
+        set_cached_route_coords(shipment.tracking_number, coords)
         return coords
     origin_coords = None
     dest_coords = None
@@ -1728,7 +1621,9 @@ def get_route_coords_for_shipment(shipment):
         origin_coords = {'lat': 6.5244, 'lon': 3.3792, 'desc': 'Lagos, NG (fallback)'}
     if not dest_coords:
         dest_coords = {'lat': 51.5074, 'lon': -0.1278, 'desc': 'London, UK (fallback)'}
-    return [origin_coords, dest_coords]
+    result = [origin_coords, dest_coords]
+    set_cached_route_coords(shipment.tracking_number, result)
+    return result
 
 def broadcast_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
@@ -1738,7 +1633,6 @@ def broadcast_update(tn):
     paused = rget("paused_simulations", tn, "false") == "true"
     lock_stage = rget("lock_stage", tn, "false") == "true"
 
-    # Billing fields
     payment_status = shipment.payment_status or 'unpaid'
     payment_reason = shipment.payment_reason or ''
 
@@ -1823,7 +1717,7 @@ def admin_redis_metrics():
         return jsonify(metrics)
     except Exception as e:
         flask_logger.error(f"Failed to fetch redis metrics: {e}")
-        return jsonify({'error': 'Could not retrieve metrics'}), 500
+        return json_error_response("Could not retrieve metrics", 500)
 
 @app.route('/admin/api/error_codes')
 @admin_required
@@ -1868,7 +1762,7 @@ def admin_simulator_status():
         })
     except Exception as e:
         flask_logger.error(f"Failed to fetch simulator status: {e}")
-        return jsonify({'error': 'Could not retrieve simulator status'}), 500
+        return json_error_response("Could not retrieve simulator status", 500)
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 def allowed_file(filename):
@@ -1879,14 +1773,14 @@ def allowed_file(filename):
 def upload_shipment_photo(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Shipment not found'}), 404
+        return json_error_response("Shipment not found", 404)
     if 'photo' not in request.files:
-        return jsonify({'error': 'No photo file provided'}), 400
+        return json_error_response("No photo file provided", 400)
     file = request.files['photo']
     if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
+        return json_error_response("No file selected", 400)
     if not allowed_file(file.filename):
-        return jsonify({'error': 'File type not allowed. Use PNG, JPG, GIF, or WEBP'}), 400
+        return json_error_response("File type not allowed. Use PNG, JPG, GIF, or WEBP", 400)
     upload_dir = os.path.join(app.root_path, 'static', 'uploads')
     os.makedirs(upload_dir, exist_ok=True)
     ext = file.filename.rsplit('.', 1)[1].lower()
@@ -2027,7 +1921,6 @@ def track_direct(tracking_number):
         receiver_email=shipment.receiver_email,
         weight_kg=shipment.weight_kg,
         shipment_date=shipment.shipment_date,
-        # ADDED: payment_status and payment_reason for initial banner display
         payment_status=shipment.payment_status or 'unpaid',
         payment_reason=shipment.payment_reason or '',
     )
@@ -2038,26 +1931,26 @@ def telegram_webhook():
         bot = get_bot()
         data = request.get_json(force=True, silent=True)
         if not data:
-            return jsonify({'error': 'Invalid JSON payload'}), 400
+            return json_error_response("Invalid JSON payload", 400)
         update = types.Update.de_json(data)
         bot.process_new_updates([update])
         return jsonify({'status': 'ok'}), 200
     except Exception as e:
         flask_logger.exception('Telegram webhook processing failed: %s', e)
-        return jsonify({'error': str(e)}), 500
+        return json_error_response(str(e), 500)
 
 @app.route('/notify', methods=['POST'])
 def websocket_notify():
     data = request.get_json(silent=True)
     if not data:
-        return jsonify({'error': 'Invalid JSON payload'}), 400
+        return json_error_response("Invalid JSON payload", 400)
     try:
         socketio.emit('tracking_update', data, namespace='/')
         flask_logger.info('External notify payload delivered to socket clients')
         return jsonify({'success': True}), 200
     except Exception as e:
         flask_logger.warning(f'External notify failed: {e}')
-        return jsonify({'error': str(e)}), 500
+        return json_error_response(str(e), 500)
 
 @app.route('/health')
 def health_check():
@@ -2099,10 +1992,10 @@ def health_check():
 def debug_tracking_number(tracking_number):
     remote = request.remote_addr
     if not (app.debug or app.config.get('FLASK_ENV') == 'development' or remote in ('127.0.0.1', '::1')):
-        return jsonify({'error': 'Not available'}), 403
+        return json_error_response("Not available", 403)
     tn = sanitize_tracking_number(tracking_number)
     if not tn:
-        return jsonify({'error': 'Invalid tracking number'}), 400
+        return json_error_response("Invalid tracking number", 400)
     try:
         fields = ['progress', 'current_location', 'current_lat', 'current_lon', 'service_level', 'delivery_window', 'paused']
         snapshot = {}
@@ -2118,7 +2011,7 @@ def debug_tracking_number(tracking_number):
         return jsonify({'tracking_number': tn, 'snapshot': snapshot})
     except Exception as e:
         flask_logger.exception('Debug TN fetch failed: %s', e)
-        return jsonify({'error': 'Failed to fetch'}), 500
+        return json_error_response("Failed to fetch", 500)
 
 @app.route('/debug')
 def debug_info():
@@ -2225,7 +2118,14 @@ def admin_logout():
 def admin_metrics():
     metrics = {}
     try:
-        active_keys = rkeys("clients:*")
+        active_keys = []
+        if redis_client:
+            cursor = 0
+            while True:
+                cursor, keys = redis_client.scan(cursor, match="clients:*", count=100)
+                active_keys.extend(keys)
+                if cursor == 0:
+                    break
         metrics['active_simulations'] = len(active_keys)
         speeds = rhgetall("sim_speed_multipliers") or {}
         if speeds:
@@ -2273,21 +2173,17 @@ def admin_dashboard():
                 if redis_client:
                     try:
                         paused = rget("paused_simulations", s.tracking_number, "false") == "true"
-                        # SAFE speed conversion
                         speed_raw = rget("sim_speed_multipliers", s.tracking_number, "1.0")
                         try:
                             speed = float(speed_raw) if speed_raw is not None else 1.0
                         except (ValueError, TypeError):
                             speed = 1.0
-                        
                         mode = rget("transport_mode", s.tracking_number, "ground") or "ground"
-                        # SAFE progress conversion
                         progress_raw = rget("progress", s.tracking_number, "0")
                         try:
                             progress = float(progress_raw) if progress_raw is not None else 0.0
                         except (ValueError, TypeError):
                             progress = 0.0
-                        
                         stage = rget("stage", s.tracking_number, "pickup") or "pickup"
                         service_level = rget("service_level", s.tracking_number, "DHL Express") or "DHL Express"
                         delivery_window = rget("delivery_window", s.tracking_number, "Calculating...") or "Calculating..."
@@ -2325,16 +2221,29 @@ def admin_dashboard():
                 flask_logger.error(f"Error processing shipment {s.tracking_number}: {row_err}")
                 continue
         total_pages = (total - 1) // per_page + 1 if total > 0 else 1
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        active_clients = 0
+        if redis_client:
+            try:
+                cursor = 0
+                while True:
+                    cursor, keys = redis_client.scan(cursor, match="clients:*", count=100)
+                    active_clients += len(keys)
+                    if cursor == 0:
+                        break
+            except Exception:
+                active_clients = 0
         return render_template('admin_dashboard.html',
                                total=total,
                                queue_len=redis_client.llen("notifications") if redis_client else 0,
-                               active_clients=len(redis_client.keys("clients:*")) if redis_client else 0,
+                               active_clients=active_clients,
                                shipments=shipments_data,
                                page=page,
                                total_pages=total_pages,
-                               now=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
+                               now=now_utc)
     except Exception as e:
         flask_logger.error(f"Error in admin_dashboard: {e}")
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         return render_template('admin_dashboard.html',
                                total=0,
                                queue_len=0,
@@ -2343,7 +2252,7 @@ def admin_dashboard():
                                page=1,
                                total_pages=1,
                                error=str(e),
-                               now=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
+                               now=now_utc)
 
 @app.route('/admin/csv')
 @admin_required
@@ -2360,7 +2269,7 @@ def admin_csv():
                          s.recipient_email or "-", s.carrier, service_level, delivery_window, proof_of_delivery,
                          s.last_updated.strftime("%Y-%m-%d %H:%M"), s.created_at.strftime("%Y-%m-%d %H:%M")])
     output.seek(0)
-    return Response(output, mimetype="text/csv", headers={"Content-Disposition": f"attachment;filename=shipments_{datetime.utcnow().strftime('%Y%m%d')}.csv"})
+    return Response(output, mimetype="text/csv", headers={"Content-Disposition": f"attachment;filename=shipments_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"})
 
 def generate_dhl_tracking():
     prefix = "JD"
@@ -2372,7 +2281,7 @@ def generate_dhl_tracking():
 def api_shipment_detail(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Not found'}), 404
+        return json_error_response("Not found", 404)
     speed = float(rget("sim_speed_multipliers", tn, "1.0") or "1.0")
     paused = rget("paused_simulations", tn, "false") == "true"
     lock_stage = rget("lock_stage", tn, "false") == "true"
@@ -2438,7 +2347,7 @@ def purge_shipment_cache(tn):
             'service_level', tn,
             'lock_stage', tn
         )
-        redis_client.delete(f'email_history:{tn}', f'clients:{tn}')
+        redis_client.delete(f'email_history:{tn}', f'clients:{tn}', f'route_coords:{tn}')
     except Exception:
         pass
 
@@ -2466,7 +2375,7 @@ def reload_shipment(tn):
 def api_shipment_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Not found'}), 404
+        return json_error_response("Not found", 404)
     data = request.get_json() or {}
     editable = {
         'status', 'stage', 'service_level', 'delivery_window', 'proof_of_delivery',
@@ -2537,12 +2446,14 @@ def api_shipment_update(tn):
                             shipment.origin_lat = coords.get('lat')
                             shipment.origin_lon = coords.get('lon')
                     else:
-                        return jsonify({'error': f'Could not resolve location for {k}'}), 400
+                        return json_error_response(f"Could not resolve location for {k}", 400)
                 setattr(shipment, k, v)
                 updated[k] = v
         shipment.last_updated = datetime.now()
         db.session.commit()
         invalidate_cache(tn)
+        if redis_client:
+            redis_client.delete(f'route_coords:{tn}')
         try:
             broadcast_update(tn)
         except Exception:
@@ -2550,14 +2461,14 @@ def api_shipment_update(tn):
         return jsonify({'success': True, 'updated': updated})
     except Exception as e:
         flask_logger.exception('Failed to update shipment %s: %s', tn, e)
-        return jsonify({'error': str(e)}), 500
+        return json_error_response(str(e), 500)
 
 @app.route('/admin/api/shipment/<tn>/delete', methods=['POST'])
 @admin_required
 def api_delete_shipment(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Not found'}), 404
+        return json_error_response("Not found", 404)
     try:
         db.session.delete(shipment)
         db.session.commit()
@@ -2566,7 +2477,7 @@ def api_delete_shipment(tn):
     except Exception as e:
         db.session.rollback()
         flask_logger.exception('Failed to delete shipment %s: %s', tn, e)
-        return jsonify({'error': 'Failed to delete shipment'}), 500
+        return json_error_response("Failed to delete shipment", 500)
 
 # ====== PAYMENT WALL ADMIN ENDPOINTS ======
 @app.route('/admin/api/shipment/<tn>/block_payment', methods=['POST'])
@@ -2576,16 +2487,15 @@ def block_payment(tn):
     amount = data.get('amount')
     reason = data.get('reason', 'Payment required to continue shipment.')
     if amount is None or amount <= 0:
-        return jsonify({'error': 'Valid invoice amount required'}), 400
+        return json_error_response("Valid invoice amount required", 400)
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Shipment not found'}), 404
+        return json_error_response("Shipment not found", 404)
     shipment.invoice_amount = float(amount)
     shipment.payment_reason = reason
     shipment.payment_status = 'unpaid'
     shipment.last_updated = datetime.now()
     db.session.commit()
-    # Pause simulation
     rset('paused_simulations', tn, 'true')
     invalidate_cache(tn)
     broadcast_update(tn)
@@ -2596,11 +2506,10 @@ def block_payment(tn):
 def mark_paid(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Shipment not found'}), 404
+        return json_error_response("Shipment not found", 404)
     shipment.payment_status = 'paid'
     shipment.last_updated = datetime.now()
     db.session.commit()
-    # Resume simulation
     rset('paused_simulations', tn, 'false')
     invalidate_cache(tn)
     broadcast_update(tn)
@@ -2667,9 +2576,6 @@ def admin_geocoding_status():
         'rate_limiter_status': {api: len(timestamps) for api, timestamps in geocode_rate_limiter.items()}
     })
 
-# ============================================================
-# CRITICAL FIX: Parse shipment_date from string to datetime
-# ============================================================
 def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
                            sender_name=None, sender_location=None,
                            receiver_name=None, receiver_address=None, receiver_phone=None,
@@ -2736,7 +2642,6 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
                     known_candidates.update(k for k in DHLRealisticSimulator.DHL_HUBS.keys())
                 except Exception:
                     pass
-                lower_to_known = {k.lower(): k for k in known_candidates}
                 for tok in toks[::-1]:
                     if not tok:
                         continue
@@ -2961,7 +2866,7 @@ def api_bulk_create():
     payload = request.get_json() or {}
     shipments = payload.get('shipments') or []
     if not isinstance(shipments, list) or not shipments:
-        return jsonify({'error': 'Shipments list required'}), 400
+        return json_error_response("Shipments list required", 400)
     created = []
     errors = []
     for index, shipment_data in enumerate(shipments):
@@ -3015,9 +2920,9 @@ def api_send_email():
     custom_message = data.get('custom_message', '')
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
-        return jsonify({'error': 'Shipment not found'}), 404
+        return json_error_response("Shipment not found", 404)
     if not shipment.recipient_email:
-        return jsonify({'error': 'No recipient email on file'}), 400
+        return json_error_response("No recipient email on file", 400)
     service_level = rget("service_level", tn, "DHL Express") or "DHL Express"
     delivery_window = rget("delivery_window", tn, "Calculating...") or "Calculating..."
     checkpoints = (shipment.checkpoints or "").split(";") if shipment.checkpoints else []
@@ -3073,7 +2978,7 @@ def api_notifications_count():
     except Exception as e:
         flask_logger.error(f"Failed to read notifications count: {e}")
         flask_logger.debug(traceback.format_exc())
-        return jsonify({'count': 0}), 500
+        return json_error_response("Failed to read count", 500)
 
 @app.route('/admin/api/pause', methods=['POST'])
 @admin_required
@@ -3082,7 +2987,7 @@ def api_pause_simulation():
     tn = data.get('tracking_number')
     pause = data.get('pause')
     if not tn or pause is None:
-        return jsonify({'error': 'tracking_number and pause required'}), 400
+        return json_error_response("tracking_number and pause required", 400)
     if redis_client:
         try:
             rset('paused_simulations', tn, 'true' if bool(pause) else 'false')
@@ -3093,7 +2998,7 @@ def api_pause_simulation():
                 pass
         except Exception as e:
             flask_logger.warning(f"Failed to pause/resume shipment {tn}: {e}")
-            return jsonify({'error': 'Failed to update pause state'}), 500
+            return json_error_response("Failed to update pause state", 500)
     return jsonify({'success': True, 'paused': bool(pause)})
 
 @app.route('/admin/api/speed', methods=['POST'])
@@ -3103,11 +3008,11 @@ def api_update_speed():
     tn = data.get('tracking_number')
     speed = data.get('speed')
     if not tn or speed is None:
-        return jsonify({'error': 'tracking_number and speed required'}), 400
+        return json_error_response("tracking_number and speed required", 400)
     try:
         speed_value = float(speed)
     except (TypeError, ValueError):
-        return jsonify({'error': 'Invalid speed value'}), 400
+        return json_error_response("Invalid speed value", 400)
     speed_value = max(0.1, min(10.0, speed_value))
     if redis_client:
         try:
@@ -3119,7 +3024,7 @@ def api_update_speed():
                 pass
         except Exception as e:
             flask_logger.warning(f"Failed to update speed for {tn}: {e}")
-            return jsonify({'error': 'Failed to update speed state'}), 500
+            return json_error_response("Failed to update speed state", 500)
     return jsonify({'success': True, 'speed': speed_value})
 
 # ========== SOCKET.IO ==========
@@ -3258,11 +3163,11 @@ def start_background_services():
         except Exception:
             pass
         eventlet.spawn(keep_alive)
-        if os.getenv('DISABLE_QUEUE_PROCESSOR', '').lower() not in ('1', 'true', 'yes'):
-            flask_logger.info("Starting notification queue processor (no separate worker detected)")
+        if os.getenv('ENABLE_QUEUE_PROCESSOR', '').lower() in ('1', 'true', 'yes'):
+            flask_logger.info("Starting notification queue processor (enabled by ENABLE_QUEUE_PROCESSOR)")
             eventlet.spawn(process_notification_queue)
         else:
-            flask_logger.info("Queue processor disabled by DISABLE_QUEUE_PROCESSOR (using external worker)")
+            flask_logger.info("Queue processor disabled (use external worker); set ENABLE_QUEUE_PROCESSOR=1 to enable in-process.")
         eventlet.spawn(cleanup_websocket_clients)
     except Exception:
         with services_started_lock:
