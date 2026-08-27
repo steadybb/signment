@@ -120,13 +120,17 @@ def init_payment_routes(app):
         invoices = []
         total_due = 0.0
         for s in shipments:
+            # Always compute distance and service level (needed for display)
+            distance = estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
+            service_level = rget('service_level', s.tracking_number, 'DHL Express')
+            
+            # Use invoice_amount if set, otherwise calculate dynamically
             if s.invoice_amount is not None and s.invoice_amount > 0:
                 cost = s.invoice_amount
             else:
-                distance = estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
-                service_level = rget('service_level', s.tracking_number, 'DHL Express')
                 cost = calculate_shipment_cost(distance, service_level)
-
+            
+            # Build shipment dict (only fields needed by template)
             shipment_dict = {
                 'tracking_number': s.tracking_number,
                 'payment_status': s.payment_status,
@@ -139,7 +143,7 @@ def init_payment_routes(app):
                 'shipment': shipment_dict,
                 'cost': cost,
                 'service_level': service_level,
-                'distance': estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
+                'distance': distance,
             })
             if s.payment_status != 'paid':
                 total_due += cost
