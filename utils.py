@@ -148,50 +148,31 @@ def add_client_error(payload: dict):
         pass
 
 
+# ============================================================
+# FIXED: Minimal spawn_simulation – all concurrency controls
+#         are now handled by app.py (Redis locks + thread count).
+# ============================================================
 def spawn_simulation(tracking_number: str):
     """
     Start a simulation thread for the given tracking number.
-    Uses a Redis lock to prevent multiple concurrent runs for the same TN.
+    No locking or throttling – caller (app.py) must manage those.
     """
-    # Acquire Redis lock to prevent duplicate runs
-    lock_key = f"sim_running:{tracking_number}"
-    if redis_client:
-        # setnx returns True if key was set (i.e., not already existing)
-        if not redis_client.setnx(lock_key, "1"):
-            bot_logger.info(f"Simulation already running for {tracking_number}")
-            return None
-        redis_client.expire(lock_key, 3600)  # 1 hour max
-
-    if not register_simulation_start():
-        if redis_client:
-            redis_client.delete(lock_key)
-        return None
-
-    def _runner():
-        try:
-            import importlib
-            try:
-                app_module = importlib.import_module('app')
-            except Exception:
-                app_module = None
-            if app_module and hasattr(app_module, 'simulate_tracking'):
-                app_module.simulate_tracking(tracking_number)
-        finally:
-            if redis_client:
-                redis_client.delete(lock_key)
-            register_simulation_stop()
-
     try:
         import threading
+        def _runner():
+            try:
+                import importlib
+                app_module = importlib.import_module('app')
+                if app_module and hasattr(app_module, 'simulate_tracking'):
+                    app_module.simulate_tracking(tracking_number)
+            except Exception as e:
+                bot_logger.error(f"Simulation thread error: {e}")
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
         return thread
-    except Exception:
-        if redis_client:
-            redis_client.delete(lock_key)
-        register_simulation_stop()
-        pass
-    return None
+    except Exception as e:
+        bot_logger.error(f"Failed to start simulation thread: {e}")
+        return None
 
 
 def _resolve_template_url(url: str) -> str:
