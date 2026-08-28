@@ -115,13 +115,11 @@ def callback_handler(call):
     chat_id = call.message.chat.id
     msg_id = call.message.message_id
 
-    # ----- MENU -----
     if data == "menu":
         safe_edit_text(chat_id, msg_id, "👋 *DHL Admin Bot*\nSelect an action:",
                        reply_markup=_build_main_menu())
         bot.answer_callback_query(call.id)
 
-    # ----- LIST SHIPMENTS (pagination) -----
     elif data.startswith("menu_page_"):
         page = int(data.split("_")[-1])
         markup, total = _paginated_menu(page, prefix='menu')
@@ -130,7 +128,6 @@ def callback_handler(call):
                        reply_markup=markup)
         bot.answer_callback_query(call.id)
 
-    # ----- VIEW SHIPMENT -----
     elif data.startswith("view_"):
         tn = data.split("_")[1]
         details = get_shipment_details(tn)
@@ -147,21 +144,18 @@ def callback_handler(call):
         safe_edit_text(chat_id, msg_id, text, reply_markup=markup)
         bot.answer_callback_query(call.id)
 
-    # ----- ADD SHIPMENT (step 1) -----
     elif data == "add":
         msg = bot.send_message(chat_id, "Please enter the *origin* (e.g., Lagos, NG):", parse_mode='Markdown')
         bot.register_next_step_handler(msg, add_origin_step)
         bot.answer_callback_query(call.id)
 
-    # ----- SEARCH -----
     elif data == "search_menu":
         msg = bot.send_message(chat_id, "Enter tracking number or location to search:", parse_mode='Markdown')
         bot.register_next_step_handler(msg, search_step)
         bot.answer_callback_query(call.id)
 
-    # ----- STATS -----
     elif data == "stats":
-        shipments, total = get_shipment_list(page=1, per_page=9999)  # get all
+        shipments, total = get_shipment_list(page=1, per_page=9999)
         statuses = {}
         for tn in shipments:
             s = get_shipment_details(tn)
@@ -176,7 +170,6 @@ def callback_handler(call):
         ))
         bot.answer_callback_query(call.id)
 
-    # ----- GENERATE ID -----
     elif data == "generate_id":
         new_id = generate_unique_id()
         safe_edit_text(chat_id, msg_id,
@@ -186,7 +179,6 @@ def callback_handler(call):
                        ))
         bot.answer_callback_query(call.id)
 
-    # ----- HELP -----
     elif data == "help":
         help_text = (
             "🤖 *Help*\n"
@@ -200,15 +192,6 @@ def callback_handler(call):
         safe_edit_text(chat_id, msg_id, help_text, reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("🔙 Menu", callback_data="menu")
         ))
-        bot.answer_callback_query(call.id)
-
-    # ----- PAGINATION for other menus (if needed) -----
-    elif data.startswith("menu_page_"):
-        page = int(data.split("_")[-1])
-        markup, total = _paginated_menu(page, prefix='menu')
-        safe_edit_text(chat_id, msg_id,
-                       f"📦 *Shipments* (Page {page}/{ (total-1)//10 + 1 if total else 1})\nTotal: {total}",
-                       reply_markup=markup)
         bot.answer_callback_query(call.id)
 
     else:
@@ -245,7 +228,6 @@ def add_email_step(message, origin, destination):
         bot.send_message(chat_id, "Invalid email format. Please enter a valid email or /skip:")
         bot.register_next_step_handler(message, add_email_step, origin, destination)
         return
-    # Create shipment
     try:
         tn = generate_unique_id()
         success = save_shipment(
@@ -303,47 +285,47 @@ def search_step(message):
     bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=markup)
 
 
-# ========== POLLING WITH WEBHOOK CLEANUP ==========
+# ========== POLLING WITH AGGRESSIVE WEBHOOK CLEANUP ==========
 def main():
     logger.info("Starting Telegram bot in polling mode...")
     console.print("[info]Telegram bot started (polling)[/info]")
 
-    # ----- 1. Force delete webhook -----
-    try:
-        # Use delete_webhook (the correct method)
-        bot.delete_webhook()
-        logger.info("Deleted webhook (if any)")
-        console.print("[info]Deleted webhook[/info]")
-        time.sleep(2)  # Give Telegram time to process
-    except Exception as e:
-        logger.warning(f"Failed to delete webhook: {e}")
-
-    # ----- 2. Verify webhook is gone -----
-    try:
-        info = bot.get_webhook_info()
-        if info.url:
-            logger.warning(f"Webhook still set to {info.url} – forcing removal again")
+    # ----- 1. Force delete webhook and verify -----
+    for _ in range(3):  # Try up to 3 times to ensure it's cleared
+        try:
             bot.delete_webhook()
+            logger.info("Deleted webhook (if any)")
+            console.print("[info]Deleted webhook[/info]")
+            time.sleep(3)  # Wait longer for Telegram to process
+            # Verify
+            info = bot.get_webhook_info()
+            if info.url:
+                logger.warning(f"Webhook still set to {info.url} – forcing removal again")
+                bot.delete_webhook()
+                time.sleep(3)
+            else:
+                logger.info("Webhook successfully cleared")
+                break
+        except Exception as e:
+            logger.warning(f"Webhook cleanup attempt failed: {e}")
             time.sleep(2)
-    except Exception as e:
-        logger.warning(f"Could not check webhook info: {e}")
 
-    # ----- 3. Poll with retry on 409 -----
-    max_retries = 5
+    # ----- 2. Poll with extended retry on 409 -----
+    max_retries = 10
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"Polling attempt {attempt}/{max_retries}")
-            # skip_pending=True avoids old updates that might cause issues
             bot.infinity_polling(skip_pending=True, timeout=10)
             break  # success
         except Exception as e:
             if "409" in str(e) and attempt < max_retries:
-                logger.warning(f"Conflict (409) on attempt {attempt}, retrying after webhook cleanup...")
+                wait_time = min(2 ** attempt, 60)  # exponential backoff up to 60s
+                logger.warning(f"Conflict (409) on attempt {attempt}, retrying after {wait_time}s...")
                 try:
                     bot.delete_webhook()
-                    time.sleep(2 ** attempt)  # exponential backoff
                 except Exception:
                     pass
+                time.sleep(wait_time)
                 continue
             else:
                 logger.error(f"Bot polling failed: {e}")
