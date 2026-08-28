@@ -72,7 +72,7 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 import validators
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
-from sqlalchemy import inspect, text, or_
+from sqlalchemy import inspect, text, or_, create_engine
 from time import sleep
 from urllib.parse import quote_plus, urlparse
 from telebot import TeleBot, types
@@ -105,6 +105,40 @@ HIGH_VALUE_TRANSLITERATION_MAP = {
 from collections import deque, defaultdict
 
 load_dotenv()
+
+# ============================================================
+# Database fallback function
+# ============================================================
+def get_working_database_uri(configured_uri):
+    """
+    Test the configured database URI. If it works, return it.
+    Otherwise, fall back to SQLite.
+    """
+    # If already SQLite, no need to test
+    if configured_uri and configured_uri.startswith('sqlite'):
+        logging.info(f"Using SQLite database: {configured_uri}")
+        return configured_uri
+
+    # If no URI is provided, skip test and go straight to SQLite
+    if not configured_uri:
+        logging.warning("No DATABASE_URI configured. Using SQLite fallback.")
+        return 'sqlite:///app_fallback.db'
+
+    # Attempt to connect to the primary database
+    try:
+        # Set a short timeout for PostgreSQL connections
+        connect_args = {}
+        if 'postgresql' in configured_uri:
+            connect_args = {'connect_timeout': 5}
+        engine = create_engine(configured_uri, connect_args=connect_args)
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+        logging.info(f"Successfully connected to primary database: {configured_uri}")
+        return configured_uri
+    except Exception as e:
+        logging.warning(f"Failed to connect to primary database: {e}")
+        logging.warning("Falling back to SQLite.")
+        return 'sqlite:///app_fallback.db'
 
 # ============================================================
 # FIX: Move KNOWN_LOCATION_COORDS to the very top
@@ -876,10 +910,22 @@ def json_error_response(message, status_code=400, details=None):
         response["details"] = details
     return jsonify(response), status_code
 
-required = ['SECRET_KEY', 'SQLALCHEMY_DATABASE_URI']
-for var in required:
-    if not app.config.get(var):
-        raise ValueError(f"Missing: {var}")
+# ========== Database URI Configuration with Fallback ==========
+# SECRET_KEY is required; SQLALCHEMY_DATABASE_URI is optional (fallback to SQLite)
+if not app.config.get('SECRET_KEY'):
+    raise ValueError("SECRET_KEY is required")
+
+# Determine initial URI (from env or default)
+initial_uri = app.config.get('SQLALCHEMY_DATABASE_URI')
+if not initial_uri:
+    initial_uri = 'sqlite:///app_default.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = initial_uri
+
+# Apply fallback logic
+app.config['SQLALCHEMY_DATABASE_URI'] = get_working_database_uri(initial_uri)
+flask_logger.info(f"Using database: {app.config['SQLALCHEMY_DATABASE_URI']}")
+
+# ========== End Database Configuration ==========
 
 class TrackForm(FlaskForm):
     tracking_number = StringField('Tracking Number', validators=[DataRequired()])
