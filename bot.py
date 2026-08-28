@@ -3,6 +3,7 @@ import sys
 import logging
 import json
 import re
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -247,12 +248,6 @@ def add_email_step(message, origin, destination):
     # Create shipment
     try:
         tn = generate_unique_id()
-        # Use default service level
-        service_level = 'DHL Express'
-        # Use origin as sender_location etc. – or use defaults
-        result, status_code = None, None
-        # We'll call create_shipment_record from app? Better to use save_shipment directly.
-        # save_shipment expects many params; we'll use minimal.
         success = save_shipment(
             tracking_number=tn,
             status='Pending',
@@ -265,7 +260,6 @@ def add_email_step(message, origin, destination):
             receiver_address=destination
         )
         if success:
-            # Try to start simulation
             try:
                 if can_start_simulation():
                     spawn_simulation(tn)
@@ -309,17 +303,38 @@ def search_step(message):
     bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=markup)
 
 
-# ========== POLLING ==========
+# ========== POLLING WITH WEBHOOK CLEANUP ==========
 def main():
     logger.info("Starting Telegram bot in polling mode...")
     console.print("[info]Telegram bot started (polling)[/info]")
+
+    # Remove any existing webhook to avoid 409 conflict
     try:
-        bot.infinity_polling()
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
+        bot.remove_webhook()
+        logger.info("Removed existing webhook (if any)")
+        console.print("[info]Removed existing webhook[/info]")
+        time.sleep(1)  # Allow Telegram to process the removal
     except Exception as e:
-        logger.error(f"Bot crashed: {e}")
-        raise
+        logger.warning(f"Failed to remove webhook: {e}")
+
+    # Poll with automatic retry on 409 conflict
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            bot.infinity_polling()
+            break  # success
+        except Exception as e:
+            if "409" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"Conflict (409) on attempt {attempt+1}, retrying after webhook removal...")
+                try:
+                    bot.remove_webhook()
+                    time.sleep(2)
+                except Exception:
+                    pass
+                continue
+            else:
+                logger.error(f"Bot polling failed: {e}")
+                raise
 
 if __name__ == "__main__":
     main()
