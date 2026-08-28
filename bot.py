@@ -308,27 +308,40 @@ def main():
     logger.info("Starting Telegram bot in polling mode...")
     console.print("[info]Telegram bot started (polling)[/info]")
 
-    # Remove any existing webhook to avoid 409 conflict
+    # ----- 1. Force delete webhook -----
     try:
-        bot.remove_webhook()
-        logger.info("Removed existing webhook (if any)")
-        console.print("[info]Removed existing webhook[/info]")
-        time.sleep(1)  # Allow Telegram to process the removal
+        # Use delete_webhook (the correct method)
+        bot.delete_webhook()
+        logger.info("Deleted webhook (if any)")
+        console.print("[info]Deleted webhook[/info]")
+        time.sleep(2)  # Give Telegram time to process
     except Exception as e:
-        logger.warning(f"Failed to remove webhook: {e}")
+        logger.warning(f"Failed to delete webhook: {e}")
 
-    # Poll with automatic retry on 409 conflict
-    max_retries = 3
-    for attempt in range(max_retries):
+    # ----- 2. Verify webhook is gone -----
+    try:
+        info = bot.get_webhook_info()
+        if info.url:
+            logger.warning(f"Webhook still set to {info.url} – forcing removal again")
+            bot.delete_webhook()
+            time.sleep(2)
+    except Exception as e:
+        logger.warning(f"Could not check webhook info: {e}")
+
+    # ----- 3. Poll with retry on 409 -----
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
         try:
-            bot.infinity_polling()
+            logger.info(f"Polling attempt {attempt}/{max_retries}")
+            # skip_pending=True avoids old updates that might cause issues
+            bot.infinity_polling(skip_pending=True, timeout=10)
             break  # success
         except Exception as e:
-            if "409" in str(e) and attempt < max_retries - 1:
-                logger.warning(f"Conflict (409) on attempt {attempt+1}, retrying after webhook removal...")
+            if "409" in str(e) and attempt < max_retries:
+                logger.warning(f"Conflict (409) on attempt {attempt}, retrying after webhook cleanup...")
                 try:
-                    bot.remove_webhook()
-                    time.sleep(2)
+                    bot.delete_webhook()
+                    time.sleep(2 ** attempt)  # exponential backoff
                 except Exception:
                     pass
                 continue
