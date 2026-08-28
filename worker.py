@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from flask import Flask, render_template
 import requests
 from rich.console import Console
 from rich.panel import Panel
@@ -64,10 +63,6 @@ except Exception as e:
     console.print(Panel(f"[error]Configuration validation failed: {e}[/error]", title="Config Error", border_style="red"))
     raise
 
-# Initialize Flask app for template rendering
-app = Flask(__name__)
-app.config['TEMPLATES_AUTO_RELOAD'] = True
-
 # Maximum number of retries for a failed notification
 MAX_RETRIES = 3
 
@@ -86,6 +81,7 @@ SMTP_TIMEOUT = int(os.getenv('SMTP_TIMEOUT', '20'))
 
 # ============================================================
 # FIXED: send_email with Resend → SMTP fallback + DNS check + timeout
+#        No template rendering – uses provided html_body or fallback
 # ============================================================
 def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
                recipient_email: str, subject: str = None, html_body: str = None,
@@ -100,27 +96,27 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
         logger.warning(f"No recipient email for {tracking_number}")
         return False, True  # Missing email is permanent
 
-    # Prepare checkpoints as a list for template/fallback
-    checkpoints_list = checkpoints.split(';') if checkpoints else []
-
     # Determine subject
     msg_subject = subject or f"DHL Shipment Update: {tracking_number}"
 
-    # Build HTML and plain bodies if not provided
-    if not html_body:
-        with app.app_context():
-            try:
-                html_body = render_template('email_notification.html',
-                                            tracking_number=tracking_number,
-                                            status=status,
-                                            checkpoints=checkpoints_list,
-                                            delivery_location=delivery_location)
-            except Exception:
-                html_body = f"<html><body><h2>DHL Shipment Update</h2><p>Tracking: {tracking_number}</p><p>Status: {status}</p></body></html>"
-
+    # Build plain_body if not provided
     if not plain_body:
         location = delivery_location or 'Unknown'
-        plain_body = f"DHL Shipment Update\n\nTracking Number: {tracking_number}\nStatus: {status}\nDestination: {location}\n\nRecent Updates:\n{chr(10).join(['- ' + c for c in checkpoints_list[-3:]]) if checkpoints_list else 'No updates yet'}\n\nTrack online: {config.websocket_server}/track/{tracking_number}"
+        plain_body = f"DHL Shipment Update\n\nTracking Number: {tracking_number}\nStatus: {status}\nDestination: {location}\n\nTrack online: {config.websocket_server}/track/{tracking_number}"
+
+    # Build a simple HTML fallback if html_body is not provided (no template rendering)
+    if not html_body:
+        html_body = f"""
+        <html>
+        <body>
+        <h2>DHL Shipment Update</h2>
+        <p><strong>Tracking:</strong> {tracking_number}</p>
+        <p><strong>Status:</strong> {status}</p>
+        <p><strong>Destination:</strong> {delivery_location or 'Unknown'}</p>
+        <p><a href="{config.websocket_server}/track/{tracking_number}">Track online</a></p>
+        </body>
+        </html>
+        """
 
     # Create MIME message (for SMTP)
     msg = MIMEMultipart('alternative')
