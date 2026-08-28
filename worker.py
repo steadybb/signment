@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import socket
 
 # patch eventlet before importing Flask/Werkzeug or networking modules
 try:
@@ -12,7 +13,6 @@ except Exception:
 
 from dotenv import load_dotenv
 import smtplib
-import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template
@@ -71,8 +71,18 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 # Maximum number of retries for a failed notification
 MAX_RETRIES = 3
 
+# Helper to check SMTP hostname resolvability
+def _is_smtp_host_resolvable(hostname):
+    if not hostname:
+        return False
+    try:
+        socket.getaddrinfo(hostname, None)
+        return True
+    except socket.gaierror:
+        return False
+
 # ============================================================
-# FIXED: send_email with Resend → SMTP fallback
+# FIXED: send_email with Resend → SMTP fallback + DNS check
 # ============================================================
 def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
                recipient_email: str, subject: str = None, html_body: str = None,
@@ -119,6 +129,10 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
 
     resend_key = config.resend_api_key
     smtp_configured = all([config.smtp_host, config.smtp_user, config.smtp_pass])
+    # Also check resolvability; if not resolvable, disable SMTP
+    if smtp_configured and not _is_smtp_host_resolvable(config.smtp_host):
+        logger.error(f"SMTP host '{config.smtp_host}' cannot be resolved – disabling SMTP for this attempt")
+        smtp_configured = False
 
     # ---------- Try Resend first (if key exists) ----------
     if resend_key:
