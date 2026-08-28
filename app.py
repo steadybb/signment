@@ -797,7 +797,6 @@ def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, c
             payload['proof_of_delivery'] = proof_of_delivery
         if stage is not None:
             payload['stage'] = stage
-        # FIX: emit to room specific to tracking number
         socketio.emit('tracking_update', payload, namespace='/', room=tn)
     except Exception:
         pass
@@ -2194,8 +2193,14 @@ def websocket_notify():
     if not data:
         return json_error_response("Invalid JSON payload", 400)
     try:
-        socketio.emit('tracking_update', data, namespace='/')
-        flask_logger.info('External notify payload delivered to socket clients')
+        tn = data.get('tracking_number')
+        if tn:
+            socketio.emit('tracking_update', data, namespace='/', room=tn)
+            flask_logger.info(f'External notify payload delivered for {tn}')
+        else:
+            # fallback: emit globally if no tn (should not happen)
+            socketio.emit('tracking_update', data, namespace='/')
+            flask_logger.info('External notify payload delivered globally (no tracking number)')
         return jsonify({'success': True}), 200
     except Exception as e:
         flask_logger.warning(f'External notify failed: {e}')
