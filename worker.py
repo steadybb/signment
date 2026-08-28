@@ -81,8 +81,11 @@ def _is_smtp_host_resolvable(hostname):
     except socket.gaierror:
         return False
 
+# Read SMTP timeout from environment, default to 20 seconds
+SMTP_TIMEOUT = int(os.getenv('SMTP_TIMEOUT', '20'))
+
 # ============================================================
-# FIXED: send_email with Resend → SMTP fallback + DNS check
+# FIXED: send_email with Resend → SMTP fallback + DNS check + timeout
 # ============================================================
 def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
                recipient_email: str, subject: str = None, html_body: str = None,
@@ -170,11 +173,11 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
                 return False, False
             # else fallback to SMTP
 
-    # ---------- Fallback to SMTP ----------
+    # ---------- Fallback to SMTP (with timeout from env) ----------
     if smtp_configured:
         try:
             smtp_class = smtplib.SMTP_SSL if int(config.smtp_port) == 465 else smtplib.SMTP
-            with smtp_class(config.smtp_host, config.smtp_port, timeout=20) as server:
+            with smtp_class(config.smtp_host, config.smtp_port, timeout=SMTP_TIMEOUT) as server:
                 if int(config.smtp_port) != 465:
                     server.starttls()
                 server.login(config.smtp_user, config.smtp_pass)
