@@ -52,7 +52,7 @@ import smtplib
 from flask import render_template, request, jsonify, session, redirect, url_for, flash, Response
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room, leave_room
 try:
     from flask_caching import Cache
 except Exception:
@@ -797,7 +797,8 @@ def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, c
             payload['proof_of_delivery'] = proof_of_delivery
         if stage is not None:
             payload['stage'] = stage
-        socketio.emit('tracking_update', payload, namespace='/')
+        # FIX: emit to room specific to tracking number
+        socketio.emit('tracking_update', payload, namespace='/', room=tn)
     except Exception:
         pass
 
@@ -1933,10 +1934,11 @@ def broadcast_update(tn):
         "payment_reason": payment_reason
     }
     try:
-        socketio.emit('tracking_update', data, namespace='/')
+        # FIX: emit only to clients subscribed to this tracking number
+        socketio.emit('tracking_update', data, namespace='/', room=tn)
     except TypeError:
         try:
-            socketio.emit('tracking_update', data, namespace='/')
+            socketio.emit('tracking_update', data, namespace='/', room=tn)
         except Exception as e:
             flask_logger.warning(f"Socket emit failed for {tn}: {e}")
     websocket_server = app.config.get('WEBSOCKET_SERVER', '')
@@ -3340,6 +3342,8 @@ def on_request(data):
         emit('tracking_update', {'error': 'Not found'})
         return
     add_client(tn, request.sid)
+    # FIX: join room for this tracking number to receive updates
+    join_room(tn)
     coords = get_route_coords_for_shipment(shipment)
     route_coords = build_route_from_checkpoints(coords, mode='drive')
     try:
