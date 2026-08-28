@@ -49,6 +49,7 @@ from math import radians, cos, sin, sqrt, atan2, ceil
 import requests
 from requests.structures import CaseInsensitiveDict
 import smtplib
+import socket
 from flask import render_template, request, jsonify, session, redirect, url_for, flash, Response
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -1735,6 +1736,16 @@ def open_smtp_connection(timeout=None):
     server.login(app.config['SMTP_USER'], app.config['SMTP_PASS'])
     return server
 
+# Helper to check SMTP hostname resolvability
+def _is_smtp_host_resolvable(hostname):
+    if not hostname:
+        return False
+    try:
+        socket.getaddrinfo(hostname, None)
+        return True
+    except socket.gaierror:
+        return False
+
 def send_email_via_resend(recipient, subject, html_body=None, plain_body=None):
     api_key = app.config.get('RESEND_API_KEY', '')
     if not api_key:
@@ -1757,8 +1768,18 @@ def send_email_via_resend(recipient, subject, html_body=None, plain_body=None):
     return True
 
 def send_email_via_smtp(recipient, subject, html_body=None, plain_body=None):
-    if not all([app.config['SMTP_HOST'], app.config['SMTP_USER'], app.config['SMTP_PASS']]):
+    # Check configuration
+    smtp_host = app.config.get('SMTP_HOST')
+    smtp_user = app.config.get('SMTP_USER')
+    smtp_pass = app.config.get('SMTP_PASS')
+    if not all([smtp_host, smtp_user, smtp_pass]):
+        flask_logger.warning("SMTP not fully configured, skipping")
         return False
+    # Check DNS resolution before attempting
+    if not _is_smtp_host_resolvable(smtp_host):
+        flask_logger.error(f"SMTP host '{smtp_host}' cannot be resolved - check your SMTP_HOST setting")
+        return False
+
     msg = MIMEMultipart("alternative")
     msg['From'] = app.config['SMTP_FROM']
     msg['To'] = recipient
@@ -1801,7 +1822,11 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
         return True
 
     resend_key = app.config.get('RESEND_API_KEY')
-    smtp_configured = all([app.config['SMTP_HOST'], app.config['SMTP_USER'], app.config['SMTP_PASS']])
+    smtp_configured = all([app.config.get('SMTP_HOST'), app.config.get('SMTP_USER'), app.config.get('SMTP_PASS')])
+    # Also check if SMTP host is resolvable, otherwise treat as not configured
+    if smtp_configured and not _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
+        flask_logger.error(f"SMTP host '{app.config.get('SMTP_HOST')}' not resolvable – disabling SMTP for this attempt")
+        smtp_configured = False
 
     if resend_key:
         try:
@@ -2231,8 +2256,13 @@ def health_check():
                 status['smtp'] = 'unconfigured'
                 flask_logger.warning("Resend email provider is not configured")
         elif app.config.get('SMTP_HOST') and app.config.get('SMTP_USER') and app.config.get('SMTP_PASS'):
-            with open_smtp_connection() as s:
-                s.noop()
+            # check resolvability
+            if _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
+                with open_smtp_connection() as s:
+                    s.noop()
+            else:
+                status['smtp'] = 'unresolvable'
+                flask_logger.warning(f"SMTP host '{app.config.get('SMTP_HOST')}' cannot be resolved")
         else:
             status['smtp'] = 'unconfigured'
             flask_logger.warning("SMTP not configured")
@@ -2299,9 +2329,12 @@ def debug_info():
         flask_logger.exception("Debug redis check failed: %s", e)
     try:
         if app.config.get('SMTP_HOST') and app.config.get('SMTP_USER') and app.config.get('SMTP_PASS'):
-            with open_smtp_connection() as s:
-                s.noop()
-            status['smtp'] = 'ok'
+            if _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
+                with open_smtp_connection() as s:
+                    s.noop()
+                status['smtp'] = 'ok'
+            else:
+                status['smtp'] = 'unresolvable'
         else:
             status['smtp'] = 'unconfigured'
     except Exception as e:
