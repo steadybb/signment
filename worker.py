@@ -71,6 +71,9 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 # Maximum number of retries for a failed notification
 MAX_RETRIES = 3
 
+# ============================================================
+# FIXED: send_email with Resend → SMTP fallback
+# ============================================================
 def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
                recipient_email: str, subject: str = None, html_body: str = None,
                plain_body: str = None) -> tuple[bool, bool]:
@@ -80,120 +83,105 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
       - success: True if email was sent successfully
       - permanent_failure: True if the error is permanent and should not be retried
     """
-    try:
-        if not recipient_email:
-            logger.warning(f"No recipient email for {tracking_number}")
-            return False, True  # Missing email is permanent
+    if not recipient_email:
+        logger.warning(f"No recipient email for {tracking_number}")
+        return False, True  # Missing email is permanent
 
-        # Prepare checkpoints as a list for template/fallback
-        checkpoints_list = checkpoints.split(';') if checkpoints else []
+    # Prepare checkpoints as a list for template/fallback
+    checkpoints_list = checkpoints.split(';') if checkpoints else []
 
-        # Determine subject
-        msg_subject = subject or f"DHL Shipment Update: {tracking_number}"
+    # Determine subject
+    msg_subject = subject or f"DHL Shipment Update: {tracking_number}"
 
-        # If no html_body provided, render legacy template (keeps backward compatibility)
-        if not html_body:
-            with app.app_context():
-                try:
-                    html_body = render_template('email_notification.html',
-                                                tracking_number=tracking_number,
-                                                status=status,
-                                                checkpoints=checkpoints_list,
-                                                delivery_location=delivery_location)
-                except Exception:
-                    # If template missing, fall back to simple HTML
-                    html_body = f"<html><body><h2>DHL Shipment Update</h2><p>Tracking: {tracking_number}</p><p>Status: {status}</p></body></html>"
-
-        # If no plain_body provided, build a simple fallback
-        if not plain_body:
-            location = delivery_location or 'Unknown'
-            plain_body = f"DHL Shipment Update\n\nTracking Number: {tracking_number}\nStatus: {status}\nDestination: {location}\n\nRecent Updates:\n{chr(10).join(['- ' + c for c in checkpoints_list[-3:]]) if checkpoints_list else 'No updates yet'}\n\nTrack online: {config.websocket_server}/track/{tracking_number}"
-
-        # Create MIME message (for SMTP fallback)
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = msg_subject
-        msg['From'] = config.smtp_from
-        msg['To'] = recipient_email
-        msg.attach(MIMEText(plain_body, 'plain'))
-        msg.attach(MIMEText(html_body, 'html'))
-
-        # Send email with retry
-        max_retries = 3
-        for attempt in range(max_retries):
+    # Build HTML and plain bodies if not provided
+    if not html_body:
+        with app.app_context():
             try:
-                email_provider = 'resend' if config.resend_api_key else config.email_provider
-                if email_provider == 'resend':
-                    response = requests.post(
-                        'https://api.resend.com/emails',
-                        headers={'Authorization': f'Bearer {config.resend_api_key}', 'Content-Type': 'application/json'},
-                        json={
-                            'from': config.smtp_from,
-                            'to': [recipient_email],
-                            'subject': msg_subject,
-                            'html': html_body or f'<p>{plain_body or ""}</p>',
-                            'text': plain_body or ''
-                        },
-                        timeout=20
-                    )
-                    response.raise_for_status()
-                else:
-                    smtp_class = smtplib.SMTP_SSL if int(config.smtp_port) == 465 else smtplib.SMTP
-                    with smtp_class(config.smtp_host, config.smtp_port, timeout=20) as server:
-                        if int(config.smtp_port) != 465:
-                            server.starttls()
-                        server.login(config.smtp_user, config.smtp_pass)
-                        server.send_message(msg)
+                html_body = render_template('email_notification.html',
+                                            tracking_number=tracking_number,
+                                            status=status,
+                                            checkpoints=checkpoints_list,
+                                            delivery_location=delivery_location)
+            except Exception:
+                html_body = f"<html><body><h2>DHL Shipment Update</h2><p>Tracking: {tracking_number}</p><p>Status: {status}</p></body></html>"
 
-                logger.info(f"Sent HTML email notification for {tracking_number} to {recipient_email}")
-                console.print(f"[info]Sent HTML email notification for {tracking_number} to {recipient_email}[/info]")
-                return True, False
+    if not plain_body:
+        location = delivery_location or 'Unknown'
+        plain_body = f"DHL Shipment Update\n\nTracking Number: {tracking_number}\nStatus: {status}\nDestination: {location}\n\nRecent Updates:\n{chr(10).join(['- ' + c for c in checkpoints_list[-3:]]) if checkpoints_list else 'No updates yet'}\n\nTrack online: {config.websocket_server}/track/{tracking_number}"
 
-            except requests.exceptions.HTTPError as e:
-                # Resend HTTP errors – treat 4xx client errors as permanent (except 429 rate limit)
-                if hasattr(e, 'response') and e.response is not None:
-                    status_code = e.response.status_code
-                    if 400 <= status_code < 500 and status_code != 429:
-                        logger.error(f"Permanent Resend error (HTTP {status_code}) for {tracking_number}: {e}")
-                        return False, True
-                    # 429 is transient (rate limit), we'll retry
-                # If we cannot determine, treat as transient
-                if attempt == max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
+    # Create MIME message (for SMTP)
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = msg_subject
+    msg['From'] = config.smtp_from
+    msg['To'] = recipient_email
+    msg.attach(MIMEText(plain_body, 'plain'))
+    msg.attach(MIMEText(html_body, 'html'))
 
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, socket.timeout):
-                # Network/timeout errors are transient
-                if attempt == max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
+    resend_key = config.resend_api_key
+    smtp_configured = all([config.smtp_host, config.smtp_user, config.smtp_pass])
 
-            except smtplib.SMTPAuthenticationError:
-                logger.error(f"SMTP authentication error for {tracking_number}")
-                return False, True  # Permanent
+    # ---------- Try Resend first (if key exists) ----------
+    if resend_key:
+        try:
+            response = requests.post(
+                'https://api.resend.com/emails',
+                headers={'Authorization': f'Bearer {resend_key}', 'Content-Type': 'application/json'},
+                json={
+                    'from': config.smtp_from,
+                    'to': [recipient_email],
+                    'subject': msg_subject,
+                    'html': html_body or f'<p>{plain_body or ""}</p>',
+                    'text': plain_body or ''
+                },
+                timeout=20
+            )
+            response.raise_for_status()
+            logger.info(f"Sent email via Resend for {tracking_number} to {recipient_email}")
+            console.print(f"[info]Sent email via Resend for {tracking_number} to {recipient_email}[/info]")
+            return True, False
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response else None
+            logger.warning(f"Resend HTTP {status_code} error for {tracking_number}: {e}")
+            # If SMTP is not configured, treat 4xx (except 429) as permanent, else fallback
+            if not smtp_configured:
+                if status_code and 400 <= status_code < 500 and status_code != 429:
+                    return False, True
+                # Otherwise transient (will retry)
+                return False, False
+            # If SMTP is configured, we will fallback; do not return yet
+        except Exception as e:
+            logger.warning(f"Resend failed for {tracking_number}: {e}")
+            if not smtp_configured:
+                # Without SMTP, treat all Resend errors as transient (retry)
+                return False, False
+            # else fallback to SMTP
 
-            except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, socket.timeout):
-                # Transient SMTP connection errors
-                if attempt == max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
-
-            except Exception as e:
-                # For any other exception, treat as transient if we have retries left
-                if attempt == max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
-
-        return False, False  # Should not reach here
-
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error for {tracking_number}: {e}")
-        # Generic SMTP exception – could be transient or permanent; we'll treat as transient (will retry)
-        return False, False
-    except Exception as e:
-        logger.error(f"Unexpected error sending HTML email for {tracking_number}: {e}")
-        console.print(Panel(f"[error]Unexpected error sending HTML email for {tracking_number}: {e}[/error]", title="Email Error", border_style="red"))
-        # Most unexpected errors are transient; we'll retry unless it's clearly permanent (e.g., invalid API key)
-        return False, False
+    # ---------- Fallback to SMTP ----------
+    if smtp_configured:
+        try:
+            smtp_class = smtplib.SMTP_SSL if int(config.smtp_port) == 465 else smtplib.SMTP
+            with smtp_class(config.smtp_host, config.smtp_port, timeout=20) as server:
+                if int(config.smtp_port) != 465:
+                    server.starttls()
+                server.login(config.smtp_user, config.smtp_pass)
+                server.send_message(msg)
+            logger.info(f"Sent email via SMTP for {tracking_number} to {recipient_email}")
+            console.print(f"[info]Sent email via SMTP for {tracking_number} to {recipient_email}[/info]")
+            return True, False
+        except smtplib.SMTPAuthenticationError:
+            logger.error(f"SMTP authentication error for {tracking_number}")
+            return False, True  # permanent
+        except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, socket.timeout, ConnectionError):
+            logger.warning(f"SMTP connection error for {tracking_number}, will retry")
+            return False, False  # transient
+        except Exception as e:
+            logger.error(f"SMTP error for {tracking_number}: {e}")
+            # Most SMTP errors are transient; we'll retry
+            return False, False
+    else:
+        # No SMTP configured and Resend already failed
+        logger.error(f"No email provider available for {tracking_number}")
+        return False, True  # permanent
 
 
 def send_webhook(tracking_number: str, status: str, checkpoints: list, delivery_location: str, webhook_url: str) -> tuple[bool, bool]:
