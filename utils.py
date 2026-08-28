@@ -19,7 +19,6 @@ from urllib.parse import quote_plus, urlparse
 
 load_dotenv()
 
-# === LOGGING & CONSOLE ===
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 LOG_FORMAT = os.getenv('LOG_FORMAT', '%(asctime)s %(levelname)s [%(name)s] %(message)s')
 
@@ -44,8 +43,6 @@ configure_logging()
 
 bot_logger = logging.getLogger('telegram_bot')
 console = Console()
-
-# === REDIS CLIENT ===
 
 class RedisClientProxy:
     def __init__(self):
@@ -83,7 +80,6 @@ last_redis_disable = None
 REDIS_RECONNECT_BASE = int(os.getenv('REDIS_RECONNECT_BASE_SECONDS', '5'))
 REDIS_RECONNECT_MAX = int(os.getenv('REDIS_RECONNECT_MAX_SECONDS', '60'))
 
-# === EMAIL THROTTLING CACHE ===
 email_throttle_cache = {}
 email_digest_cache = {}
 
@@ -92,11 +88,9 @@ EMAIL_ENABLED = os.getenv('EMAIL_ENABLED', 'true').lower() == 'true'
 AUTO_EMAIL_ENABLED = os.getenv('AUTO_EMAIL_ENABLED', 'true').lower() == 'true'
 EMAIL_THROTTLE_MINUTES = int(os.getenv('EMAIL_THROTTLE_MINUTES', '60'))
 
-# === SOCKET EVENT / CLIENT ERROR TRACKING ===
 recent_socket_events = deque(maxlen=200)
 recent_client_errors = deque(maxlen=200)
 
-# Simulator concurrency throttle
 SIMULATOR_THREAD_LIMIT = int(os.getenv('SIMULATOR_THREAD_LIMIT', '8'))
 _simulator_thread_count = 0
 _simulator_thread_lock = None
@@ -148,10 +142,6 @@ def add_client_error(payload: dict):
         pass
 
 
-# ============================================================
-# FIXED: Minimal spawn_simulation – all concurrency controls
-#         are now handled by app.py (Redis locks + thread count).
-# ============================================================
 def spawn_simulation(tracking_number: str):
     """
     Start a simulation thread for the given tracking number.
@@ -339,16 +329,10 @@ def get_redis_metrics() -> Dict[str, Any]:
         'last_disable': globals().get('last_redis_disable')
     }
 
-# ============================================================
-# REDIS HELPER FUNCTIONS (shared across app & payment routes)
-# ============================================================
-
-# In-memory fallback for Redis (used when Redis is unavailable)
 in_memory_sim = {}
 in_memory_clients = {}
 
 def rget(field: str, tn: str, default=None):
-    """Get a value from Redis hash or in-memory fallback."""
     global redis_client
     try:
         if not redis_client:
@@ -360,11 +344,9 @@ def rget(field: str, tn: str, default=None):
             return val.decode('utf-8')
         return val
     except Exception:
-        # Fallback to in‑memory
         return in_memory_sim.get(tn, {}).get(field, default)
 
 def rset(field: str, tn: str, value):
-    """Set a value in Redis hash or in‑memory fallback."""
     global redis_client
     if not redis_client:
         try:
@@ -375,14 +357,12 @@ def rset(field: str, tn: str, value):
     try:
         redis_client.hset(field, tn, value)
     except Exception:
-        # If Redis fails, store in memory
         try:
             in_memory_sim.setdefault(tn, {})[field] = value
         except Exception:
             pass
 
 def rkeys(pattern: str):
-    """Return keys matching pattern from Redis, or empty list on error."""
     try:
         if not redis_client:
             return []
@@ -393,7 +373,6 @@ def rkeys(pattern: str):
         return []
 
 def rhgetall(key: str):
-    """Return all fields of a Redis hash, or empty dict on error."""
     try:
         if not redis_client:
             return {}
@@ -404,7 +383,6 @@ def rhgetall(key: str):
         return {}
 
 def rlist_lpop(key: str):
-    """Pop left from a Redis list, or None on error."""
     try:
         if not redis_client:
             return None
@@ -417,7 +395,6 @@ def rlist_lpop(key: str):
         return None
 
 def rexists(key: str) -> bool:
-    """Check if a Redis key exists."""
     try:
         if not redis_client:
             return False
@@ -427,7 +404,6 @@ def rexists(key: str) -> bool:
         return False
 
 def rhlen(key: str) -> int:
-    """Return the length of a Redis hash, or 0 on error."""
     try:
         if not redis_client:
             return 0
@@ -436,7 +412,6 @@ def rhlen(key: str) -> int:
         bot_logger.warning(f"Redis hlen failed for {key}: {e}")
         return 0
 
-# === CONFIGURATION CLASS (EXPORTED) ===
 class BotConfig:
     def __init__(
         self,
@@ -497,7 +472,6 @@ except Exception as e:
     bot_logger.error(f"Config init failed: {e}")
     raise
 
-# === DHL CONFIG ===
 DHL_CONFIG = {
     "name": "DHL Express",
     "primary_color": "#D40511",
@@ -522,7 +496,6 @@ DHL_CONFIG = {
     }
 }
 
-# === FLASK & DB ===
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///shipments.db')
@@ -577,7 +550,6 @@ class Shipment(db.Model):
     carrier = db.Column(db.String(20), default="DHL")
     photo_url = db.Column(db.String(255), nullable=True)
 
-    # ========== NEW FIELDS ==========
     sender_name = db.Column(db.String(100), nullable=True)
     sender_location = db.Column(db.String(200), nullable=True)
     receiver_name = db.Column(db.String(100), nullable=True)
@@ -587,11 +559,10 @@ class Shipment(db.Model):
     weight_kg = db.Column(db.Float, nullable=True)
     shipment_date = db.Column(db.DateTime, nullable=True)
 
-    # ========== BILLING FIELDS ==========
     invoice_amount = db.Column(db.Float, nullable=True)
     payment_method = db.Column(db.String(50), nullable=True)
     payment_status = db.Column(db.String(20), default='unpaid')
-    payment_reason = db.Column(db.Text, nullable=True)   # <-- ADDED
+    payment_reason = db.Column(db.Text, nullable=True)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -612,7 +583,6 @@ class Shipment(db.Model):
             'carrier': self.carrier,
             'checkpoints': (self.checkpoints or "").split(";") if self.checkpoints else [],
             'photo_url': self.photo_url,
-            # New fields
             'sender_name': self.sender_name,
             'sender_location': self.sender_location,
             'receiver_name': self.receiver_name,
@@ -621,14 +591,12 @@ class Shipment(db.Model):
             'receiver_email': self.receiver_email,
             'weight_kg': self.weight_kg,
             'shipment_date': self.shipment_date.isoformat() if self.shipment_date else None,
-            # Billing fields
             'invoice_amount': self.invoice_amount,
             'payment_method': self.payment_method,
             'payment_status': self.payment_status,
-            'payment_reason': self.payment_reason   # <-- ADDED
+            'payment_reason': self.payment_reason
         }
 
-# === REDIS HELPERS ===
 def safe_redis_operation(func, *args, **kwargs):
     client = get_redis_client()
     if not client:
@@ -649,7 +617,6 @@ def safe_redis_operation(func, *args, **kwargs):
                 pass
         return None
 
-# === UTILS ===
 class DummyBot:
     def message_handler(self, *args, **kwargs):
         def decorator(func):
@@ -714,7 +681,6 @@ def validate_location(location: str) -> bool:
 def validate_webhook_url(url: str) -> bool:
     return bool(url and re.match(r'^https?://[^\s/$.?#].[^\s]*$', url))
 
-# === EMAIL THROTTLING ===
 def should_send_email(tn: str, status: str, checkpoints):
     if not AUTO_EMAIL_ENABLED:
         return False
@@ -780,7 +746,6 @@ def should_send_email(tn: str, status: str, checkpoints):
 
     return True
 
-# === DISTANCE CALCULATION (50+ CITIES) ===
 def estimate_distance(origin: str, dest: str) -> float:
     city_coords = {
         "Lagos, NG": (6.5244, 3.3792), "Abuja, NG": (9.0579, 7.4951), "Port Harcourt, NG": (4.8156, 7.0498),
@@ -817,7 +782,6 @@ def estimate_distance(origin: str, dest: str) -> float:
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return round(6371 * c, 1)
 
-# === DB OPERATIONS ===
 def get_shipment_list(page: int = 1, per_page: int = 10) -> Tuple[List[str], int]:
     try:
         offset = (page - 1) * per_page
@@ -864,11 +828,10 @@ def save_shipment(tracking_number: str, status: str, checkpoints: str = '', deli
             receiver_email=receiver_email,
             weight_kg=weight_kg,
             shipment_date=shipment_date,
-            # Billing fields
             invoice_amount=invoice_amount,
             payment_method=payment_method,
             payment_status=payment_status,
-            payment_reason=payment_reason   # <-- ADDED
+            payment_reason=payment_reason
         )
         db.session.add(shipment)
         db.session.commit()
@@ -932,7 +895,6 @@ def update_shipment(tracking_number: str, status: Optional[str] = None, delivery
             shipment.weight_kg = weight_kg
         if shipment_date is not None:
             shipment.shipment_date = shipment_date
-        # Billing fields
         if invoice_amount is not None:
             shipment.invoice_amount = invoice_amount
         if payment_method is not None:
@@ -940,7 +902,7 @@ def update_shipment(tracking_number: str, status: Optional[str] = None, delivery
         if payment_status is not None:
             shipment.payment_status = payment_status
         if payment_reason is not None:
-            shipment.payment_reason = payment_reason   # <-- ADDED
+            shipment.payment_reason = payment_reason
         shipment.last_updated = datetime.utcnow()
         db.session.commit()
         try:
@@ -1016,7 +978,6 @@ def get_cached_route_templates() -> Dict[str, List[str]]:
 def cache_route_templates() -> bool:
     return True
 
-# === MENU & RATE LIMIT ===
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 20
 
@@ -1098,7 +1059,6 @@ def show_shipment_menu(call, page: int, prefix: str, prompt: str, extra_buttons=
     get_bot().edit_message_text(f"*{prompt}* (Page {page}):", call.message.chat.id, call.message.message_id,
                                parse_mode='Markdown', reply_markup=markup)
 
-# === WEBHOOK & KEEP-ALIVE ===
 def set_webhook():
     try:
         bot = get_bot()
