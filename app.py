@@ -3496,7 +3496,16 @@ def start_background_services():
                         flask_logger.warning(f"Failed to spawn simulation for {s.tracking_number}: {e}")
         except Exception:
             pass
-        eventlet.spawn(keep_alive)
+
+        # ========== MODIFIED: Only start keep_alive if webhook is NOT disabled ==========
+        # This prevents the web app from setting a Telegram webhook,
+        # avoiding 409 conflicts with the bot's polling mode.
+        if os.getenv('DISABLE_TELEGRAM_WEBHOOK', 'false').lower() not in ('1', 'true', 'yes'):
+            eventlet.spawn(keep_alive)
+        else:
+            flask_logger.info("Telegram webhook disabled – keep_alive not started")
+        # ===================================================================
+
         if os.getenv('ENABLE_QUEUE_PROCESSOR', '').lower() in ('1', 'true', 'yes'):
             flask_logger.info("Starting notification queue processor (enabled by ENABLE_QUEUE_PROCESSOR)")
             eventlet.spawn(process_notification_queue)
