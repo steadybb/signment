@@ -1137,7 +1137,6 @@
             const trackingNumber = {{ shipment.tracking_number | tojson }};
             const shipmentStatus = {{ shipment.status | tojson }};
             const shipmentDeliveryLocation = {{ shipment.delivery_location | tojson }};
-            // FIX: wrap conditional in parentheses so tojson applies to the whole result
             const shipmentLastUpdated = {{ (shipment.last_updated.isoformat() if shipment.last_updated else '') | tojson }};
             const initialCurrentCheckpointIndex = {{ current_checkpoint_index | default(0) }};
 
@@ -1553,6 +1552,47 @@
                 });
             }
 
+            // ===== SNAP TO ROUTE HELPER =====
+            function haversineDistance(lat1, lon1, lat2, lon2) {
+                const R = 6371000; // meters
+                const toRad = v => v * Math.PI / 180;
+                const dLat = toRad(lat2 - lat1);
+                const dLon = toRad(lon2 - lon1);
+                const a = Math.sin(dLat/2) ** 2 +
+                          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                          Math.sin(dLon/2) ** 2;
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return R * c;
+            }
+
+            function closestPointOnSegment(px, py, x1, y1, x2, y2) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const len2 = dx*dx + dy*dy;
+                if (len2 === 0) return {lat: x1, lon: y1};
+                let t = ((px - x1)*dx + (py - y1)*dy) / len2;
+                t = Math.min(1, Math.max(0, t));
+                return {lat: x1 + t*dx, lon: y1 + t*dy};
+            }
+
+            function snapToRoute(lat, lon, routeCoords) {
+                if (!routeCoords || routeCoords.length < 2) return {lat, lon};
+                let bestDist = Infinity;
+                let bestPoint = {lat, lon};
+                for (let i = 0; i < routeCoords.length - 1; i++) {
+                    const p1 = routeCoords[i];
+                    const p2 = routeCoords[i+1];
+                    const proj = closestPointOnSegment(lat, lon, p1.lat, p1.lon, p2.lat, p2.lon);
+                    const dist = haversineDistance(lat, lon, proj.lat, proj.lon);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestPoint = proj;
+                    }
+                }
+                return bestPoint;
+            }
+
+            // ===== MOVE LIVE MARKER =====
             function moveLiveMarker(lat, lon, label, skipTween) {
                 if (lat === null || lon === null) return;
                 if (!map || !liveMarkerGroup) {
@@ -1560,7 +1600,15 @@
                     return;
                 }
 
-                const newLatLng = L.latLng(lat, lon);
+                // Snap to route if available
+                let snappedLat = lat, snappedLon = lon;
+                if (window._lastRouteCoords && window._lastRouteCoords.length >= 2) {
+                    const snapped = snapToRoute(lat, lon, window._lastRouteCoords);
+                    snappedLat = snapped.lat;
+                    snappedLon = snapped.lon;
+                }
+
+                const newLatLng = L.latLng(snappedLat, snappedLon);
 
                 if (!window._liveMarker) {
                     const icon = buildMarkerIcon();
@@ -1635,9 +1683,6 @@
             }
 
             // ===== PAYMENT BANNER HELPERS =====
-            // Only show the banner when the admin actually blocked payment,
-            // i.e., when payment_reason is non‑empty. Simply having
-            // payment_status = 'unpaid' (the default) is not enough.
             function updatePaymentBanner(status, reason) {
                 const banner = document.getElementById('paymentBanner');
                 const reasonEl = document.getElementById('paymentReason');
@@ -1788,13 +1833,18 @@
                     if (pos) {
                         lat = pos[0];
                         lon = pos[1];
-                        // Used only for debug logging; no longer exposed to user
                         debugLog('Marker position interpolated from route');
                     }
                 }
 
                 // Update position if we have valid coordinates and progress is acceptable
                 if (lat !== null && lon !== null && progressOk) {
+                    // Snap to route BEFORE updating marker and coordinates
+                    if (window._lastRouteCoords && window._lastRouteCoords.length >= 2) {
+                        const snapped = snapToRoute(lat, lon, window._lastRouteCoords);
+                        lat = snapped.lat;
+                        lon = snapped.lon;
+                    }
                     document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
                     document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
                     moveLiveMarker(lat, lon, data.current_location);
