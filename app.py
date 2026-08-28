@@ -1904,9 +1904,10 @@ def broadcast_update(tn):
     current_lon = rget('current_lon', tn, None)
     stage = rget('stage', tn, 'pickup') or 'pickup'
     checkpoints = (shipment.checkpoints or "").split(";")
-    current_checkpoint_index = 0
-    if checkpoints:
-        current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
+
+    # FIX: current_checkpoint_index should be the last checkpoint index
+    current_checkpoint_index = len(checkpoints) - 1 if checkpoints else 0
+
     data = {
         "tracking_number": tn,
         "status": shipment.status,
@@ -2140,9 +2141,8 @@ def track_direct(tracking_number):
     current_lon = rget('current_lon', tn, None)
     stage = rget('stage', tn, 'pickup') or 'pickup'
     checkpoints = (shipment.checkpoints or "").split(";")
-    current_checkpoint_index = 0
-    if checkpoints:
-        current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
+    # FIX: use last checkpoint index
+    current_checkpoint_index = len(checkpoints) - 1 if checkpoints else 0
     return render_template(
         'tracking_result.html',
         shipment=shipment,
@@ -3361,9 +3361,8 @@ def on_request(data):
     last_updated = shipment.last_updated.isoformat() if shipment.last_updated else None
     stage = rget('stage', tn, 'pickup') or 'pickup'
     checkpoints = (shipment.checkpoints or "").split(";")
-    current_checkpoint_index = 0
-    if checkpoints:
-        current_checkpoint_index = min(int(progress * len(checkpoints)), len(checkpoints) - 1)
+    # FIX: use last checkpoint index
+    current_checkpoint_index = len(checkpoints) - 1 if checkpoints else 0
     emit('tracking_update', {
         'tracking_number': tn, 'status': shipment.status, 'delivery_location': shipment.delivery_location,
         'checkpoints': checkpoints, 'coords': [{'lat': c['lat'], 'lon': c['lon'], 'desc': c['desc']} for c in coords],
