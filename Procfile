@@ -1,3 +1,3 @@
-web: gunicorn -k eventlet -w 1 app:app
+web: python app.py
 bot: python bot.py
 worker: python worker.py
