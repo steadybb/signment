@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-import json
 import re
 import time
 from datetime import datetime
@@ -22,8 +21,13 @@ from utils import (
     get_shipment_list, get_shipment_details,
     save_shipment, update_shipment, invalidate_cache,
     sanitize_tracking_number, validate_email,
-    is_admin, generate_unique_id, estimate_distance,
-    DHL_CONFIG, spawn_simulation, can_start_simulation
+    is_admin, generate_unique_id,
+    DHL_CONFIG,
+    # New batch functions
+    get_shipment_list_with_statuses,
+    get_status_counts,
+    # Flask app for context
+    app as flask_app
 )
 
 load_dotenv()
@@ -77,11 +81,11 @@ def _build_main_menu():
     return markup
 
 def _paginated_menu(page=1, prefix='menu', extra_buttons=None):
-    shipments, total = get_shipment_list(page=page)
+    # Use batch fetch to avoid N+1 queries
+    items, total = get_shipment_list_with_statuses(page=page)
     markup = InlineKeyboardMarkup(row_width=2)
-    for tn in shipments:
-        details = get_shipment_details(tn)
-        label = f"{tn} [{details.get('status', '?')}]"
+    for tn, status in items:
+        label = f"{tn} [{status or '?'}]"
         markup.add(InlineKeyboardButton(label, callback_data=f"view_{tn}"))
     nav_buttons = []
     if page > 1:
@@ -155,15 +159,11 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif data == "stats":
-        shipments, total = get_shipment_list(page=1, per_page=9999)
-        statuses = {}
-        for tn in shipments:
-            s = get_shipment_details(tn)
-            if s:
-                st = s.get('status', 'Unknown')
-                statuses[st] = statuses.get(st, 0) + 1
+        # Use the aggregation function
+        counts = get_status_counts()
+        total = sum(counts.values())
         stats_text = f"📊 *Statistics*\nTotal shipments: `{total}`\n"
-        for st, count in statuses.items():
+        for st, count in counts.items():
             stats_text += f"  • {st}: {count}\n"
         safe_edit_text(chat_id, msg_id, stats_text, reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("🔙 Menu", callback_data="menu")
@@ -242,15 +242,9 @@ def add_email_step(message, origin, destination):
             receiver_address=destination
         )
         if success:
-            try:
-                if can_start_simulation():
-                    spawn_simulation(tn)
-                else:
-                    bot.send_message(chat_id, "⚠️ Simulator throttle active – simulation may start later.")
-            except Exception as e:
-                logger.error(f"Simulation start error: {e}")
+            # Simulation will start when the tracking page is opened (via web process)
             bot.send_message(chat_id,
-                             f"✅ Shipment created!\nTracking: `{tn}`\nOrigin: {origin}\nDestination: {destination}\nEmail: {email or 'none'}",
+                             f"✅ Shipment created!\nTracking: `{tn}`\nOrigin: {origin}\nDestination: {destination}\nEmail: {email or 'none'}\n\nSimulation will start when the tracking page is opened.",
                              parse_mode='Markdown',
                              reply_markup=InlineKeyboardMarkup().add(
                                  InlineKeyboardButton("📦 View Shipment", callback_data=f"view_{tn}"),
@@ -285,24 +279,23 @@ def search_step(message):
     bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=markup)
 
 
-# ========== POLLING WITH AGGRESSIVE WEBHOOK CLEANUP ==========
-def main():
+# ========== BOT RUNNER WITH FLASK CONTEXT ==========
+def _run_bot():
     logger.info("Starting Telegram bot in polling mode...")
     console.print("[info]Telegram bot started (polling)[/info]")
 
-    # ----- 1. Force delete webhook and verify -----
-    for _ in range(3):  # Try up to 3 times to ensure it's cleared
+    # ----- 1. Force delete webhook with drop_pending_updates=True -----
+    for _ in range(3):
         try:
-            bot.delete_webhook()
-            logger.info("Deleted webhook (if any)")
+            bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Deleted webhook (with drop_pending_updates)")
             console.print("[info]Deleted webhook[/info]")
-            time.sleep(3)  # Wait longer for Telegram to process
-            # Verify
+            time.sleep(2)  # Give Telegram time to process
             info = bot.get_webhook_info()
             if info.url:
                 logger.warning(f"Webhook still set to {info.url} – forcing removal again")
-                bot.delete_webhook()
-                time.sleep(3)
+                bot.delete_webhook(drop_pending_updates=True)
+                time.sleep(2)
             else:
                 logger.info("Webhook successfully cleared")
                 break
@@ -310,26 +303,34 @@ def main():
             logger.warning(f"Webhook cleanup attempt failed: {e}")
             time.sleep(2)
 
-    # ----- 2. Poll with extended retry on 409 -----
+    # ----- 2. Poll with extended retry on 409, using drop_pending_updates -----
     max_retries = 10
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"Polling attempt {attempt}/{max_retries}")
             bot.infinity_polling(skip_pending=True, timeout=10)
-            break  # success
+            break
         except Exception as e:
             if "409" in str(e) and attempt < max_retries:
-                wait_time = min(2 ** attempt, 60)  # exponential backoff up to 60s
+                wait_time = min(2 ** attempt, 60)
                 logger.warning(f"Conflict (409) on attempt {attempt}, retrying after {wait_time}s...")
                 try:
-                    bot.delete_webhook()
+                    # Use drop_pending_updates to kill the long-poll connection
+                    bot.delete_webhook(drop_pending_updates=True)
                 except Exception:
                     pass
                 time.sleep(wait_time)
                 continue
             else:
                 logger.error(f"Bot polling failed: {e}")
+                # Sleep before raising to avoid rapid restart loops
+                time.sleep(60)
                 raise
+
+def main():
+    """Entry point: run the bot inside Flask app context."""
+    with flask_app.app_context():
+        _run_bot()
 
 if __name__ == "__main__":
     main()
