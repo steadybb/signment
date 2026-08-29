@@ -387,7 +387,6 @@ except Exception:
 # End of moved KNOWN_LOCATION_COORDS
 # ============================================================
 
-import utils
 from utils import (
     redis_client, get_redis_client, get_redis_metrics, console, enqueue_notification,
     can_start_simulation, register_simulation_start, register_simulation_stop,
@@ -400,13 +399,12 @@ from utils import (
     Shipment as UtilsShipment, estimate_distance, generate_unique_id, search_shipments, get_recent_logs,
     should_send_email, add_socket_event, recent_socket_events, add_client_error, recent_client_errors,
     EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES,
-    # Add Redis helper functions and in-memory fallbacks from utils
+    # Redis helper functions
     rget, rset, rkeys, rhgetall, rlist_lpop, rexists, rhlen,
     in_memory_clients, in_memory_sim
 )
 
-# IMPORTANT: We DO NOT import spawn_simulation from utils; we'll define our own below.
-# We'll also patch utils.spawn_simulation after defining ours.
+# We DO NOT import spawn_simulation from utils – we define our own below.
 
 from simulator_engine import SimulationRunner, RunnerHooks, Stage
 
@@ -416,6 +414,11 @@ import payment_routes
 app = utils_app
 Shipment = UtilsShipment
 config = bot_config
+
+# ========== SECRET_KEY – enforce strong secret ==========
+secret = app.config.get('SECRET_KEY', '')
+if not secret or secret == 'your-secret-key':
+    raise ValueError("SECRET_KEY must be set to a secure random value")
 
 # ========== FIX: Add Telegram admin chat ID to app config ==========
 app.config['TELEGRAM_ADMIN_CHAT_ID'] = os.getenv('TELEGRAM_ADMIN_CHAT_ID')
@@ -923,8 +926,7 @@ def json_error_response(message, status_code=400, details=None):
 
 # ========== Database URI Configuration with Fallback ==========
 # SECRET_KEY is required; SQLALCHEMY_DATABASE_URI is optional (fallback to SQLite)
-if not app.config.get('SECRET_KEY'):
-    raise ValueError("SECRET_KEY is required")
+# (SECRET_KEY already checked above)
 
 # Determine initial URI (from env or default)
 initial_uri = app.config.get('SQLALCHEMY_DATABASE_URI')
@@ -1124,8 +1126,9 @@ def geocode_locations(checkpoints):
 
 # ============================================================
 # FIXED: Atomic simulation spawn using Redis SETNX
+# No importlib, no original_spawn, no active_simulations set.
 # ============================================================
-def spawn_simulation_with_check(tn):
+def spawn_simulation(tn):
     """
     Spawn a simulation only if one is not already running for this tracking number.
     Uses an atomic Redis lock (SETNX) and holds the lock for the entire simulation.
@@ -1168,15 +1171,7 @@ def spawn_simulation_with_check(tn):
         eventlet.spawn(wrapped)
     else:
         threading.Thread(target=wrapped, daemon=True).start()
-
-# Override the imported spawn_simulation with our atomic version
-# This ensures that any import of spawn_simulation from utils will use this locked version.
-spawn_simulation = spawn_simulation_with_check
-utils.spawn_simulation = spawn_simulation_with_check   # patch the utils module
 # ============================================================
-
-# Remove any old `is_simulation_active`, `mark_simulation_start`, `mark_simulation_stop` functions.
-# They are no longer used. We rely entirely on the Redis lock.
 
 def normalize_location(loc):
     if not loc:
@@ -1720,8 +1715,7 @@ def simulate_tracking(tn):
         flask_logger.error(f"Simulation error for {tn}: {e}")
         raise
     finally:
-        # The lock is now released in spawn_simulation_with_check's wrapped function,
-        # so we don't need to call anything here.
+        # The lock is released in spawn_simulation's wrapped function.
         pass
 
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
