@@ -1127,11 +1127,13 @@ def geocode_locations(checkpoints):
 # ============================================================
 # FIXED: Atomic simulation spawn using Redis SETNX
 # No importlib, no original_spawn, no active_simulations set.
+# Now properly integrates with utils' thread counter.
 # ============================================================
 def spawn_simulation(tn):
     """
     Spawn a simulation only if one is not already running for this tracking number.
     Uses an atomic Redis lock (SETNX) and holds the lock for the entire simulation.
+    Also respects the global thread limit via register_simulation_start/stop.
     """
     lock_key = f"sim_lock:{tn}"
 
@@ -1141,13 +1143,24 @@ def spawn_simulation(tn):
             if not redis_client.setnx(lock_key, "1"):
                 flask_logger.debug(f"⏭️ Simulation already active for {tn}, skipping spawn")
                 return
-            redis_client.expire(lock_key, 3600)  # 1 hour safety expiration
+            # 7-day TTL – safety net for crashes; normal release happens in finally
+            redis_client.expire(lock_key, 7 * 86400)
             flask_logger.debug(f"🔒 Acquired sim lock for {tn}")
         except Exception as e:
             flask_logger.warning(f"Redis SETNX failed for {tn}: {e}, proceeding without lock")
             # No lock – proceed anyway (best‑effort)
     else:
         flask_logger.warning(f"No Redis client – proceeding without lock for {tn}")
+
+    # Register with the global thread counter – if limit reached, abort
+    if not register_simulation_start():
+        flask_logger.debug(f"⏸️ Thread limit reached for {tn}, skipping spawn")
+        if redis_client:
+            try:
+                redis_client.delete(lock_key)
+            except Exception:
+                pass
+        return
 
     def wrapped():
         try:
@@ -1157,7 +1170,8 @@ def spawn_simulation(tn):
         except Exception as e:
             flask_logger.error(f"❌ Simulation error for {tn}: {e}")
         finally:
-            # Always release the lock and clean up
+            # Always release the lock and decrement the thread counter
+            register_simulation_stop()
             if redis_client:
                 try:
                     redis_client.delete(lock_key)
@@ -1217,8 +1231,9 @@ def normalize_location(loc):
                         normalized = f"{parts[0]}, {parts[1]}" if len(parts) >= 2 else display
     except Exception:
         normalized = loc
-    if normalized in KNOWN_LOCATION_COORDS:
-        normalized = normalized
+    # The following line was a no‑op and has been removed.
+    # if normalized in KNOWN_LOCATION_COORDS:
+    #     normalized = normalized
     try:
         if redis_client:
             redis_client.set(cache_key, normalized, ex=86400)
@@ -1715,7 +1730,7 @@ def simulate_tracking(tn):
         flask_logger.error(f"Simulation error for {tn}: {e}")
         raise
     finally:
-        # The lock is released in spawn_simulation's wrapped function.
+        # The lock and thread counter are released in spawn_simulation's wrapped function.
         pass
 
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
@@ -2343,11 +2358,9 @@ def health_check():
 
 # ========== SECURED DEBUG ENDPOINTS ==========
 @app.route('/debug/tn/<tracking_number>')
-@admin_required   # <-- SECURED
+@admin_required
 def debug_tracking_number(tracking_number):
-    remote = request.remote_addr
-    if not (app.debug or app.config.get('FLASK_ENV') == 'development' or remote in ('127.0.0.1', '::1')):
-        return json_error_response("Not available", 403)
+    # IP guard removed – @admin_required provides sufficient protection.
     tn = sanitize_tracking_number(tracking_number)
     if not tn:
         return json_error_response("Invalid tracking number", 400)
@@ -2369,7 +2382,7 @@ def debug_tracking_number(tracking_number):
         return json_error_response("Failed to fetch", 500)
 
 @app.route('/debug')
-@admin_required   # <-- SECURED
+@admin_required
 def debug_info():
     status = {
         'app_debug': app.debug,
@@ -2442,7 +2455,7 @@ def debug_info():
     return jsonify({'status': status, 'config': debug_config})
 
 @app.route('/test/geocode')
-@admin_required   # <-- SECURED
+@admin_required
 def test_geocode():
     address = request.args.get('address', 'Lagos, NG')
     results = {
