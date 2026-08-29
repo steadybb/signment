@@ -1,8 +1,11 @@
 # simulator_engine.py
 from __future__ import annotations
 
+import os
 import random
 import re
+import time
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -11,21 +14,38 @@ from typing import Callable, Optional, List, Tuple, Dict, Any
 
 
 # ---------------------------------------------------------------------------
-# Speed / timing model
+# Configuration – can be overridden by environment variables
 # ---------------------------------------------------------------------------
-GROUND_AVG_SPEED_KMH = 55.0
-AIR_AVG_SPEED_KMH = 700.0
+GROUND_AVG_SPEED_KMH = float(os.getenv('SIM_GROUND_SPEED_KMH', '55.0'))
+AIR_AVG_SPEED_KMH = float(os.getenv('SIM_AIR_SPEED_KMH', '700.0'))
 
 GROUND_LEG_OVERHEAD_MIN = (10, 25)
 AIR_LEG_OVERHEAD_MIN = (60, 150)
-CUSTOMS_DWELL_MIN = (90, 600)
+CUSTOMS_DWELL_MIN = (90, 600)            # minutes – used for uniform distribution
 PICKUP_WINDOW_MIN = (20, 90)
 LAST_MILE_OVERHEAD_MIN = (20, 60)
 
-AIR_MODE_DISTANCE_THRESHOLD_KM = 600.0
-MIN_LEG_DISTANCE_FOR_CHECKPOINT_KM = 5.0
+AIR_MODE_DISTANCE_THRESHOLD_KM = float(os.getenv('SIM_AIR_THRESHOLD_KM', '600.0'))
+MIN_LEG_DISTANCE_FOR_CHECKPOINT_KM = float(os.getenv('SIM_MIN_LEG_CHECKPOINT_KM', '5.0'))
+
+TICK_SECONDS_MIN = float(os.getenv('SIM_TICK_SECONDS_MIN', '8'))
+TICK_SECONDS_MAX = float(os.getenv('SIM_TICK_SECONDS_MAX', '25'))
+MIN_TICK_SECONDS = float(os.getenv('SIM_MIN_TICK_SECONDS', '3'))
+MAX_TICK_SECONDS = float(os.getenv('SIM_MAX_TICK_SECONDS', '90'))
+CHECKPOINT_MIN_GAP_SECONDS = int(os.getenv('SIM_CHECKPOINT_MIN_GAP_SECONDS', '120'))
+
+SIM_DEFAULT_DAYS = float(os.getenv('SIM_DEFAULT_DAYS', '10.0'))
+
+# ---------------------------------------------------------------------------
+# Logger
+# ---------------------------------------------------------------------------
+sim_logger = logging.getLogger('simulator_engine')
+sim_logger.setLevel(logging.DEBUG)  # Controlled by root logger config
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def country_of(place: str) -> str:
     if not place or ',' not in place:
         return ''
@@ -38,6 +58,20 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlambda = radians(lon2 - lon1)
     h = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
     return 6371.0 * 2 * atan2(sqrt(h), sqrt(1 - h))
+
+
+def _rand_span(bounds: Tuple[float, float]) -> timedelta:
+    lo, hi = bounds
+    return timedelta(minutes=random.uniform(lo, hi))
+
+
+def _rand_customs_dwell() -> timedelta:
+    """
+    Return a realistic customs delay following a log‑normal distribution.
+    Mean ~ 4 hours, sigma 1.2 → values between ~1h and 24h.
+    """
+    minutes = random.lognormvariate(4.0, 1.2)
+    return timedelta(minutes=minutes)
 
 
 class Stage(str, Enum):
@@ -119,11 +153,6 @@ class TransitPlan:
         return max(0.0, min(1.0, elapsed.total_seconds() / total))
 
 
-def _rand_span(bounds: Tuple[float, float]) -> timedelta:
-    lo, hi = bounds
-    return timedelta(minutes=random.uniform(lo, hi))
-
-
 def build_transit_plan(
     route_places: List[str],
     coords_lookup: Callable[[str], Optional[Dict[str, float]]],
@@ -155,7 +184,8 @@ def build_transit_plan(
         travel_duration = travel + overhead
 
         international = bool(country_of(a)) and bool(country_of(b)) and country_of(a) != country_of(b)
-        customs_dwell = _rand_span(CUSTOMS_DWELL_MIN) if (international and mode == 'air') else timedelta(0)
+        # Use log‑normal customs delay for more realism
+        customs_dwell = _rand_customs_dwell() if (international and mode == 'air') else timedelta(0)
 
         leg = Leg(a, b, ca, cb, mode, distance_km, travel_duration, international, customs_dwell)
         leg.start_offset = offset
@@ -283,7 +313,7 @@ class CheckpointGenerator:
 
 
 # ---------------------------------------------------------------------------
-# High-level runner
+# High-level runner with robust hooks
 # ---------------------------------------------------------------------------
 @dataclass
 class RunnerHooks:
@@ -300,34 +330,36 @@ class RunnerHooks:
     sleep: Callable[[float], None]
     now: Callable[[], datetime] = field(default_factory=lambda: datetime.now)
     generate_pod: Callable[[], str] = field(default=lambda: "SIGNATURE ON FILE")
+    # Optional: if provided, called on every loop iteration to check lock validity
+    check_lock: Optional[Callable[[], bool]] = None
+    # Optional: called when simulation finishes (including exceptions)
+    on_finished: Optional[Callable[[], None]] = None
 
 
 class SimulationRunner:
-    TICK_SECONDS = (8, 25)
-    MIN_TICK_SECONDS = 3
-    MAX_TICK_SECONDS = 90
-    CHECKPOINT_MIN_GAP = timedelta(minutes=2)
-
-    def __init__(self, tracking_number: str, hooks: RunnerHooks, sim_days_cap: float = 10.0):
+    def __init__(self, tracking_number: str, hooks: RunnerHooks, sim_days_cap: float = None):
         self.tn = tracking_number
         self.hooks = hooks
-        self.sim_days_cap = max(1.0, min(365.0, sim_days_cap))
+        self.sim_days_cap = max(1.0, min(365.0, sim_days_cap if sim_days_cap is not None else SIM_DEFAULT_DAYS))
         self.rng = random.Random()
         self.checkpoints_generator = CheckpointGenerator(tracking_number, self.rng)
+        self.start_monotonic: Optional[float] = None
+        self.deadline_seconds: Optional[float] = None
 
-    def _normalize_checkpoint_text(self, cp: str) -> str:
-        """Strip timestamp, location, and [Ref: ...] from a checkpoint line."""
+    def _normalize_checkpoint_key(self, cp: str) -> str:
+        """Return a unique key for checkpoint deduplication: location + event text."""
         parts = cp.split(" - ", 2)
         if len(parts) >= 3:
+            location = parts[1].strip()
             event = re.sub(r'\s*\[Ref:\s*[^\]]+\]', '', parts[2]).strip()
-            return event
+            return f"{location}:{event}"
         return cp
 
     def _append_checkpoint_if_new(self, checkpoints: List[str], line: str) -> bool:
-        """Append line only if its normalized event text differs from the last checkpoint's."""
+        """Append line only if its key differs from the last checkpoint's key."""
         if checkpoints:
             last = checkpoints[-1]
-            if self._normalize_checkpoint_text(last) == self._normalize_checkpoint_text(line):
+            if self._normalize_checkpoint_key(last) == self._normalize_checkpoint_key(line):
                 return False
         checkpoints.append(line)
         return True
@@ -354,8 +386,12 @@ class SimulationRunner:
         return plan
 
     def run(self) -> None:
+        sim_logger.info(f"🚀 Starting simulation for {self.tn}")
+
         shipment = self.hooks.get_live_shipment()
         if not shipment:
+            sim_logger.warning(f"Shipment {self.tn} not found – aborting")
+            self._finish()
             return
 
         origin = shipment.origin_location or "Lagos, NG"
@@ -363,41 +399,60 @@ class SimulationRunner:
         plan = self._build_plan(origin, destination)
 
         checkpoints: List[str] = (shipment.checkpoints or "").split(";") if shipment.checkpoints else []
-        # Remove any empty strings
         checkpoints = [c for c in checkpoints if c]
 
         current_status = shipment.status
         delivery_attempts = 0
         stage = Stage.PICKUP
-        start_time = self.hooks.now()
+        start_wall = self.hooks.now()
+        start_monotonic = time.monotonic()
+        self.start_monotonic = start_monotonic
+        self.deadline_seconds = self.sim_days_cap * 86400.0
+
         pickup_request_logged = False
         pickup_complete_logged = False
         last_checkpoint_time: Optional[datetime] = None
-        deadline = start_time + timedelta(days=self.sim_days_cap)
 
-        # Initialize flags from existing checkpoints to avoid re-adding on restart
+        # Recover state from existing checkpoints
         for cp in checkpoints:
-            norm = self._normalize_checkpoint_text(cp)
-            if "Pickup request" in norm or "Shipment information" in norm:
+            key = self._normalize_checkpoint_key(cp)
+            if "Pickup request" in key or "Shipment information" in key:
                 pickup_request_logged = True
-            if "Package collected" in norm or "Picked up" in norm:
+            if "Package collected" in key or "Picked up" in key:
                 pickup_complete_logged = True
 
-        while self.hooks.now() < deadline:
+        sim_logger.debug(f"Sim days cap: {self.sim_days_cap} days → {self.deadline_seconds:.0f}s")
+
+        while (time.monotonic() - start_monotonic) < self.deadline_seconds:
+            # Optional lock check
+            if self.hooks.check_lock and not self.hooks.check_lock():
+                sim_logger.warning(f"Lock lost for {self.tn}, aborting simulation")
+                self._finish()
+                return
+
             live = self.hooks.get_live_shipment()
             if not live:
+                sim_logger.warning(f"Shipment {self.tn} disappeared – aborting")
+                self._finish()
                 return
+
             if live.status == "On_Hold":
                 self.hooks.sleep(30)
                 continue
+
             if live.delivery_location != destination or live.origin_location != origin:
                 origin = live.origin_location or "Lagos, NG"
                 destination = live.delivery_location
                 plan = self._build_plan(origin, destination)
-                start_time = self.hooks.now()
-                deadline = start_time + timedelta(days=self.sim_days_cap)
+                start_wall = self.hooks.now()
+                start_monotonic = time.monotonic()
+                self.start_monotonic = start_monotonic
+                self.deadline_seconds = self.sim_days_cap * 86400.0
+                sim_logger.debug(f"Plan rebuilt for {self.tn} after location change")
+
             if live.status != current_status:
                 current_status = live.status
+
             if live.checkpoints and live.checkpoints != ";".join(checkpoints):
                 checkpoints = (live.checkpoints or "").split(";")
                 checkpoints = [c for c in checkpoints if c]
@@ -407,7 +462,7 @@ class SimulationRunner:
                 continue
 
             speed_multiplier = self._read_speed_multiplier()
-            elapsed_wall = self.hooks.now() - start_time
+            elapsed_wall = self.hooks.now() - start_wall
             elapsed_sim = elapsed_wall * speed_multiplier
 
             leg, frac, in_customs = plan.locate(elapsed_sim)
@@ -435,7 +490,6 @@ class SimulationRunner:
                         self._commit(checkpoints, "In_Transit", stage, progress, origin,
                                      plan.legs[0].from_coords['lat'], plan.legs[0].from_coords['lon'])
                 else:
-                    # Still within pickup, but no new checkpoint; just update position
                     self.hooks.on_position_update(progress, origin,
                                                   plan.legs[0].from_coords['lat'], plan.legs[0].from_coords['lon'],
                                                   stage.value)
@@ -453,7 +507,6 @@ class SimulationRunner:
                             last_checkpoint_time = now
                             lat, lon = leg.to_coords['lat'], leg.to_coords['lon']
                             self._commit(checkpoints, "Customs_Clearance", stage, progress, leg.to_place, lat, lon)
-                    # else: already held, no new checkpoint
                 else:
                     stage = Stage.TRANSIT
                     lat, lon = leg.interpolated_position(frac)
@@ -483,15 +536,14 @@ class SimulationRunner:
                             last_checkpoint_time = now
                             self._commit(checkpoints, "In_Transit", stage, progress, leg.to_place, lat, lon)
                     else:
-                        # mid‑leg heartbeat – only log if new and threshold met
                         should_log_midpoint = (
                             leg.distance_km >= MIN_LEG_DISTANCE_FOR_CHECKPOINT_KM
                             and 0.15 < frac < 0.85
-                            and (last_checkpoint_time is None or now - last_checkpoint_time >= self.CHECKPOINT_MIN_GAP)
+                            and (last_checkpoint_time is None or now - last_checkpoint_time >= timedelta(seconds=CHECKPOINT_MIN_GAP_SECONDS))
                             and self.rng.random() < 0.05
                         )
                         if should_log_midpoint:
-                            line = self.checkpoints_generator.leg_depart(now, leg)  # reuse "in transit" text
+                            line = self.checkpoints_generator.leg_depart(now, leg)
                             if self._append_checkpoint_if_new(checkpoints, line):
                                 self.hooks.on_checkpoint_added(line)
                                 last_checkpoint_time = now
@@ -502,7 +554,6 @@ class SimulationRunner:
 
             # --- last‑mile delivery ---
             else:
-                # past the final leg's end_offset – we are in delivery phase
                 last_leg = plan.legs[-1]
                 stage = Stage.DELIVERY
                 lat, lon = last_leg.to_coords['lat'], last_leg.to_coords['lon']
@@ -515,7 +566,6 @@ class SimulationRunner:
                         last_checkpoint_time = now
                         self._commit(checkpoints, "Out_for_Delivery", stage, progress, destination, lat, lon)
                 else:
-                    # check if enough time passed since out_for_delivery for delivery outcome
                     time_since_ofd = elapsed_sim - (last_leg.end_offset + plan.last_mile_pad)
                     if time_since_ofd >= timedelta(0):
                         if delivery_attempts < plan.max_delivery_attempts - 1 and self.rng.random() < 0.15:
@@ -526,7 +576,6 @@ class SimulationRunner:
                                 current_status = "Exception"
                                 last_checkpoint_time = now
                                 self._commit(checkpoints, "Exception", Stage.EXCEPTION, progress, destination, lat, lon)
-                                # give some time before next attempt
                                 self.hooks.sleep(self._scaled_sleep(20, 60, speed_multiplier))
                                 continue
                         else:
@@ -537,29 +586,33 @@ class SimulationRunner:
                                 current_status = "Delivered"
                                 self._commit(checkpoints, "Delivered", Stage.DELIVERED, 1.0, destination, lat, lon)
                                 self.hooks.broadcast()
+                                self._finish()
                                 return
                             else:
-                                # Already delivered? Just broadcast and exit
                                 self.hooks.broadcast()
+                                self._finish()
                                 return
 
             self.hooks.broadcast()
-            tick = self._scaled_sleep(*self.TICK_SECONDS, speed_multiplier)
+            tick = self._scaled_sleep(TICK_SECONDS_MIN, TICK_SECONDS_MAX, speed_multiplier)
             self.hooks.sleep(tick)
 
         # sim_days cap reached without delivering
         live = self.hooks.get_live_shipment()
         if live and live.status not in ("Delivered", "Returned"):
             final_status = "Delivered" if delivery_attempts < plan.max_delivery_attempts else "Exception"
-            # Ensure we don't add duplicate final checkpoint
             line = self.checkpoints_generator.delivered(
                 self.hooks.now(), destination, self.hooks.generate_pod()
             ) if final_status == "Delivered" else self.checkpoints_generator.returned(self.hooks.now(), origin)
             if self._append_checkpoint_if_new(checkpoints, line):
                 self.hooks.on_checkpoint_added(line)
-            self._commit(checkpoints, final_status, Stage.DELIVERED if final_status == "Delivered" else Stage.EXCEPTION,
+            self._commit(checkpoints, final_status,
+                         Stage.DELIVERED if final_status == "Delivered" else Stage.EXCEPTION,
                          1.0, destination, plan.legs[-1].to_coords['lat'], plan.legs[-1].to_coords['lon'])
             self.hooks.broadcast()
+
+        sim_logger.info(f"🏁 Simulation finished for {self.tn}")
+        self._finish()
 
     # -- helpers --
     def _read_speed_multiplier(self) -> float:
@@ -571,7 +624,7 @@ class SimulationRunner:
 
     def _scaled_sleep(self, lo: float, hi: float, speed_multiplier: float) -> float:
         base = self.rng.uniform(lo, hi) / max(speed_multiplier, 0.01)
-        return max(self.MIN_TICK_SECONDS, min(self.MAX_TICK_SECONDS, base))
+        return max(MIN_TICK_SECONDS, min(MAX_TICK_SECONDS, base))
 
     def _commit(self, checkpoints: List[str], status: str, stage: Stage, progress: float,
                 city: str, lat: float, lon: float) -> None:
@@ -579,7 +632,6 @@ class SimulationRunner:
         self.hooks.save_shipment(status, joined)
         self.hooks.set_flag("progress", str(round(progress, 4)))
 
-        # Only set stage if not locked by admin
         if self.hooks.get_flag("lock_stage", "false") != "true":
             self.hooks.set_flag("stage", stage.value)
 
@@ -588,3 +640,11 @@ class SimulationRunner:
         self.hooks.set_flag("current_lon", str(lon))
         self.hooks.on_status_changed(status)
         self.hooks.on_position_update(progress, city, lat, lon, stage.value)
+
+    def _finish(self) -> None:
+        """Call the optional on_finished hook if provided."""
+        if self.hooks.on_finished:
+            try:
+                self.hooks.on_finished()
+            except Exception as e:
+                sim_logger.error(f"on_finished hook failed for {self.tn}: {e}")
