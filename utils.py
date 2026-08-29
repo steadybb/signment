@@ -142,27 +142,21 @@ def add_client_error(payload: dict):
         pass
 
 
+# ============================================================
+# Stub: spawn_simulation is overridden by app.py.
+# ============================================================
 def spawn_simulation(tracking_number: str):
     """
-    Start a simulation thread for the given tracking number.
-    No locking or throttling – caller (app.py) must manage those.
+    Placeholder – overridden by app.py's spawn_simulation_with_check.
+    If this version runs, something is calling spawn_simulation from
+    outside the web process (e.g., the bot). This is a no‑op by design.
     """
-    try:
-        import threading
-        def _runner():
-            try:
-                import importlib
-                app_module = importlib.import_module('app')
-                if app_module and hasattr(app_module, 'simulate_tracking'):
-                    app_module.simulate_tracking(tracking_number)
-            except Exception as e:
-                bot_logger.error(f"Simulation thread error: {e}")
-        thread = threading.Thread(target=_runner, daemon=True)
-        thread.start()
-        return thread
-    except Exception as e:
-        bot_logger.error(f"Failed to start simulation thread: {e}")
-        return None
+    bot_logger.warning(
+        f"spawn_simulation called from utils for {tracking_number} — "
+        "this should only run from app.py. No simulation started."
+    )
+    return None
+# ============================================================
 
 
 def _resolve_template_url(url: str) -> str:
@@ -285,6 +279,9 @@ if not redis_url and redis_host:
 _initialize_redis_client()
 
 
+# ============================================================
+# FIXED: Redis reconnect loop – always sleep between pings.
+# ============================================================
 def _redis_reconnect_loop():
     import threading
     backoff = REDIS_RECONNECT_BASE
@@ -300,18 +297,22 @@ def _redis_reconnect_loop():
                         redis_client.set_client(None)
                     except Exception:
                         pass
+                    time.sleep(min(backoff, REDIS_RECONNECT_MAX))
+                    backoff = min(backoff * 2, REDIS_RECONNECT_MAX)
+                    continue
             else:
                 _initialize_redis_client()
                 if not redis_client.get_client():
                     time.sleep(min(backoff, REDIS_RECONNECT_MAX))
                     backoff = min(backoff * 2, REDIS_RECONNECT_MAX)
-                else:
-                    backoff = REDIS_RECONNECT_BASE
+                    continue
+                backoff = REDIS_RECONNECT_BASE
         except Exception:
-            try:
-                time.sleep(REDIS_RECONNECT_BASE)
-            except Exception:
-                pass
+            pass
+
+        # Always sleep between health checks (even when healthy)
+        time.sleep(REDIS_RECONNECT_BASE)
+# ============================================================
 
 
 try:
@@ -520,13 +521,24 @@ app.config['RECAPTCHA_VERIFY_URL'] = os.getenv('RECAPTCHA_VERIFY_URL', 'https://
 app.config['TAWK_PROPERTY_ID'] = os.getenv('TAWK_PROPERTY_ID', 'your-tawk-property-id')
 app.config['TAWK_WIDGET_ID'] = os.getenv('TAWK_WIDGET_ID', 'your-tawk-widget-id')
 app.config['ADMIN_PASSWORD'] = os.getenv('ADMIN_PASSWORD', 'admin')
-engine_opts = {
-    'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '20')),
-    'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '40')),
-    'pool_timeout': int(os.getenv('SQLALCHEMY_POOL_TIMEOUT', '60')),
-    'pool_pre_ping': True,
-}
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_opts
+
+# ============================================================
+# FIX: SQLAlchemy engine options – safe for SQLite
+# ============================================================
+db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+if 'sqlite' in db_uri:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'connect_args': {'check_same_thread': False}
+    }
+else:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': int(os.getenv('SQLALCHEMY_POOL_SIZE', '20')),
+        'max_overflow': int(os.getenv('SQLALCHEMY_MAX_OVERFLOW', '40')),
+        'pool_timeout': int(os.getenv('SQLALCHEMY_POOL_TIMEOUT', '60')),
+        'pool_pre_ping': True,
+    }
+# ============================================================
 
 db = SQLAlchemy(app)
 
