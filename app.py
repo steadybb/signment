@@ -416,6 +416,13 @@ config = bot_config
 # ========== FIX: Add Telegram admin chat ID to app config ==========
 app.config['TELEGRAM_ADMIN_CHAT_ID'] = os.getenv('TELEGRAM_ADMIN_CHAT_ID')
 
+# ========== ADD SESSION SECURITY (FIX) ==========
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,   # Set to False if not using HTTPS
+    SESSION_COOKIE_SAMESITE='Lax',
+)
+
 # ========== Register payment routes ==========
 payment_routes.init_payment_routes(app)
 
@@ -1111,48 +1118,56 @@ def geocode_locations(checkpoints):
             pass
     return coords
 
-# ========== Redis active simulation tracking ==========
-def is_simulation_active(tn):
-    if not redis_client:
-        return False
-    try:
-        return redis_client.sismember("active_simulations", tn)
-    except Exception:
-        return False
-
-def mark_simulation_start(tn):
-    if not redis_client:
-        return
-    try:
-        redis_client.sadd("active_simulations", tn)
-        redis_client.expire("active_simulations", 3600)
-    except Exception:
-        pass
-
-def mark_simulation_stop(tn):
-    if not redis_client:
-        return
-    try:
-        redis_client.srem("active_simulations", tn)
-    except Exception:
-        pass
-
-original_spawn = spawn_simulation
+# ============================================================
+# FIXED: Atomic simulation spawn using Redis SETNX
+# ============================================================
 def spawn_simulation_with_check(tn):
-    if is_simulation_active(tn):
-        flask_logger.debug(f"Simulation already active for {tn}, skipping spawn")
-        return
-    mark_simulation_start(tn)
+    """
+    Spawn a simulation only if one is not already running for this tracking number.
+    Uses an atomic Redis lock (SETNX) and holds the lock for the entire simulation.
+    """
+    lock_key = f"sim_lock:{tn}"
+
+    # Attempt to acquire the lock atomically
+    if redis_client:
+        try:
+            if not redis_client.setnx(lock_key, "1"):
+                flask_logger.debug(f"⏭️ Simulation already active for {tn}, skipping spawn")
+                return
+            redis_client.expire(lock_key, 3600)  # 1 hour safety expiration
+            flask_logger.debug(f"🔒 Acquired sim lock for {tn}")
+        except Exception as e:
+            flask_logger.warning(f"Redis SETNX failed for {tn}: {e}, proceeding without lock")
+            # No lock – proceed anyway (best‑effort)
+    else:
+        flask_logger.warning(f"No Redis client – proceeding without lock for {tn}")
+
     def wrapped():
         try:
-            original_spawn(tn)
+            flask_logger.info(f"🚀 Starting simulation for {tn}")
+            # Blocking call – simulation runs here; lock held until it finishes
+            simulate_tracking(tn)
+        except Exception as e:
+            flask_logger.error(f"❌ Simulation error for {tn}: {e}")
         finally:
-            mark_simulation_stop(tn)
+            # Always release the lock and clean up
+            if redis_client:
+                try:
+                    redis_client.delete(lock_key)
+                    flask_logger.debug(f"🔓 Released sim lock for {tn}")
+                except Exception as e:
+                    flask_logger.warning(f"Failed to release sim lock for {tn}: {e}")
+            flask_logger.info(f"🏁 Simulation finished for {tn}")
+
+    # Start the thread/eventlet spawn
     if hasattr(eventlet, 'spawn'):
         eventlet.spawn(wrapped)
     else:
         threading.Thread(target=wrapped, daemon=True).start()
+
+# Override the imported spawn_simulation with our atomic version
 spawn_simulation = spawn_simulation_with_check
+# ============================================================
 
 def normalize_location(loc):
     if not loc:
@@ -1692,8 +1707,13 @@ def simulate_tracking(tn):
             sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')))
             runner = SimulationRunner(tn, hooks, sim_days_cap=sim_days)
             runner.run()
+    except Exception as e:
+        flask_logger.error(f"Simulation error for {tn}: {e}")
+        raise
     finally:
-        mark_simulation_stop(tn)
+        # Note: The lock is now released in spawn_simulation_with_check's wrapped function,
+        # so we don't need to call mark_simulation_stop here.
+        pass
 
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
     location = latest_checkpoint.split(' - ')[1] if ' - ' in latest_checkpoint else destination
@@ -2318,7 +2338,9 @@ def health_check():
     critical_ok = status['database'] == 'ok' and status['redis'] != 'error'
     return jsonify(status), 200 if critical_ok else 500
 
+# ========== SECURED DEBUG ENDPOINTS ==========
 @app.route('/debug/tn/<tracking_number>')
+@admin_required   # <-- SECURED
 def debug_tracking_number(tracking_number):
     remote = request.remote_addr
     if not (app.debug or app.config.get('FLASK_ENV') == 'development' or remote in ('127.0.0.1', '::1')):
@@ -2344,6 +2366,7 @@ def debug_tracking_number(tracking_number):
         return json_error_response("Failed to fetch", 500)
 
 @app.route('/debug')
+@admin_required   # <-- SECURED
 def debug_info():
     status = {
         'app_debug': app.debug,
@@ -2416,6 +2439,7 @@ def debug_info():
     return jsonify({'status': status, 'config': debug_config})
 
 @app.route('/test/geocode')
+@admin_required   # <-- SECURED
 def test_geocode():
     address = request.args.get('address', 'Lagos, NG')
     results = {
