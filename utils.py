@@ -812,6 +812,35 @@ def get_shipment_details(tracking_number: str) -> Optional[Dict[str, Any]]:
         bot_logger.error(f"Fetch error {tracking_number}: {e}")
         return None
 
+# ============================================================
+# NEW: Batch fetch and status aggregation for the bot
+# ============================================================
+def get_shipment_list_with_statuses(page: int = 1, per_page: int = 10) -> Tuple[List[Tuple[str, str]], int]:
+    """Return list of (tracking_number, status) and total count."""
+    try:
+        offset = (page - 1) * per_page
+        query = Shipment.query.with_entities(
+            Shipment.tracking_number, Shipment.status
+        ).order_by(Shipment.created_at.desc())
+        total = query.count()
+        rows = query.offset(offset).limit(per_page).all()
+        return [(tn, status) for tn, status in rows], total
+    except Exception as e:
+        bot_logger.error(f"List with statuses error: {e}")
+        return [], 0
+
+def get_status_counts() -> Dict[str, int]:
+    """Return dict of status -> count."""
+    try:
+        rows = Shipment.query.with_entities(
+            Shipment.status, db.func.count()
+        ).group_by(Shipment.status).all()
+        return {status: count for status, count in rows}
+    except Exception as e:
+        bot_logger.error(f"Status counts error: {e}")
+        return {}
+# ============================================================
+
 def save_shipment(tracking_number: str, status: str, checkpoints: str = '', delivery_location: Optional[str] = None,
                   recipient_email: Optional[str] = None, origin_location: Optional[str] = None,
                   webhook_url: Optional[str] = None, carrier: str = "DHL",
