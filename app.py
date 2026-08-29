@@ -387,6 +387,7 @@ except Exception:
 # End of moved KNOWN_LOCATION_COORDS
 # ============================================================
 
+import utils
 from utils import (
     redis_client, get_redis_client, get_redis_metrics, console, enqueue_notification,
     can_start_simulation, register_simulation_start, register_simulation_stop,
@@ -397,12 +398,15 @@ from utils import (
     get_shipment_details, save_shipment, update_shipment, invalidate_cache, is_admin,
     DHL_CONFIG, config as bot_config, db, app as utils_app,
     Shipment as UtilsShipment, estimate_distance, generate_unique_id, search_shipments, get_recent_logs,
-    should_send_email, spawn_simulation, add_socket_event, recent_socket_events, add_client_error, recent_client_errors,
+    should_send_email, add_socket_event, recent_socket_events, add_client_error, recent_client_errors,
     EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES,
     # Add Redis helper functions and in-memory fallbacks from utils
     rget, rset, rkeys, rhgetall, rlist_lpop, rexists, rhlen,
     in_memory_clients, in_memory_sim
 )
+
+# IMPORTANT: We DO NOT import spawn_simulation from utils; we'll define our own below.
+# We'll also patch utils.spawn_simulation after defining ours.
 
 from simulator_engine import SimulationRunner, RunnerHooks, Stage
 
@@ -1166,8 +1170,13 @@ def spawn_simulation_with_check(tn):
         threading.Thread(target=wrapped, daemon=True).start()
 
 # Override the imported spawn_simulation with our atomic version
+# This ensures that any import of spawn_simulation from utils will use this locked version.
 spawn_simulation = spawn_simulation_with_check
+utils.spawn_simulation = spawn_simulation_with_check   # patch the utils module
 # ============================================================
+
+# Remove any old `is_simulation_active`, `mark_simulation_start`, `mark_simulation_stop` functions.
+# They are no longer used. We rely entirely on the Redis lock.
 
 def normalize_location(loc):
     if not loc:
@@ -1711,8 +1720,8 @@ def simulate_tracking(tn):
         flask_logger.error(f"Simulation error for {tn}: {e}")
         raise
     finally:
-        # Note: The lock is now released in spawn_simulation_with_check's wrapped function,
-        # so we don't need to call mark_simulation_stop here.
+        # The lock is now released in spawn_simulation_with_check's wrapped function,
+        # so we don't need to call anything here.
         pass
 
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
