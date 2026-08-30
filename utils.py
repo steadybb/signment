@@ -16,6 +16,7 @@ from flask import Flask
 from math import radians, sin, cos, sqrt, atan2
 from typing import Optional, List, Tuple, Dict, Any
 from urllib.parse import quote_plus, urlparse
+from sqlalchemy import create_engine, text
 
 load_dotenv()
 
@@ -497,9 +498,46 @@ DHL_CONFIG = {
     }
 }
 
+# ============================================================
+# Database URI fallback function (moved from app.py)
+# ============================================================
+def get_working_database_uri(configured_uri):
+    """
+    Test the configured database URI. If it works, return it.
+    Otherwise, fall back to SQLite.
+    """
+    # If already SQLite, no need to test
+    if configured_uri and configured_uri.startswith('sqlite'):
+        logging.info(f"Using SQLite database: {configured_uri}")
+        return configured_uri
+
+    # If no URI is provided, skip test and go straight to SQLite
+    if not configured_uri:
+        logging.warning("No DATABASE_URI configured. Using SQLite fallback.")
+        return 'sqlite:///app_fallback.db'
+
+    # Attempt to connect to the primary database
+    try:
+        # Set a short timeout for PostgreSQL connections
+        connect_args = {}
+        if 'postgresql' in configured_uri:
+            connect_args = {'connect_timeout': 5}
+        engine = create_engine(configured_uri, connect_args=connect_args)
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+        logging.info(f"Successfully connected to primary database: {configured_uri}")
+        return configured_uri
+    except Exception as e:
+        logging.warning(f"Failed to connect to primary database: {e}")
+        logging.warning("Falling back to SQLite.")
+        return 'sqlite:///app_fallback.db'
+# ============================================================
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///shipments.db')
+# Apply fallback to the database URI before creating SQLAlchemy
+_uri = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///shipments.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = get_working_database_uri(_uri)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['RATELIMIT_STORAGE_URI'] = os.getenv('RATELIMIT_STORAGE_URI', 'memory://')
 app.config['RATELIMIT_DEFAULTS'] = os.getenv('RATELIMIT_DEFAULTS', '200 per day,50 per hour').split(',')
