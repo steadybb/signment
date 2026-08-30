@@ -5,30 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: gunicorn --worker-class eventlet -w 1 app:app
+    command: gunicorn --worker-class eventlet -w 1 -b 0.0.0.0:${PORT:-10000} app:app
     ports:
-      - "5000:5000"
-    environment:
-      - ALLOWED_ADMINS=1756017918
-      - FLASK_ENV=development
-      - GEOCODING_API_KEY=68f1e6c3d4d40066193802vuyb187e9
-      - GLOBAL_WEBHOOK_URL=https://your-webhook-url.com
-      - RATELIMIT_STORAGE_URI=redis://redis:6379
-      - RECAPTCHA_SECRET_KEY=6LellekrAAAAAPp3VzPaZZOwxwnkYqkpHlzq9ugf
-      - RECAPTCHA_SITE_KEY=6LellekrAAAAAIhzbEnkb9QgNiXl_6a1pqV5bAIq
-      - REDIS_TOKEN=ASJvAAImcDIzMjI1Mjg2YjRkYzA0MGVjYjYyYjkxZDY3Yzk0MzlhMHAyODgxNQ
-      - REDIS_URL=redis://redis:6379
-      - SECRET_KEY=fe25c3f6d1d47f98b837b4a2a94dcae8914cdef80b273b36c12449ed1d6ef8a7
-      - SMTP_FROM=hesabamn1@gmail.com
-      - SMTP_HOST=smtp.gmail.com
-      - SMTP_PASS=prgzrnfkugwduuhh
-      - SMTP_PORT=587
-      - SMTP_USER=hesabamn1@gmail.com
-      - SQLALCHEMY_DATABASE_URI=postgresql://biggerboy_user:NgVyXnT7LI42pd9w6QA9FSAQeEYWN7Sb@postgres:5432/biggerboy
-      - TAWK_PROPERTY_ID=68ed7a5c3744141950704636
-      - TAWK_WIDGET_ID=1j7fqg720
-      - TELEGRAM_BOT_TOKEN=7263080325:AAGNBMkFEdfP2jN1kP6MK1RjZZxOc6jLnk8
-      - WEBSOCKET_SERVER=http://web:5000
+      - "${PORT:-10000}:${PORT:-10000}"
+    env_file:
+      - .env                     # reads all variables from .env
     depends_on:
       - postgres
       - redis
@@ -40,9 +21,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python3 telegram_bot.py
-    environment:
-      
+    command: python3 bot.py
+    env_file:
+      - .env                     # same .env, bot needs many of these
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python3 worker.py
+    env_file:
+      - .env                     # worker also uses Redis, DB, SMTP, etc.
     depends_on:
       - postgres
       - redis
@@ -53,9 +48,9 @@ services:
   postgres:
     image: postgres:13
     environment:
-      - POSTGRES_USER=biggerboy_user
-      - POSTGRES_PASSWORD=NgVyXnT7LI42pd9w6QA9FSAQeEYWN7Sb
-      - POSTGRES_DB=biggerboy
+      - POSTGRES_USER=${POSTGRES_USER:-consignment_dnpg_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-S1b4G7NuIiXUQbMl2JYZ5BO5sV6TFsyy}
+      - POSTGRES_DB=${POSTGRES_DB:-consignment_dnpg}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
