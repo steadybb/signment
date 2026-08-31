@@ -486,7 +486,6 @@ if redis_url:
     }
 cache = Cache(app, config=cache_config)
 
-# ====== Define flask_logger here (before using it) ======
 flask_logger = logging.getLogger('flask_app')
 sim_logger = logging.getLogger('simulator')
 
@@ -2908,9 +2907,29 @@ def admin_geocoding_status():
         'rate_limiter_status': {api: len(timestamps) for api, timestamps in geocode_rate_limiter.items()}
     })
 
-# ====== FIX: create_shipment_record with timezone and dateutil ======
-from dateutil import parser as date_parser
+# ============================================================
+# Custom date parser (replaces dateutil.parser)
+# ============================================================
+def parse_datetime(date_str: str) -> datetime:
+    """Parse ISO 8601 or common date strings without external dependencies."""
+    if not date_str:
+        return datetime.now(timezone.utc)
+    # Try ISO 8601 (with or without timezone)
+    try:
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except ValueError:
+        pass
+    # Try common formats
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    # Fallback to current time
+    return datetime.now(timezone.utc)
+# ============================================================
 
+# ====== FIX: create_shipment_record with timezone and custom parser ======
 def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
                            sender_name=None, sender_location=None,
                            receiver_name=None, receiver_address=None, receiver_phone=None,
@@ -2932,7 +2951,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
     now = datetime.now(timezone.utc)
     if shipment_date:
         try:
-            shipment_date = date_parser.isoparse(shipment_date)
+            shipment_date = parse_datetime(shipment_date)
             if shipment_date.tzinfo:
                 shipment_date = shipment_date.astimezone(timezone.utc).replace(tzinfo=None)
         except Exception:
