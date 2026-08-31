@@ -62,8 +62,8 @@ except Exception as e:
     console.print(Panel(f"[error]Configuration validation failed: {e}[/error]", title="Config Error", border_style="red"))
     raise
 
-# Maximum number of retries for a failed notification
-MAX_RETRIES = 3
+# Maximum number of retries for a failed notification (now only 1 retry)
+MAX_RETRIES = 2
 
 # Helper to check SMTP hostname resolvability
 def _is_smtp_host_resolvable(hostname):
@@ -75,11 +75,12 @@ def _is_smtp_host_resolvable(hostname):
     except socket.gaierror:
         return False
 
-# Read SMTP timeout from environment, default to 20 seconds
-SMTP_TIMEOUT = int(os.getenv('SMTP_TIMEOUT', '20'))
+# Read SMTP timeout from environment, default to 60 seconds (was 20)
+SMTP_TIMEOUT = int(os.getenv('SMTP_TIMEOUT', '60'))
 
 # ============================================================
-# NEW: send_email using external service first, then SMTP fallback
+# send_email with external service first, then SMTP fallback
+# Timeout for external service increased to 120 seconds
 # ============================================================
 def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
                recipient_email: str, subject: str = None, html_body: str = None,
@@ -113,7 +114,7 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
         </html>
         """
 
-    # ---------- Try external microservice first ----------
+    # ---------- Try external microservice first (with 120s timeout) ----------
     service_url = os.getenv('EMAIL_SERVICE_URL')
     if service_url:
         try:
@@ -123,7 +124,8 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
                 'html_body': html_body,
                 'plain_body': plain_body
             }
-            resp = requests.post(service_url, json=payload, timeout=30)
+            # Increased timeout to 120 seconds
+            resp = requests.post(service_url, json=payload, timeout=120)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('success', False):
@@ -268,7 +270,7 @@ def process_notifications():
             data = notification.get('data', {})
             retry_count = notification.get('retry_count', 0)
 
-            # Check if we've exceeded retry limit
+            # Check if we've exceeded retry limit (now MAX_RETRIES = 2)
             if retry_count >= MAX_RETRIES:
                 logger.warning(f"Discarding notification for {tracking_number} after {MAX_RETRIES} retries")
                 console.print(f"[yellow]Discarded notification for {tracking_number} (type: {notification_type})[/yellow]")
@@ -316,12 +318,14 @@ def process_notifications():
                 console.print(f"[red]Permanent failure for {tracking_number} ({notification_type}) – discarded[/red]")
                 continue
 
-            # Transient failure – requeue with incremented retry count
+            # Transient failure – requeue with incremented retry count and backoff
             notification['retry_count'] = retry_count + 1
             requeue_data = json.dumps(notification)
             safe_redis_operation(redis_client.lpush, "notifications", requeue_data)
             logger.warning(f"Requeued {notification_type} for {tracking_number} (attempt {retry_count + 1}/{MAX_RETRIES})")
             console.print(f"[yellow]Requeued {notification_type} for {tracking_number} (attempt {retry_count + 1})[/yellow]")
+            # Backoff: sleep before processing next notification to avoid tight loop
+            time.sleep(5)
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid notification format: {e}")
