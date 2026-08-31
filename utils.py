@@ -1,3 +1,5 @@
+# utils.py (full, with duplicate removal)
+
 import os
 from dotenv import load_dotenv
 import re
@@ -64,7 +66,6 @@ class RedisClientProxy:
             if client is None:
                 raise RuntimeError(f"Redis client is not initialized: {name}")
             return getattr(client, name)(*args, **kwargs)
-
         return _missing
 
 
@@ -96,7 +97,6 @@ SIMULATOR_THREAD_LIMIT = int(os.getenv('SIMULATOR_THREAD_LIMIT', '8'))
 _simulator_thread_count = 0
 _simulator_thread_lock = None
 
-
 def _get_simulator_thread_lock():
     global _simulator_thread_lock
     if _simulator_thread_lock is None:
@@ -104,13 +104,11 @@ def _get_simulator_thread_lock():
         _simulator_thread_lock = threading.Lock()
     return _simulator_thread_lock
 
-
 def can_start_simulation() -> bool:
     global _simulator_thread_count
     lock = _get_simulator_thread_lock()
     with lock:
         return _simulator_thread_count < SIMULATOR_THREAD_LIMIT
-
 
 def register_simulation_start() -> bool:
     global _simulator_thread_count
@@ -121,13 +119,11 @@ def register_simulation_start() -> bool:
         _simulator_thread_count += 1
         return True
 
-
 def register_simulation_stop() -> None:
     global _simulator_thread_count
     lock = _get_simulator_thread_lock()
     with lock:
         _simulator_thread_count = max(0, _simulator_thread_count - 1)
-
 
 def add_socket_event(details: dict):
     try:
@@ -135,30 +131,19 @@ def add_socket_event(details: dict):
     except Exception:
         pass
 
-
 def add_client_error(payload: dict):
     try:
         recent_client_errors.append({**payload, 'timestamp': datetime.utcnow().isoformat()})
     except Exception:
         pass
 
-
-# ============================================================
-# Stub: spawn_simulation is overridden by app.py.
-# ============================================================
+# Stub: spawn_simulation is overridden by app.py
 def spawn_simulation(tracking_number: str):
-    """
-    Placeholder – overridden by app.py's spawn_simulation_with_check.
-    If this version runs, something is calling spawn_simulation from
-    outside the web process (e.g., the bot). This is a no‑op by design.
-    """
     bot_logger.warning(
         f"spawn_simulation called from utils for {tracking_number} — "
         "this should only run from app.py. No simulation started."
     )
     return None
-# ============================================================
-
 
 def _resolve_template_url(url: str) -> str:
     if not url:
@@ -187,7 +172,6 @@ def _resolve_template_url(url: str) -> str:
         return ""
     return resolved
 
-
 def _build_redis_url(user: str, password: str, host: str, port: str) -> str:
     if not host:
         return ""
@@ -197,7 +181,6 @@ def _build_redis_url(user: str, password: str, host: str, port: str) -> str:
         if password:
             auth = f"{auth}:{quote_plus(password)}"
     return f"redis://{auth + '@' if auth else ''}{host}:{port}"
-
 
 def _is_hostname_resolvable(hostname: str) -> bool:
     if not hostname:
@@ -209,24 +192,19 @@ def _is_hostname_resolvable(hostname: str) -> bool:
         console.print(f"[yellow]Redis hostname not resolvable: {hostname} ({e})[/yellow]")
         return False
 
-
 def _initialize_redis_client() -> None:
     if not redis_url:
         redis_client.set_client(None)
         return
-
     redis_url_local = redis_url.strip()
     parsed_url = urlparse(redis_url_local)
     scheme = parsed_url.scheme.lower()
     hostname = parsed_url.hostname
-
     if hostname and not _is_hostname_resolvable(hostname):
         console.print(f"[yellow]Redis hostname lookup warning: {hostname}[/yellow]")
-
     try:
         if scheme in ("https", "http") or "upstash" in redis_url_local.lower() or scheme.startswith("upstash"):
             from upstash_redis import Redis as UpstashRedis
-
             client = UpstashRedis(url=redis_url_local, token=redis_token)
             client.set("health_check", "ok", ex=10)
             client.delete("health_check")
@@ -235,7 +213,6 @@ def _initialize_redis_client() -> None:
         elif scheme in ("redis", "rediss"):
             try:
                 from redis import Redis as RedisClient, ConnectionPool
-
                 max_conn = int(os.getenv('REDIS_MAX_CONNECTIONS', '4'))
                 pool = ConnectionPool.from_url(redis_url_local, decode_responses=True, max_connections=max_conn, socket_timeout=3, socket_connect_timeout=3)
                 client = RedisClient(connection_pool=pool, decode_responses=True)
@@ -252,7 +229,6 @@ def _initialize_redis_client() -> None:
         if scheme in ("redis", "rediss") or redis_url_local.lower().startswith("redis://"):
             try:
                 from redis import Redis as RedisClient
-
                 client = RedisClient.from_url(redis_url_local, decode_responses=True)
                 client.ping()
                 redis_client.set_client(client)
@@ -264,12 +240,10 @@ def _initialize_redis_client() -> None:
             console.print(f"[yellow]Redis unavailable: {e}[/yellow]")
             redis_client.set_client(None)
 
-
 def get_redis_client():
     if not redis_client:
         _initialize_redis_client()
     return redis_client.get_client()
-
 
 if redis_url:
     redis_url = _resolve_template_url(redis_url)
@@ -279,10 +253,6 @@ if not redis_url and redis_host:
 
 _initialize_redis_client()
 
-
-# ============================================================
-# FIXED: Redis reconnect loop – always sleep between pings.
-# ============================================================
 def _redis_reconnect_loop():
     import threading
     backoff = REDIS_RECONNECT_BASE
@@ -310,11 +280,7 @@ def _redis_reconnect_loop():
                 backoff = REDIS_RECONNECT_BASE
         except Exception:
             pass
-
-        # Always sleep between health checks (even when healthy)
         time.sleep(REDIS_RECONNECT_BASE)
-# ============================================================
-
 
 try:
     import threading
@@ -322,7 +288,6 @@ try:
     t.start()
 except Exception:
     pass
-
 
 def get_redis_metrics() -> Dict[str, Any]:
     return {
@@ -499,26 +464,20 @@ DHL_CONFIG = {
 }
 
 # ============================================================
-# Database URI fallback function (moved from app.py)
+# Database URI fallback function (kept only here)
 # ============================================================
 def get_working_database_uri(configured_uri):
     """
     Test the configured database URI. If it works, return it.
     Otherwise, fall back to SQLite.
     """
-    # If already SQLite, no need to test
     if configured_uri and configured_uri.startswith('sqlite'):
         logging.info(f"Using SQLite database: {configured_uri}")
         return configured_uri
-
-    # If no URI is provided, skip test and go straight to SQLite
     if not configured_uri:
         logging.warning("No DATABASE_URI configured. Using SQLite fallback.")
         return 'sqlite:///app_fallback.db'
-
-    # Attempt to connect to the primary database
     try:
-        # Set a short timeout for PostgreSQL connections
         connect_args = {}
         if 'postgresql' in configured_uri:
             connect_args = {'connect_timeout': 5}
@@ -535,7 +494,6 @@ def get_working_database_uri(configured_uri):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
-# Apply fallback to the database URI before creating SQLAlchemy
 _uri = os.getenv('SQLALCHEMY_DATABASE_URI', 'sqlite:///shipments.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = get_working_database_uri(_uri)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -560,9 +518,6 @@ app.config['TAWK_PROPERTY_ID'] = os.getenv('TAWK_PROPERTY_ID', 'your-tawk-proper
 app.config['TAWK_WIDGET_ID'] = os.getenv('TAWK_WIDGET_ID', 'your-tawk-widget-id')
 app.config['ADMIN_PASSWORD'] = os.getenv('ADMIN_PASSWORD', 'admin')
 
-# ============================================================
-# FIX: SQLAlchemy engine options – safe for SQLite
-# ============================================================
 db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
 if 'sqlite' in db_uri:
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
@@ -576,7 +531,6 @@ else:
         'pool_timeout': int(os.getenv('SQLALCHEMY_POOL_TIMEOUT', '60')),
         'pool_pre_ping': True,
     }
-# ============================================================
 
 db = SQLAlchemy(app)
 
@@ -701,9 +655,6 @@ class DummyBot:
             url = None
         return Info()
 
-# ============================================================
-# FIX: Singleton bot instance
-# ============================================================
 _bot_instance = None
 
 def get_bot() -> TeleBot:
@@ -716,7 +667,6 @@ def get_bot() -> TeleBot:
         else:
             _bot_instance = TeleBot(token)
     return _bot_instance
-# ============================================================
 
 def is_admin(user_id: int) -> bool:
     return user_id in config.allowed_admins
@@ -805,7 +755,14 @@ def should_send_email(tn: str, status: str, checkpoints):
 
     return True
 
+# ============================================================
+# ENHANCED estimate_distance with full city list (removed duplicate)
+# ============================================================
 def estimate_distance(origin: str, dest: str) -> float:
+    """
+    Return approximate distance in km between two cities using a pre‑defined
+    coordinate dictionary. If a city is not found, return 1000.0.
+    """
     city_coords = {
         "Lagos, NG": (6.5244, 3.3792), "Abuja, NG": (9.0579, 7.4951), "Port Harcourt, NG": (4.8156, 7.0498),
         "Kano, NG": (12.0001, 8.5167), "Ibadan, NG": (7.3775, 3.9470), "Enugu, NG": (6.4584, 7.5170),
@@ -829,8 +786,10 @@ def estimate_distance(origin: str, dest: str) -> float:
         "Brussels, BE": (50.8476, 4.3572), "Dublin, IE": (53.3498, -6.2603), "Madrid, ES": (40.4168, -3.7038),
         "Rome, IT": (41.9028, 12.4964), "Milan, IT": (45.4642, 9.1900), "Barcelona, ES": (41.3851, 2.1734)
     }
-    origin_key = next((k for k in city_coords if origin.lower() in k.lower() or k.lower().startswith(origin.lower())), None)
-    dest_key = next((k for k in city_coords if dest.lower() in k.lower() or k.lower().startswith(dest.lower())), None)
+    origin_lower = origin.lower()
+    dest_lower = dest.lower()
+    origin_key = next((k for k in city_coords if origin_lower in k.lower() or k.lower().startswith(origin_lower)), None)
+    dest_key = next((k for k in city_coords if dest_lower in k.lower() or k.lower().startswith(dest_lower)), None)
     if not origin_key or not dest_key:
         return 1000.0
     lat1, lon1 = map(radians, city_coords[origin_key])
@@ -840,6 +799,7 @@ def estimate_distance(origin: str, dest: str) -> float:
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     c = 2 * atan2(sqrt(a), sqrt(1-a))
     return round(6371 * c, 1)
+# ============================================================
 
 def get_shipment_list(page: int = 1, per_page: int = 10) -> Tuple[List[str], int]:
     try:
@@ -860,7 +820,7 @@ def get_shipment_details(tracking_number: str) -> Optional[Dict[str, Any]]:
         return None
 
 # ============================================================
-# NEW: Batch fetch and status aggregation for the bot
+# Batch fetch and status aggregation for the bot
 # ============================================================
 def get_shipment_list_with_statuses(page: int = 1, per_page: int = 10) -> Tuple[List[Tuple[str, str]], int]:
     """Return list of (tracking_number, status) and total count."""
