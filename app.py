@@ -2740,8 +2740,11 @@ def api_shipment_update(tn):
                 continue
             if k == 'service_level' and redis_client:
                 rset('service_level', tn, v)
+            # ===== NEW: Handle delivery_window explicitly =====
             if k == 'delivery_window' and redis_client:
                 rset('delivery_window', tn, v)
+                updated['delivery_window'] = v
+                continue
             if k == 'proof_of_delivery' and redis_client:
                 rset('proof_of_delivery', tn, v)
             if k == 'days':
@@ -2929,11 +2932,12 @@ def parse_datetime(date_str: str) -> datetime:
     return datetime.now(timezone.utc)
 # ============================================================
 
-# ====== FIX: create_shipment_record with timezone and custom parser ======
+# ====== FIX: create_shipment_record with timezone, custom parser, and delivery_window ======
 def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
                            sender_name=None, sender_location=None,
                            receiver_name=None, receiver_address=None, receiver_phone=None,
-                           receiver_email=None, weight_kg=None, shipment_date=None):
+                           receiver_email=None, weight_kg=None, shipment_date=None,
+                           delivery_window=None):
     origin = origin.strip() if isinstance(origin, str) else origin
     destination = destination.strip() if isinstance(destination, str) else destination
     service_level = service_level.strip() if isinstance(service_level, str) else service_level
@@ -3152,7 +3156,11 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         distance = estimate_distance(norm_origin, norm_destination)
     mode = 'air' if distance > 1000 else 'ground'
     max_attempts = 3 if random.random() < 0.15 else 1
-    delivery_window = DHLRealisticSimulator.get_delivery_window(service_level, distance)
+    # Use custom delivery_window if provided, else generate one
+    if delivery_window:
+        final_delivery_window = delivery_window
+    else:
+        final_delivery_window = DHLRealisticSimulator.get_delivery_window(service_level, distance)
     if redis_client:
         try:
             rset('service_level', tracking_number, service_level)
@@ -3161,7 +3169,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
             rset('max_attempts', tracking_number, str(max_attempts))
             rset('progress', tracking_number, '0')
             rset('stage', tracking_number, 'pickup')
-            rset('delivery_window', tracking_number, delivery_window)
+            rset('delivery_window', tracking_number, final_delivery_window)
             rset('proof_of_delivery', tracking_number, 'Pending')
         except Exception as redis_err:
             flask_logger.warning(f"Redis error for {tracking_number}: {redis_err}")
@@ -3188,7 +3196,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
             'destination': destination,
             'service_level': service_level,
             'mode': mode,
-            'delivery_window': delivery_window if delivery_window else 'Calculating...'
+            'delivery_window': final_delivery_window if final_delivery_window else 'Calculating...'
         }
     }, 201
 
@@ -3208,7 +3216,8 @@ def api_create_shipment():
         receiver_phone=data.get('receiver_phone'),
         receiver_email=data.get('receiver_email'),
         weight_kg=data.get('weight_kg'),
-        shipment_date=data.get('shipment_date')
+        shipment_date=data.get('shipment_date'),
+        delivery_window=data.get('delivery_window')   # NEW
     )
     if status_code != 201:
         try:
@@ -3234,6 +3243,7 @@ def api_bulk_create():
         destination = shipment_data.get('destination')
         recipient_email = shipment_data.get('recipient_email')
         service_level = shipment_data.get('service_level', 'DHL Express')
+        # Bulk creation does not accept delivery_window per item; could add later
         result, status_code = create_shipment_record(origin, destination, recipient_email, service_level)
         if result.get('success'):
             created.append(result['tracking_number'])
@@ -3465,7 +3475,7 @@ def on_request(data):
     mode = rget("transport_mode", tn) or ("air" if estimate_distance(shipment.origin_location or "Lagos, NG", shipment.delivery_location) > 1000 else "ground")
     distance_km = estimate_distance(shipment.origin_location or "Lagos, NG", shipment.delivery_location)
     service_level = DHLRealisticSimulator.get_service_level(distance_km, DHLRealisticSimulator.is_business_hours(datetime.now()))
-    delivery_window = DHLRealisticSimulator.get_delivery_window(service_level, distance_km)
+    delivery_window = rget("delivery_window", tn, "Calculating...") or "Calculating..."
     proof_of_delivery = DHLRealisticSimulator.generate_pod_info()
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
@@ -3505,6 +3515,18 @@ def start_background_services():
             db.create_all()
         init_db()
         cache_route_templates()
+
+        # ===== NEW: Clear stale simulation locks on startup =====
+        if redis_client:
+            try:
+                keys = redis_client.keys("sim_lock:*")
+                if keys:
+                    redis_client.delete(*keys)
+                    flask_logger.info(f"Cleared {len(keys)} stale simulation locks")
+            except Exception as e:
+                flask_logger.warning(f"Failed to clear sim locks: {e}")
+        # =====================================================
+
         try:
             with app.app_context():
                 active_shipments = Shipment.query.filter(Shipment.status.notin_(["Delivered", "Returned"])).order_by(Shipment.last_updated.desc()).limit(8).all()
