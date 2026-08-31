@@ -33,8 +33,7 @@ from utils import (
     # Flask app for context (only used if we run polling)
     app as flask_app,
     search_shipments,
-    # Redis helpers for export
-    redis_client
+    # Redis helpers for export (unused, kept for potential future use)
 )
 
 load_dotenv()
