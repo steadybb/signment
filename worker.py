@@ -54,9 +54,8 @@ try:
         smtp_port=int(os.getenv("SMTP_PORT", 587)),
         smtp_user=os.getenv("SMTP_USER", ""),
         smtp_pass=os.getenv("SMTP_PASS", ""),
-        smtp_from=os.getenv("SMTP_FROM", "no-reply@example.com"),
-        email_provider=os.getenv("EMAIL_PROVIDER", "resend" if os.getenv("RESEND_API_KEY", "").strip() else "smtp"),
-        resend_api_key=os.getenv("RESEND_API_KEY", "")
+        smtp_from=os.getenv("SMTP_FROM", "no-reply@example.com")
+        # Removed email_provider and resend_api_key – now using external service + SMTP
     )
 except Exception as e:
     logger.error(f"Configuration validation failed: {e}")
@@ -80,8 +79,7 @@ def _is_smtp_host_resolvable(hostname):
 SMTP_TIMEOUT = int(os.getenv('SMTP_TIMEOUT', '20'))
 
 # ============================================================
-# FIXED: send_email with Resend → SMTP fallback + DNS check + timeout
-#        No template rendering – uses provided html_body or fallback
+# NEW: send_email using external service first, then SMTP fallback
 # ============================================================
 def send_email(tracking_number: str, status: str, checkpoints: str, delivery_location: str,
                recipient_email: str, subject: str = None, html_body: str = None,
@@ -96,15 +94,12 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
         logger.warning(f"No recipient email for {tracking_number}")
         return False, True  # Missing email is permanent
 
-    # Determine subject
+    # Determine subject and body
     msg_subject = subject or f"DHL Shipment Update: {tracking_number}"
-
-    # Build plain_body if not provided
     if not plain_body:
         location = delivery_location or 'Unknown'
         plain_body = f"DHL Shipment Update\n\nTracking Number: {tracking_number}\nStatus: {status}\nDestination: {location}\n\nTrack online: {config.websocket_server}/track/{tracking_number}"
 
-    # Build a simple HTML fallback if html_body is not provided (no template rendering)
     if not html_body:
         html_body = f"""
         <html>
@@ -118,59 +113,48 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
         </html>
         """
 
-    # Create MIME message (for SMTP)
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = msg_subject
-    msg['From'] = config.smtp_from
-    msg['To'] = recipient_email
-    msg.attach(MIMEText(plain_body, 'plain'))
-    msg.attach(MIMEText(html_body, 'html'))
+    # ---------- Try external microservice first ----------
+    service_url = os.getenv('EMAIL_SERVICE_URL')
+    if service_url:
+        try:
+            payload = {
+                'recipient': recipient_email,
+                'subject': msg_subject,
+                'html_body': html_body,
+                'plain_body': plain_body
+            }
+            resp = requests.post(service_url, json=payload, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get('success', False):
+                    logger.info(f"Sent email via external service for {tracking_number} to {recipient_email}")
+                    console.print(f"[info]Sent email via external service for {tracking_number} to {recipient_email}[/info]")
+                    return True, False
+                else:
+                    logger.warning(f"External service returned failure for {tracking_number}: {data}")
+                    # fall through to SMTP
+            else:
+                logger.warning(f"External service returned {resp.status_code} for {tracking_number}: {resp.text}")
+                # fall through to SMTP
+        except Exception as e:
+            logger.warning(f"External service failed for {tracking_number}: {e}")
+            # fall through to SMTP
 
-    resend_key = config.resend_api_key
+    # ---------- Fallback to SMTP ----------
     smtp_configured = all([config.smtp_host, config.smtp_user, config.smtp_pass])
-    # Also check resolvability; if not resolvable, disable SMTP
     if smtp_configured and not _is_smtp_host_resolvable(config.smtp_host):
-        logger.error(f"SMTP host '{config.smtp_host}' cannot be resolved – disabling SMTP for this attempt")
+        logger.error(f"SMTP host '{config.smtp_host}' cannot be resolved – disabling SMTP")
         smtp_configured = False
 
-    # ---------- Try Resend first (if key exists) ----------
-    if resend_key:
-        try:
-            response = requests.post(
-                'https://api.resend.com/emails',
-                headers={'Authorization': f'Bearer {resend_key}', 'Content-Type': 'application/json'},
-                json={
-                    'from': config.smtp_from,
-                    'to': [recipient_email],
-                    'subject': msg_subject,
-                    'html': html_body or f'<p>{plain_body or ""}</p>',
-                    'text': plain_body or ''
-                },
-                timeout=20
-            )
-            response.raise_for_status()
-            logger.info(f"Sent email via Resend for {tracking_number} to {recipient_email}")
-            console.print(f"[info]Sent email via Resend for {tracking_number} to {recipient_email}[/info]")
-            return True, False
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code if e.response else None
-            logger.warning(f"Resend HTTP {status_code} error for {tracking_number}: {e}")
-            # If SMTP is not configured, treat 4xx (except 429) as permanent, else fallback
-            if not smtp_configured:
-                if status_code and 400 <= status_code < 500 and status_code != 429:
-                    return False, True
-                # Otherwise transient (will retry)
-                return False, False
-            # If SMTP is configured, we will fallback; do not return yet
-        except Exception as e:
-            logger.warning(f"Resend failed for {tracking_number}: {e}")
-            if not smtp_configured:
-                # Without SMTP, treat all Resend errors as transient (retry)
-                return False, False
-            # else fallback to SMTP
-
-    # ---------- Fallback to SMTP (with timeout from env) ----------
     if smtp_configured:
+        # Build MIME message for SMTP
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = msg_subject
+        msg['From'] = config.smtp_from
+        msg['To'] = recipient_email
+        msg.attach(MIMEText(plain_body, 'plain'))
+        msg.attach(MIMEText(html_body, 'html'))
+
         try:
             smtp_class = smtplib.SMTP_SSL if int(config.smtp_port) == 465 else smtplib.SMTP
             with smtp_class(config.smtp_host, config.smtp_port, timeout=SMTP_TIMEOUT) as server:
@@ -189,10 +173,9 @@ def send_email(tracking_number: str, status: str, checkpoints: str, delivery_loc
             return False, False  # transient
         except Exception as e:
             logger.error(f"SMTP error for {tracking_number}: {e}")
-            # Most SMTP errors are transient; we'll retry
-            return False, False
+            return False, False  # transient (most SMTP errors are transient)
     else:
-        # No SMTP configured and Resend already failed
+        # No SMTP configured and external service failed or not available
         logger.error(f"No email provider available for {tracking_number}")
         return False, True  # permanent
 
