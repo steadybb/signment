@@ -343,8 +343,6 @@ class SimulationRunner:
         self.sim_days_cap = max(1.0, min(365.0, sim_days_cap if sim_days_cap is not None else SIM_DEFAULT_DAYS))
         self.rng = random.Random()
         self.checkpoints_generator = CheckpointGenerator(tracking_number, self.rng)
-        self.start_monotonic: Optional[float] = None
-        self.deadline_seconds: Optional[float] = None
 
     def _normalize_checkpoint_key(self, cp: str) -> str:
         """Return a unique key for checkpoint deduplication: location + event text."""
@@ -355,12 +353,12 @@ class SimulationRunner:
             return f"{location}:{event}"
         return cp
 
-    def _append_checkpoint_if_new(self, checkpoints: List[str], line: str) -> bool:
-        """Append line only if its key differs from the last checkpoint's key."""
-        if checkpoints:
-            last = checkpoints[-1]
-            if self._normalize_checkpoint_key(last) == self._normalize_checkpoint_key(line):
-                return False
+    def _add_checkpoint(self, checkpoints: List[str], line: str, seen_keys: set) -> bool:
+        """Append line only if its normalized key has not been seen before."""
+        key = self._normalize_checkpoint_key(line)
+        if key in seen_keys:
+            return False
+        seen_keys.add(key)
         checkpoints.append(line)
         return True
 
@@ -401,20 +399,23 @@ class SimulationRunner:
         checkpoints: List[str] = (shipment.checkpoints or "").split(";") if shipment.checkpoints else []
         checkpoints = [c for c in checkpoints if c]
 
+        # Initialize seen keys from existing checkpoints to avoid re-emitting them
+        seen_keys = set()
+        for cp in checkpoints:
+            seen_keys.add(self._normalize_checkpoint_key(cp))
+
         current_status = shipment.status
         delivery_attempts = 0
         stage = Stage.PICKUP
-        start_wall = self.hooks.now()
-        start_monotonic = time.monotonic()
-        self.start_monotonic = start_monotonic
-        self.deadline_seconds = self.sim_days_cap * 86400.0
 
+        # Simulated time tracking
+        sim_start_time = self.hooks.now()  # real datetime at start
+        elapsed_sim = timedelta(0)         # simulated elapsed duration
+        last_checkpoint_elapsed = timedelta(0)  # simulated elapsed when last checkpoint was added
+
+        # Recover state from existing checkpoints (pickup flags)
         pickup_request_logged = False
         pickup_complete_logged = False
-        # FIX: use simulated elapsed time for checkpoint gap, not wall-clock datetime
-        last_checkpoint_elapsed: timedelta = timedelta(0)
-
-        # Recover state from existing checkpoints
         for cp in checkpoints:
             key = self._normalize_checkpoint_key(cp)
             if "Pickup request" in key or "Shipment information" in key:
@@ -422,9 +423,10 @@ class SimulationRunner:
             if "Package collected" in key or "Picked up" in key:
                 pickup_complete_logged = True
 
-        sim_logger.debug(f"Sim days cap: {self.sim_days_cap} days → {self.deadline_seconds:.0f}s")
+        sim_logger.debug(f"Sim days cap: {self.sim_days_cap} days")
 
-        while (time.monotonic() - start_monotonic) < self.deadline_seconds:
+        # Main loop – continue while simulated time is within cap
+        while elapsed_sim < timedelta(days=self.sim_days_cap):
             # Optional lock check
             if self.hooks.check_lock and not self.hooks.check_lock():
                 sim_logger.warning(f"Lock lost for {self.tn}, aborting simulation")
@@ -445,10 +447,9 @@ class SimulationRunner:
                 origin = live.origin_location or "Lagos, NG"
                 destination = live.delivery_location
                 plan = self._build_plan(origin, destination)
-                start_wall = self.hooks.now()
-                start_monotonic = time.monotonic()
-                self.start_monotonic = start_monotonic
-                self.deadline_seconds = self.sim_days_cap * 86400.0
+                sim_start_time = self.hooks.now()   # reset simulation start time to now
+                elapsed_sim = timedelta(0)           # reset simulated elapsed time
+                last_checkpoint_elapsed = timedelta(0)
                 sim_logger.debug(f"Plan rebuilt for {self.tn} after location change")
 
             if live.status != current_status:
@@ -457,33 +458,43 @@ class SimulationRunner:
             if live.checkpoints and live.checkpoints != ";".join(checkpoints):
                 checkpoints = (live.checkpoints or "").split(";")
                 checkpoints = [c for c in checkpoints if c]
+                # Update seen_keys from the new checkpoint list (if any new ones)
+                for cp in checkpoints:
+                    seen_keys.add(self._normalize_checkpoint_key(cp))
 
             if self.hooks.get_flag("paused_simulations", "false") == "true":
                 self.hooks.sleep(10)
                 continue
 
             speed_multiplier = self._read_speed_multiplier()
-            elapsed_wall = self.hooks.now() - start_wall
-            elapsed_sim = elapsed_wall * speed_multiplier
+
+            # Sleep for a tick based on current speed, then advance simulated time
+            tick_real_seconds = self._scaled_sleep(TICK_SECONDS_MIN, TICK_SECONDS_MAX, speed_multiplier)
+            self.hooks.sleep(tick_real_seconds)
+
+            # Advance simulated elapsed time by real tick * speed multiplier
+            elapsed_sim += timedelta(seconds=tick_real_seconds * speed_multiplier)
+
+            # Get current simulated datetime for checkpoint timestamps
+            sim_now = sim_start_time + elapsed_sim
 
             leg, frac, in_customs = plan.locate(elapsed_sim)
             progress = plan.progress_fraction(elapsed_sim)
-            now = self.hooks.now()
 
             # --- pickup stage ---
             if leg is plan.legs[0] and elapsed_sim < plan.pickup_pad:
                 stage = Stage.PICKUP
                 if not pickup_request_logged:
-                    line = self.checkpoints_generator.pickup_request(now, origin)
-                    if self._append_checkpoint_if_new(checkpoints, line):
+                    line = self.checkpoints_generator.pickup_request(sim_now, origin)
+                    if self._add_checkpoint(checkpoints, line, seen_keys):
                         self.hooks.on_checkpoint_added(line)
                         pickup_request_logged = True
                         last_checkpoint_elapsed = elapsed_sim
                         self._commit(checkpoints, "Pending", stage, progress, origin,
                                      plan.legs[0].from_coords['lat'], plan.legs[0].from_coords['lon'])
                 elif elapsed_sim > plan.pickup_pad * 0.6 and not pickup_complete_logged:
-                    line = self.checkpoints_generator.pickup_complete(now, origin)
-                    if self._append_checkpoint_if_new(checkpoints, line):
+                    line = self.checkpoints_generator.pickup_complete(sim_now, origin)
+                    if self._add_checkpoint(checkpoints, line, seen_keys):
                         self.hooks.on_checkpoint_added(line)
                         pickup_complete_logged = True
                         current_status = "In_Transit"
@@ -500,44 +511,46 @@ class SimulationRunner:
                 if in_customs:
                     stage = Stage.CUSTOMS
                     if 'held' not in leg.events_emitted:
-                        line = self.checkpoints_generator.customs_held(now, leg)
-                        if self._append_checkpoint_if_new(checkpoints, line):
+                        line = self.checkpoints_generator.customs_held(sim_now, leg)
+                        if self._add_checkpoint(checkpoints, line, seen_keys):
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('held')
                             current_status = "Customs_Clearance"
                             last_checkpoint_elapsed = elapsed_sim
                             lat, lon = leg.to_coords['lat'], leg.to_coords['lon']
                             self._commit(checkpoints, "Customs_Clearance", stage, progress, leg.to_place, lat, lon)
+                    # Check if customs dwell has elapsed -> emit customs_cleared
+                    if 'held' in leg.events_emitted and 'customs_cleared' not in leg.events_emitted:
+                        if elapsed_sim >= leg.end_offset:
+                            line = self.checkpoints_generator.customs_cleared(sim_now, leg)
+                            if self._add_checkpoint(checkpoints, line, seen_keys):
+                                self.hooks.on_checkpoint_added(line)
+                                leg.events_emitted.add('customs_cleared')
+                                current_status = "In_Transit"
+                                last_checkpoint_elapsed = elapsed_sim
+                                lat, lon = leg.to_coords['lat'], leg.to_coords['lon']
+                                self._commit(checkpoints, "In_Transit", stage, progress, leg.to_place, lat, lon)
                 else:
                     stage = Stage.TRANSIT
                     lat, lon = leg.interpolated_position(frac)
                     if 'depart' not in leg.events_emitted and frac > 0.02:
-                        line = self.checkpoints_generator.leg_depart(now, leg)
-                        if self._append_checkpoint_if_new(checkpoints, line):
+                        line = self.checkpoints_generator.leg_depart(sim_now, leg)
+                        if self._add_checkpoint(checkpoints, line, seen_keys):
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('depart')
                             current_status = "In_Transit"
                             last_checkpoint_elapsed = elapsed_sim
                             self._commit(checkpoints, "In_Transit", stage, progress, leg.from_place, lat, lon)
-                    elif ('customs_cleared' not in leg.events_emitted and leg.customs_dwell > timedelta(0)
-                          and 'held' in leg.events_emitted and frac >= 0.999):
-                        line = self.checkpoints_generator.customs_cleared(now, leg)
-                        if self._append_checkpoint_if_new(checkpoints, line):
-                            self.hooks.on_checkpoint_added(line)
-                            leg.events_emitted.add('customs_cleared')
-                            current_status = "In_Transit"
-                            last_checkpoint_elapsed = elapsed_sim
-                            self._commit(checkpoints, "In_Transit", stage, progress, leg.to_place, lat, lon)
                     elif 'arrive' not in leg.events_emitted and frac >= 0.999:
-                        line = self.checkpoints_generator.leg_arrive(now, leg)
-                        if self._append_checkpoint_if_new(checkpoints, line):
+                        line = self.checkpoints_generator.leg_arrive(sim_now, leg)
+                        if self._add_checkpoint(checkpoints, line, seen_keys):
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('arrive')
                             current_status = "In_Transit"
                             last_checkpoint_elapsed = elapsed_sim
                             self._commit(checkpoints, "In_Transit", stage, progress, leg.to_place, lat, lon)
                     else:
-                        # FIX: use simulated elapsed time for checkpoint gap
+                        # Mid‑leg checkpoint
                         should_log_midpoint = (
                             leg.distance_km >= MIN_LEG_DISTANCE_FOR_CHECKPOINT_KM
                             and 0.15 < frac < 0.85
@@ -545,8 +558,8 @@ class SimulationRunner:
                             and self.rng.random() < 0.05
                         )
                         if should_log_midpoint:
-                            line = self.checkpoints_generator.leg_depart(now, leg)
-                            if self._append_checkpoint_if_new(checkpoints, line):
+                            line = self.checkpoints_generator.leg_depart(sim_now, leg)
+                            if self._add_checkpoint(checkpoints, line, seen_keys):
                                 self.hooks.on_checkpoint_added(line)
                                 last_checkpoint_elapsed = elapsed_sim
                                 self._commit(checkpoints, "In_Transit", stage, progress, leg.from_place, lat, lon)
@@ -560,8 +573,8 @@ class SimulationRunner:
                 stage = Stage.DELIVERY
                 lat, lon = last_leg.to_coords['lat'], last_leg.to_coords['lon']
                 if 'out_for_delivery' not in last_leg.events_emitted:
-                    line = self.checkpoints_generator.out_for_delivery(now, destination)
-                    if self._append_checkpoint_if_new(checkpoints, line):
+                    line = self.checkpoints_generator.out_for_delivery(sim_now, destination)
+                    if self._add_checkpoint(checkpoints, line, seen_keys):
                         self.hooks.on_checkpoint_added(line)
                         last_leg.events_emitted.add('out_for_delivery')
                         current_status = "Out_for_Delivery"
@@ -571,19 +584,20 @@ class SimulationRunner:
                     time_since_ofd = elapsed_sim - (last_leg.end_offset + plan.last_mile_pad)
                     if time_since_ofd >= timedelta(0):
                         if delivery_attempts < plan.max_delivery_attempts - 1 and self.rng.random() < 0.15:
-                            line, reason = self.checkpoints_generator.delivery_attempt_failed(now, destination)
-                            if self._append_checkpoint_if_new(checkpoints, line):
+                            line, reason = self.checkpoints_generator.delivery_attempt_failed(sim_now, destination)
+                            if self._add_checkpoint(checkpoints, line, seen_keys):
                                 self.hooks.on_checkpoint_added(line)
                                 delivery_attempts += 1
                                 current_status = "Exception"
                                 last_checkpoint_elapsed = elapsed_sim
                                 self._commit(checkpoints, "Exception", Stage.EXCEPTION, progress, destination, lat, lon)
+                                # After failed attempt, sleep a bit (real time) before retrying
                                 self.hooks.sleep(self._scaled_sleep(20, 60, speed_multiplier))
                                 continue
                         else:
                             pod = self.hooks.generate_pod()
-                            line = self.checkpoints_generator.delivered(now, destination, pod)
-                            if self._append_checkpoint_if_new(checkpoints, line):
+                            line = self.checkpoints_generator.delivered(sim_now, destination, pod)
+                            if self._add_checkpoint(checkpoints, line, seen_keys):
                                 self.hooks.on_checkpoint_added(line)
                                 current_status = "Delivered"
                                 self._commit(checkpoints, "Delivered", Stage.DELIVERED, 1.0, destination, lat, lon)
@@ -596,17 +610,16 @@ class SimulationRunner:
                                 return
 
             self.hooks.broadcast()
-            tick = self._scaled_sleep(TICK_SECONDS_MIN, TICK_SECONDS_MAX, speed_multiplier)
-            self.hooks.sleep(tick)
 
         # sim_days cap reached without delivering
         live = self.hooks.get_live_shipment()
         if live and live.status not in ("Delivered", "Returned"):
             final_status = "Delivered" if delivery_attempts < plan.max_delivery_attempts else "Exception"
+            sim_now = sim_start_time + elapsed_sim
             line = self.checkpoints_generator.delivered(
-                self.hooks.now(), destination, self.hooks.generate_pod()
-            ) if final_status == "Delivered" else self.checkpoints_generator.returned(self.hooks.now(), origin)
-            if self._append_checkpoint_if_new(checkpoints, line):
+                sim_now, destination, self.hooks.generate_pod()
+            ) if final_status == "Delivered" else self.checkpoints_generator.returned(sim_now, origin)
+            if self._add_checkpoint(checkpoints, line, seen_keys):
                 self.hooks.on_checkpoint_added(line)
             self._commit(checkpoints, final_status,
                          Stage.DELIVERED if final_status == "Delivered" else Stage.EXCEPTION,
