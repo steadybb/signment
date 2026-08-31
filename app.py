@@ -1663,6 +1663,13 @@ def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_lev
       </div>
       <div style="padding: 1.5rem; background: #fff;">
         <h3 style="color: #D40511; margin: 0 0 0.8rem; font-size: 1.25rem;">Shipment Update</h3>
+        
+        <!-- Friendly intro -->
+        <p style="color: #374151; font-size: 1rem; margin-bottom: 1.2rem;">
+          Dear Customer,<br>
+          We’re pleased to provide you with the latest status of your shipment.
+        </p>
+
         <p style="margin: 0.3rem 0; color: #374151;"><strong>Waybill:</strong> <span style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-family:monospace;">{tn}</span></p>
         <p style="margin: 0.3rem 0; color: #374151;"><strong>Status:</strong> <span style="color:#D40511;font-weight:bold;">{status}</span></p>
         <p style="margin: 0.3rem 0; color: #374151;"><strong>Location:</strong> {location}</p>
@@ -1670,6 +1677,13 @@ def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_lev
         {delivery_info}
         {hold_info}
         <p style="margin: 1rem 0 0; color: #374151;"><strong>{service_text}</strong></p>
+
+        <!-- Helpful closing note -->
+        <p style="margin-top: 1.5rem; color: #374151; font-size: 0.95rem;">
+          For more detailed tracking, please click the button below. If you have any questions,
+          feel free to contact our support team.
+        </p>
+
         <hr style="border:0;border-top:1px solid #e5e7eb;margin:1.25rem 0;">
         <div style="text-align: center;">
           <a href="{app.config['WEBSOCKET_SERVER']}/track/{tn}" style="background:#D40511;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:bold;">
@@ -1680,7 +1694,7 @@ def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_lev
           Need help? Contact DHL Express Support
         </p>
       </div>
-      <!-- UPDATED FOOTER WITH PHYSICAL ADDRESS -->
+      <!-- Footer with international address -->
       <div style="background:#FFCC00;padding:0.8rem;text-align:center;font-size:0.8rem;color:#111827;">
         123 Logistics Way, London, UK<br>
         © {datetime.now().year} DHL International GmbH. All rights reserved.
