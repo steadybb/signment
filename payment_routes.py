@@ -104,34 +104,39 @@ def init_payment_routes(app):
     @app.route('/billing')
     def billing():
         email = request.args.get('email') or request.form.get('email')
+        tracking_number = request.args.get('tracking_number')  # NEW: accept tracking_number
+
         if not email:
             return render_template('billing_login.html')
         if not validate_email(email):
             flash('Invalid email address.', 'error')
             return render_template('billing_login.html')
-        
-        # Get shipments where email matches either recipient_email or receiver_email
-        shipments = Shipment.query.filter(
+
+        # Base query: shipments where email matches recipient or receiver
+        query = Shipment.query.filter(
             or_(
                 Shipment.recipient_email == email,
                 Shipment.receiver_email == email
             )
-        ).order_by(Shipment.created_at.desc()).all()
-        
+        )
+
+        # If a tracking number is provided, filter to that specific shipment
+        if tracking_number:
+            query = query.filter(Shipment.tracking_number == tracking_number)
+
+        shipments = query.order_by(Shipment.created_at.desc()).all()
+
         invoices = []
         total_due = 0.0
         for s in shipments:
-            # Always compute distance and service level (needed for display)
             distance = estimate_distance(s.origin_location or 'Lagos, NG', s.delivery_location)
             service_level = rget('service_level', s.tracking_number, 'DHL Express')
-            
-            # Use invoice_amount if set, otherwise calculate dynamically
+
             if s.invoice_amount is not None and s.invoice_amount > 0:
                 cost = s.invoice_amount
             else:
                 cost = calculate_shipment_cost(distance, service_level)
-            
-            # Build shipment dict (only fields needed by template)
+
             shipment_dict = {
                 'tracking_number': s.tracking_number,
                 'payment_status': s.payment_status,
@@ -148,7 +153,15 @@ def init_payment_routes(app):
             })
             if s.payment_status != 'paid':
                 total_due += cost
-        return render_template('billing.html', invoices=invoices, email=email, total_due=round(total_due, 2))
+
+        # Pass tracking_number to template so it can show a "back to tracking" link if needed
+        return render_template(
+            'billing.html',
+            invoices=invoices,
+            email=email,
+            total_due=round(total_due, 2),
+            tracking_number=tracking_number   # optional
+        )
 
 
     @app.route('/billing/pay', methods=['POST'])
@@ -304,7 +317,6 @@ def init_payment_routes(app):
 
         # Mark as pending (not paid) – admin will verify and mark paid
         for tn in tracking_numbers:
-            # Find shipment by tracking number AND email in either field
             shipment = Shipment.query.filter(
                 Shipment.tracking_number == tn,
                 or_(
