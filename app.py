@@ -94,13 +94,13 @@ except Exception:
 RAPIDFUZZ_THRESHOLD = int(os.getenv('RAPIDFUZZ_THRESHOLD', '70'))
 
 HIGH_VALUE_TRANSLITERATION_MAP = {
-    'רחובות': 'Rehovot, IL',
+‎    'רחובות': 'Rehovot, IL',
     'rehovot': 'Rehovot, IL',
-    'תל אביב': 'Tel Aviv, IL',
-    'תל-אביב': 'Tel Aviv, IL',
-    'תלאביב': 'Tel Aviv, IL',
-    'מדריד': 'Madrid, ES',
-    'לונדון': 'London, UK',
+‎    'תל אביב': 'Tel Aviv, IL',
+‎    'תל-אביב': 'Tel Aviv, IL',
+‎    'תלאביב': 'Tel Aviv, IL',
+‎    'מדריד': 'Madrid, ES',
+‎    'לונדון': 'London, UK',
 }
 from collections import deque, defaultdict
 
@@ -114,19 +114,15 @@ def get_working_database_uri(configured_uri):
     Test the configured database URI. If it works, return it.
     Otherwise, fall back to SQLite.
     """
-    # If already SQLite, no need to test
     if configured_uri and configured_uri.startswith('sqlite'):
         logging.info(f"Using SQLite database: {configured_uri}")
         return configured_uri
 
-    # If no URI is provided, skip test and go straight to SQLite
     if not configured_uri:
         logging.warning("No DATABASE_URI configured. Using SQLite fallback.")
         return 'sqlite:///app_fallback.db'
 
-    # Attempt to connect to the primary database
     try:
-        # Set a short timeout for PostgreSQL connections
         connect_args = {}
         if 'postgresql' in configured_uri:
             connect_args = {'connect_timeout': 5}
@@ -141,8 +137,7 @@ def get_working_database_uri(configured_uri):
         return 'sqlite:///app_fallback.db'
 
 # ============================================================
-# FIX: Move KNOWN_LOCATION_COORDS to the very top
-# so it's available to all functions.
+# KNOWN_LOCATION_COORDS (full dictionary)
 # ============================================================
 KNOWN_LOCATION_COORDS = {
     "Dublin, IE": {"lat": 53.349805, "lon": -6.26031},
@@ -384,9 +379,8 @@ except Exception:
     pass
 
 # ============================================================
-# End of moved KNOWN_LOCATION_COORDS
+# Imports from utils
 # ============================================================
-
 from utils import (
     redis_client, get_redis_client, get_redis_metrics, console, enqueue_notification,
     can_start_simulation, register_simulation_start, register_simulation_stop,
@@ -399,16 +393,14 @@ from utils import (
     Shipment as UtilsShipment, estimate_distance, generate_unique_id, search_shipments, get_recent_logs,
     should_send_email, add_socket_event, recent_socket_events, add_client_error, recent_client_errors,
     EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES,
-    # Redis helper functions
     rget, rset, rkeys, rhgetall, rlist_lpop, rexists, rhlen,
-    in_memory_clients, in_memory_sim
+    in_memory_clients, in_memory_sim,
+    SIMULATOR_THREAD_LIMIT, _simulator_thread_count
 )
-
-# We DO NOT import spawn_simulation from utils – we define our own below.
 
 from simulator_engine import SimulationRunner, RunnerHooks, Stage
 
-# ========== NEW: Import payment routes module ==========
+# ========== Import payment routes ==========
 import payment_routes
 
 app = utils_app
@@ -420,20 +412,20 @@ secret = app.config.get('SECRET_KEY', '')
 if not secret or secret == 'your-secret-key':
     raise ValueError("SECRET_KEY must be set to a secure random value")
 
-# ========== FIX: Add Telegram admin chat ID to app config ==========
+# ========== Telegram admin chat ID ==========
 app.config['TELEGRAM_ADMIN_CHAT_ID'] = os.getenv('TELEGRAM_ADMIN_CHAT_ID')
 
-# ========== ADD SESSION SECURITY (FIX) ==========
+# ========== SESSION SECURITY (FIX: SECURE conditional) ==========
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=True,   # Set to False if not using HTTPS
+    SESSION_COOKIE_SECURE=os.getenv('SESSION_COOKIE_SECURE', 'false').lower() == 'true',
     SESSION_COOKIE_SAMESITE='Lax',
 )
 
 # ========== Register payment routes ==========
 payment_routes.init_payment_routes(app)
 
-# ========== Context processor for templates ==========
+# ========== Context processor ==========
 @app.context_processor
 def utility_processor():
     from datetime import datetime
@@ -453,11 +445,12 @@ def _sync_limiter_enabled_state():
     if 'limiter' in globals():
         limiter.enabled = not app.testing
 
+# ====== FIX: Limiter with defaults ======
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=app.config['RATELIMIT_DEFAULTS'],
-    storage_uri=app.config['RATELIMIT_STORAGE_URI'],
+    default_limits=app.config.get('RATELIMIT_DEFAULTS', ['200 per day', '50 per hour']),
+    storage_uri=app.config.get('RATELIMIT_STORAGE_URI', 'memory://'),
     request_identifier=limiter_request_identifier,
     auto_check=False,
     enabled=not app.testing
@@ -480,7 +473,6 @@ def exempt_internal_endpoints():
     )
 
 async_mode = 'eventlet' if hasattr(eventlet, 'sleep') and eventlet.__class__.__name__ != '_FallbackEventlet' else 'threading'
-# FIX: Configure SocketIO message queue for cross-worker communication
 redis_url = (
     app.config.get('REDIS_URL') or
     os.getenv('REDIS_URL') or
@@ -500,7 +492,20 @@ cache = Cache(app, config=cache_config)
 flask_logger = logging.getLogger('flask_app')
 sim_logger = logging.getLogger('simulator')
 
-# FIX: Move in-memory caches to Redis
+# ====== Thread-safe geocode rate limiter ======
+_geocode_rate_limiter_lock = threading.Lock()
+geocode_rate_limiter = defaultdict(list)
+
+def rate_limit_geocode(api_name, min_interval=1.0):
+    now = time.time()
+    with _geocode_rate_limiter_lock:
+        geocode_rate_limiter[api_name] = [t for t in geocode_rate_limiter[api_name] if now - t < 60]
+        if geocode_rate_limiter[api_name]:
+            last_call = geocode_rate_limiter[api_name][-1]
+            if now - last_call < min_interval:
+                time.sleep(min_interval - (now - last_call))
+        geocode_rate_limiter[api_name].append(time.time())
+
 def get_geocode_cache_key(loc):
     return f"geocode_cache:{loc}"
 
@@ -540,18 +545,7 @@ def set_sim_last_broadcast(tn, timestamp):
     except Exception:
         pass
 
-geocode_rate_limiter = defaultdict(list)
-
-def rate_limit_geocode(api_name, min_interval=1.0):
-    now = time.time()
-    if api_name in geocode_rate_limiter:
-        geocode_rate_limiter[api_name] = [t for t in geocode_rate_limiter[api_name] if now - t < 60]
-        if geocode_rate_limiter[api_name]:
-            last_call = geocode_rate_limiter[api_name][-1]
-            if now - last_call < min_interval:
-                time.sleep(min_interval - (now - last_call))
-    geocode_rate_limiter[api_name].append(time.time())
-
+# ====== Geocoding fallback functions ======
 def geoapify_geocode_fallback(address):
     api_key = (
         app.config.get('GEOAPIFY_API_KEY') or
@@ -924,9 +918,7 @@ def json_error_response(message, status_code=400, details=None):
         response["details"] = details
     return jsonify(response), status_code
 
-# ========== Database URI Configuration with Fallback ==========
-# (REMOVED – now handled in utils.py before SQLAlchemy creation)
-
+# ========== Database Initialisation (FIX: dialect-agnostic) ==========
 class TrackForm(FlaskForm):
     tracking_number = StringField('Tracking Number', validators=[DataRequired()])
     email = StringField('Email (Optional)')
@@ -936,33 +928,35 @@ def init_db():
     with app.app_context():
         db.create_all()
         engine = db.engine
+        inspector = inspect(engine)
+        # For SQLite we use a different approach (PRAGMA)
         if engine.dialect.name == 'sqlite':
             try:
                 conn = engine.connect()
                 existing = {row['name'] for row in conn.execute(text("PRAGMA table_info(shipments)")).mappings()}
                 alterations = [
-                    ("carrier", "ALTER TABLE shipments ADD COLUMN carrier VARCHAR(20) DEFAULT 'DHL';"),
-                    ("origin_lat", "ALTER TABLE shipments ADD COLUMN origin_lat REAL;"),
-                    ("origin_lon", "ALTER TABLE shipments ADD COLUMN origin_lon REAL;"),
-                    ("delivery_lat", "ALTER TABLE shipments ADD COLUMN delivery_lat REAL;"),
-                    ("delivery_lon", "ALTER TABLE shipments ADD COLUMN delivery_lon REAL;"),
-                    ("sender_name", "ALTER TABLE shipments ADD COLUMN sender_name VARCHAR(100);"),
-                    ("sender_location", "ALTER TABLE shipments ADD COLUMN sender_location VARCHAR(200);"),
-                    ("receiver_name", "ALTER TABLE shipments ADD COLUMN receiver_name VARCHAR(100);"),
-                    ("receiver_address", "ALTER TABLE shipments ADD COLUMN receiver_address VARCHAR(200);"),
-                    ("receiver_phone", "ALTER TABLE shipments ADD COLUMN receiver_phone VARCHAR(30);"),
-                    ("receiver_email", "ALTER TABLE shipments ADD COLUMN receiver_email VARCHAR(120);"),
-                    ("weight_kg", "ALTER TABLE shipments ADD COLUMN weight_kg REAL;"),
-                    ("shipment_date", "ALTER TABLE shipments ADD COLUMN shipment_date DATETIME;"),
-                    ("invoice_amount", "ALTER TABLE shipments ADD COLUMN invoice_amount REAL;"),
-                    ("payment_method", "ALTER TABLE shipments ADD COLUMN payment_method VARCHAR(50);"),
-                    ("payment_status", "ALTER TABLE shipments ADD COLUMN payment_status VARCHAR(20) DEFAULT 'unpaid';"),
-                    ("payment_reason", "ALTER TABLE shipments ADD COLUMN payment_reason TEXT;"),
+                    ("carrier", "VARCHAR(20) DEFAULT 'DHL'"),
+                    ("origin_lat", "REAL"),
+                    ("origin_lon", "REAL"),
+                    ("delivery_lat", "REAL"),
+                    ("delivery_lon", "REAL"),
+                    ("sender_name", "VARCHAR(100)"),
+                    ("sender_location", "VARCHAR(200)"),
+                    ("receiver_name", "VARCHAR(100)"),
+                    ("receiver_address", "VARCHAR(200)"),
+                    ("receiver_phone", "VARCHAR(30)"),
+                    ("receiver_email", "VARCHAR(120)"),
+                    ("weight_kg", "REAL"),
+                    ("shipment_date", "DATETIME"),
+                    ("invoice_amount", "REAL"),
+                    ("payment_method", "VARCHAR(50)"),
+                    ("payment_status", "VARCHAR(20) DEFAULT 'unpaid'"),
+                    ("payment_reason", "TEXT"),
                 ]
-                for col, stmt in alterations:
+                for col, definition in alterations:
                     if col not in existing:
                         try:
-                            conn.execute(text(stmt))
+                            conn.execute(text(f"ALTER TABLE shipments ADD COLUMN {col} {definition}"))
                         except Exception as e:
                             flask_logger.warning(f"SQLite column add failed for {col}: {e}")
                 conn.commit()
@@ -971,37 +965,39 @@ def init_db():
                 flask_logger.warning(f"SQLite DB init failed: {e}")
             return
 
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                if inspectors := inspect(engine):
-                    if 'shipments' not in inspectors.get_table_names():
-                        db.create_all()
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier VARCHAR(20) DEFAULT 'DHL';"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS origin_lat REAL;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS origin_lon REAL;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS delivery_lat REAL;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS delivery_lon REAL;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS sender_name VARCHAR(100);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS sender_location VARCHAR(200);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_name VARCHAR(100);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_address VARCHAR(200);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_phone VARCHAR(30);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS receiver_email VARCHAR(120);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS weight_kg REAL;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS shipment_date DATETIME;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS invoice_amount REAL;"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50);"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'unpaid';"))
-                    db.session.execute(text("ALTER TABLE shipments ADD COLUMN IF NOT EXISTS payment_reason TEXT;"))
-                    db.session.commit()
-                    flask_logger.info("DB initialized with new shipment fields")
-                    return
-                sleep(5 * (2 ** attempt))
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise
-    raise Exception("DB init failed")
+        # Non‑SQLite: use introspection to add missing columns
+        if 'shipments' not in inspector.get_table_names():
+            db.create_all()
+            # Re‑inspect after creation
+            inspector = inspect(engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('shipments')]
+        required_columns = {
+            'carrier': "VARCHAR(20) DEFAULT 'DHL'",
+            'origin_lat': "REAL",
+            'origin_lon': "REAL",
+            'delivery_lat': "REAL",
+            'delivery_lon': "REAL",
+            'sender_name': "VARCHAR(100)",
+            'sender_location': "VARCHAR(200)",
+            'receiver_name': "VARCHAR(100)",
+            'receiver_address': "VARCHAR(200)",
+            'receiver_phone': "VARCHAR(30)",
+            'receiver_email': "VARCHAR(120)",
+            'weight_kg': "REAL",
+            'shipment_date': "DATETIME",
+            'invoice_amount': "REAL",
+            'payment_method': "VARCHAR(50)",
+            'payment_status': "VARCHAR(20) DEFAULT 'unpaid'",
+            'payment_reason': "TEXT",
+        }
+        for col, definition in required_columns.items():
+            if col not in existing_columns:
+                try:
+                    db.session.execute(text(f"ALTER TABLE shipments ADD COLUMN {col} {definition}"))
+                except Exception as e:
+                    flask_logger.warning(f"Column add failed for {col}: {e}")
+        db.session.commit()
+        flask_logger.info("DB initialized with all required columns.")
 
 def verify_recaptcha(token):
     secret = app.config.get('RECAPTCHA_SECRET_KEY')
@@ -1112,34 +1108,22 @@ def geocode_locations(checkpoints):
     return coords
 
 # ============================================================
-# FIXED: Atomic simulation spawn using Redis SETNX
-# No importlib, no original_spawn, no active_simulations set.
-# Now properly integrates with utils' thread counter.
+# FIXED: Atomic simulation spawn with Redis SETNX
 # ============================================================
 def spawn_simulation(tn):
-    """
-    Spawn a simulation only if one is not already running for this tracking number.
-    Uses an atomic Redis lock (SETNX) and holds the lock for the entire simulation.
-    Also respects the global thread limit via register_simulation_start/stop.
-    """
     lock_key = f"sim_lock:{tn}"
-
-    # Attempt to acquire the lock atomically
     if redis_client:
         try:
             if not redis_client.setnx(lock_key, "1"):
                 flask_logger.debug(f"⏭️ Simulation already active for {tn}, skipping spawn")
                 return
-            # 7-day TTL – safety net for crashes; normal release happens in finally
             redis_client.expire(lock_key, 7 * 86400)
             flask_logger.debug(f"🔒 Acquired sim lock for {tn}")
         except Exception as e:
             flask_logger.warning(f"Redis SETNX failed for {tn}: {e}, proceeding without lock")
-            # No lock – proceed anyway (best‑effort)
     else:
         flask_logger.warning(f"No Redis client – proceeding without lock for {tn}")
 
-    # Register with the global thread counter – if limit reached, abort
     if not register_simulation_start():
         flask_logger.debug(f"⏸️ Thread limit reached for {tn}, skipping spawn")
         if redis_client:
@@ -1152,12 +1136,10 @@ def spawn_simulation(tn):
     def wrapped():
         try:
             flask_logger.info(f"🚀 Starting simulation for {tn}")
-            # Blocking call – simulation runs here; lock held until it finishes
             simulate_tracking(tn)
         except Exception as e:
             flask_logger.error(f"❌ Simulation error for {tn}: {e}")
         finally:
-            # Always release the lock and decrement the thread counter
             register_simulation_stop()
             if redis_client:
                 try:
@@ -1167,12 +1149,10 @@ def spawn_simulation(tn):
                     flask_logger.warning(f"Failed to release sim lock for {tn}: {e}")
             flask_logger.info(f"🏁 Simulation finished for {tn}")
 
-    # Start the thread/eventlet spawn
     if hasattr(eventlet, 'spawn'):
         eventlet.spawn(wrapped)
     else:
         threading.Thread(target=wrapped, daemon=True).start()
-# ============================================================
 
 def normalize_location(loc):
     if not loc:
@@ -1203,7 +1183,6 @@ def normalize_location(loc):
                     elif display:
                         normalized = display
         else:
-            # FIX: Use proper Nominatim URL
             url = "https://nominatim.openstreetmap.org/search"
             params = {'q': loc, 'format': 'json', 'limit': 1}
             headers = {'User-Agent': 'DHL-Tracking-System/2.0'}
@@ -1218,9 +1197,6 @@ def normalize_location(loc):
                         normalized = f"{parts[0]}, {parts[1]}" if len(parts) >= 2 else display
     except Exception:
         normalized = loc
-    # The following line was a no‑op and has been removed.
-    # if normalized in KNOWN_LOCATION_COORDS:
-    #     normalized = normalized
     try:
         if redis_client:
             redis_client.set(cache_key, normalized, ex=86400)
@@ -1324,6 +1300,7 @@ def process_notification_queue():
         except Exception as e:
             flask_logger.error(f"Queue error: {e}")
 
+# ====== FIX: cleanup_websocket_clients with safe key decoding ======
 def cleanup_websocket_clients():
     while True:
         eventlet.sleep(3600)
@@ -1331,10 +1308,10 @@ def cleanup_websocket_clients():
             if redis_client:
                 for key in redis_client.scan_iter("clients:*"):
                     try:
-                        if isinstance(key, bytes):
-                            tn = key.decode().split(":", 1)[1]
-                        else:
-                            tn = str(key).split(":", 1)[1]
+                        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                        if ':' not in key_str:
+                            continue
+                        tn = key_str.split(":", 1)[1]
                         for sid in redis_client.smembers(key):
                             try:
                                 socketio.emit('ping', room=sid)
@@ -1717,7 +1694,6 @@ def simulate_tracking(tn):
         flask_logger.error(f"Simulation error for {tn}: {e}")
         raise
     finally:
-        # The lock and thread counter are released in spawn_simulation's wrapped function.
         pass
 
 def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_level=None, delivery_window=None):
@@ -1795,10 +1771,12 @@ def enqueue_dhl_email(tn, status, latest_checkpoint, destination, service_level=
         }
     })
 
+# ====== FIX: SMTP with timeout and socket default ======
 def open_smtp_connection(timeout=None):
     host = app.config['SMTP_HOST']
     port = int(app.config['SMTP_PORT'])
     timeout = timeout or int(os.getenv('SMTP_TIMEOUT', '120'))
+    socket.setdefaulttimeout(timeout)
     if port == 465:
         server = smtplib.SMTP_SSL(host, port, timeout=timeout)
     else:
@@ -1807,7 +1785,6 @@ def open_smtp_connection(timeout=None):
     server.login(app.config['SMTP_USER'], app.config['SMTP_PASS'])
     return server
 
-# Helper to check SMTP hostname resolvability
 def _is_smtp_host_resolvable(hostname):
     if not hostname:
         return False
@@ -1839,14 +1816,12 @@ def send_email_via_resend(recipient, subject, html_body=None, plain_body=None):
     return True
 
 def send_email_via_smtp(recipient, subject, html_body=None, plain_body=None):
-    # Check configuration
     smtp_host = app.config.get('SMTP_HOST')
     smtp_user = app.config.get('SMTP_USER')
     smtp_pass = app.config.get('SMTP_PASS')
     if not all([smtp_host, smtp_user, smtp_pass]):
         flask_logger.warning("SMTP not fully configured, skipping")
         return False
-    # Check DNS resolution before attempting
     if not _is_smtp_host_resolvable(smtp_host):
         flask_logger.error(f"SMTP host '{smtp_host}' cannot be resolved - check your SMTP_HOST setting")
         return False
@@ -1894,7 +1869,6 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
 
     resend_key = app.config.get('RESEND_API_KEY')
     smtp_configured = all([app.config.get('SMTP_HOST'), app.config.get('SMTP_USER'), app.config.get('SMTP_PASS')])
-    # Also check if SMTP host is resolvable, otherwise treat as not configured
     if smtp_configured and not _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
         flask_logger.error(f"SMTP host '{app.config.get('SMTP_HOST')}' not resolvable – disabling SMTP for this attempt")
         smtp_configured = False
@@ -1968,6 +1942,7 @@ def get_route_coords_for_shipment(shipment):
     set_cached_route_coords(shipment.tracking_number, result)
     return result
 
+# ====== FIX: broadcast_update – guard WEBSOCKET_SERVER ======
 def broadcast_update(tn):
     shipment = Shipment.query.filter_by(tracking_number=tn).first()
     if not shipment:
@@ -2000,8 +1975,6 @@ def broadcast_update(tn):
     current_lon = rget('current_lon', tn, None)
     stage = rget('stage', tn, 'pickup') or 'pickup'
     checkpoints = (shipment.checkpoints or "").split(";")
-
-    # FIX: current_checkpoint_index should be the last checkpoint index
     current_checkpoint_index = len(checkpoints) - 1 if checkpoints else 0
 
     data = {
@@ -2029,21 +2002,23 @@ def broadcast_update(tn):
         "payment_reason": payment_reason
     }
     try:
-        # FIX: emit only to clients subscribed to this tracking number
         socketio.emit('tracking_update', data, namespace='/', room=tn)
     except TypeError:
         try:
             socketio.emit('tracking_update', data, namespace='/', room=tn)
         except Exception as e:
             flask_logger.warning(f"Socket emit failed for {tn}: {e}")
-    websocket_server = app.config.get('WEBSOCKET_SERVER', '')
-    try:
-        parsed_ws = urlparse(websocket_server)
-        if parsed_ws.scheme and parsed_ws.hostname and parsed_ws.hostname not in ('localhost', '127.0.0.1'):
-            webhook_url = f"{websocket_server.rstrip('/')}/notify"
-            requests.post(webhook_url, json=data, timeout=2)
-    except Exception as e:
-        flask_logger.debug(f"Webhook notify skipped for {tn}: {e}")
+
+    # Guard WEBSOCKET_SERVER
+    websocket_server = app.config.get('WEBSOCKET_SERVER')
+    if websocket_server:
+        try:
+            parsed_ws = urlparse(websocket_server)
+            if parsed_ws.scheme and parsed_ws.hostname and parsed_ws.hostname not in ('localhost', '127.0.0.1'):
+                webhook_url = f"{websocket_server.rstrip('/')}/notify"
+                requests.post(webhook_url, json=data, timeout=2)
+        except Exception as e:
+            flask_logger.debug(f"Webhook notify skipped for {tn}: {e}")
 
 def admin_required(f):
     @wraps(f)
@@ -2226,7 +2201,6 @@ def track_direct(tracking_number):
     current_lon = rget('current_lon', tn, None)
     stage = rget('stage', tn, 'pickup') or 'pickup'
     checkpoints = (shipment.checkpoints or "").split(";")
-    # FIX: use last checkpoint index
     current_checkpoint_index = len(checkpoints) - 1 if checkpoints else 0
     return render_template(
         'tracking_result.html',
@@ -2282,7 +2256,6 @@ def websocket_notify():
             socketio.emit('tracking_update', data, namespace='/', room=tn)
             flask_logger.info(f'External notify payload delivered for {tn}')
         else:
-            # fallback: emit globally if no tn (should not happen)
             socketio.emit('tracking_update', data, namespace='/')
             flask_logger.info('External notify payload delivered globally (no tracking number)')
         return jsonify({'success': True}), 200
@@ -2315,7 +2288,6 @@ def health_check():
                 status['smtp'] = 'unconfigured'
                 flask_logger.warning("Resend email provider is not configured")
         elif app.config.get('SMTP_HOST') and app.config.get('SMTP_USER') and app.config.get('SMTP_PASS'):
-            # check resolvability
             if _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
                 with open_smtp_connection() as s:
                     s.noop()
@@ -2335,7 +2307,6 @@ def health_check():
 @app.route('/debug/tn/<tracking_number>')
 @admin_required
 def debug_tracking_number(tracking_number):
-    # IP guard removed – @admin_required provides sufficient protection.
     tn = sanitize_tracking_number(tracking_number)
     if not tn:
         return json_error_response("Invalid tracking number", 400)
@@ -2624,6 +2595,7 @@ def generate_dhl_tracking():
     digits = ''.join(random.choices(string.digits, k=10))
     return f"{prefix}{digits}"
 
+# ====== FIX: sim_days parsing simplified ======
 @app.route('/admin/api/shipment/<tn>')
 @admin_required
 def api_shipment_detail(tn):
@@ -2641,7 +2613,12 @@ def api_shipment_detail(tn):
     service_level = rget("service_level", tn, "DHL Express") or "DHL Express"
     delivery_window = rget("delivery_window", tn, "") or ""
     proof_of_delivery = rget("proof_of_delivery", tn, "") or ""
-    sim_days = rget("sim_days", tn, os.getenv('SIM_DEFAULT_DAYS', '10')) or os.getenv('SIM_DEFAULT_DAYS', '10')
+    sim_days_raw = rget("sim_days", tn, os.getenv('SIM_DEFAULT_DAYS', '10'))
+    try:
+        sim_days = float(sim_days_raw)
+    except (TypeError, ValueError):
+        sim_days = 10.0
+    sim_days = max(1.0, min(365.0, sim_days))
     temperature = rget("temperature", tn, None)
     current_lat = rget('current_lat', tn, None)
     current_lon = rget('current_lon', tn, None)
@@ -2667,7 +2644,7 @@ def api_shipment_detail(tn):
         'service_level': service_level,
         'delivery_window': delivery_window,
         'proof_of_delivery': proof_of_delivery,
-        'sim_days': float(sim_days) if str(sim_days).replace('.', '', 1).isdigit() else 10.0,
+        'sim_days': sim_days,
         'temperature': temperature,
         'progress': progress,
         'current_lat': float(current_lat) if current_lat is not None else None,
@@ -2924,6 +2901,9 @@ def admin_geocoding_status():
         'rate_limiter_status': {api: len(timestamps) for api, timestamps in geocode_rate_limiter.items()}
     })
 
+# ====== FIX: create_shipment_record with timezone and dateutil ======
+from dateutil import parser as date_parser
+
 def create_shipment_record(origin, destination, recipient_email=None, service_level='DHL Express',
                            sender_name=None, sender_location=None,
                            receiver_name=None, receiver_address=None, receiver_phone=None,
@@ -2942,17 +2922,17 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
     tracking_number = generate_dhl_tracking()
     while Shipment.query.filter_by(tracking_number=tracking_number).first():
         tracking_number = generate_dhl_tracking()
-    now = datetime.now()
-    if isinstance(shipment_date, str):
+    now = datetime.now(timezone.utc)
+    if shipment_date:
         try:
-            shipment_date = datetime.fromisoformat(shipment_date.replace('Z', '+00:00'))
-        except ValueError:
-            try:
-                shipment_date = datetime.strptime(shipment_date, '%Y-%m-%dT%H:%M')
-            except ValueError:
-                shipment_date = now
-    elif shipment_date is None:
-        shipment_date = now
+            shipment_date = date_parser.isoparse(shipment_date)
+            if shipment_date.tzinfo:
+                shipment_date = shipment_date.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception:
+            shipment_date = now.replace(tzinfo=None)
+    else:
+        shipment_date = now.replace(tzinfo=None)
+
     norm_origin, origin_coords = resolve_location(origin)
     norm_destination, dest_coords = resolve_location(destination)
     if not origin_coords or not dest_coords:
@@ -2961,6 +2941,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
             failed_locations.append(f"origin '{origin}'")
         if not dest_coords:
             failed_locations.append(f"destination '{destination}'")
+        # Helper function (unchanged)
         import re, unicodedata
         def _simplify_to_city_cc(addr):
             if not addr or not isinstance(addr, str):
@@ -3093,6 +3074,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         if not salvaged:
             flask_logger.warning("Shipment geocoding failed: %s (GEOCODING_API_KEY configured=%s)", ', '.join(failed_locations), bool(app.config.get('GEOCODING_API_KEY')))
             return {'error': 'Unable to resolve location coordinates', 'error_code': 'geocoding_failed', 'details': f"Could not resolve {', '.join(failed_locations)}. Use 'City, Country Code' or configure GEOCODING_API_KEY."}, 400
+
     checkpoints = f"{now.strftime('%Y-%m-%d %H:%M')} - {norm_origin} - Shipment information received"
     shipment = Shipment(
         tracking_number=tracking_number,
@@ -3104,9 +3086,9 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         delivery_location=norm_destination,
         delivery_lat=dest_coords.get('lat') if dest_coords else None,
         delivery_lon=dest_coords.get('lon') if dest_coords else None,
-        last_updated=now,
+        last_updated=now.replace(tzinfo=None),
         recipient_email=recipient_email or '',
-        created_at=now,
+        created_at=now.replace(tzinfo=None),
         carrier='DHL',
         email_notifications=bool(recipient_email),
         sender_name=sender_name,
@@ -3125,6 +3107,7 @@ def create_shipment_record(origin, destination, recipient_email=None, service_le
         db.session.rollback()
         flask_logger.error(f"Failed to save shipment {tracking_number}: {e}")
         return {'error': 'Failed to save shipment to database', 'error_code': 'db_save_failed'}, 500
+
     distance = None
     try:
         if origin_coords and dest_coords:
@@ -3413,7 +3396,6 @@ def on_disconnect():
     if redis_client:
         for key in redis_client.scan_iter("clients:*"):
             try:
-                # handle both bytes and string keys
                 key_str = key.decode() if isinstance(key, bytes) else key
                 tn = key_str.split(":", 1)[1]
                 remove_client(tn, request.sid)
@@ -3443,7 +3425,6 @@ def on_request(data):
         emit('tracking_update', {'error': 'Not found'})
         return
     add_client(tn, request.sid)
-    # FIX: join room for this tracking number to receive updates
     join_room(tn)
     coords = get_route_coords_for_shipment(shipment)
     route_coords = build_route_from_checkpoints(coords, mode='drive')
@@ -3466,7 +3447,6 @@ def on_request(data):
     last_updated = shipment.last_updated.isoformat() if shipment.last_updated else None
     stage = rget('stage', tn, 'pickup') or 'pickup'
     checkpoints = (shipment.checkpoints or "").split(";")
-    # FIX: use last checkpoint index
     current_checkpoint_index = len(checkpoints) - 1 if checkpoints else 0
     emit('tracking_update', {
         'tracking_number': tn, 'status': shipment.status, 'delivery_location': shipment.delivery_location,
@@ -3514,14 +3494,10 @@ def start_background_services():
         except Exception:
             pass
 
-        # ========== MODIFIED: Only start keep_alive if webhook is NOT disabled ==========
-        # This prevents the web app from setting a Telegram webhook,
-        # avoiding 409 conflicts with the bot's polling mode.
         if os.getenv('DISABLE_TELEGRAM_WEBHOOK', 'false').lower() not in ('1', 'true', 'yes'):
             eventlet.spawn(keep_alive)
         else:
             flask_logger.info("Telegram webhook disabled – keep_alive not started")
-        # ===================================================================
 
         if os.getenv('ENABLE_QUEUE_PROCESSOR', '').lower() in ('1', 'true', 'yes'):
             flask_logger.info("Starting notification queue processor (enabled by ENABLE_QUEUE_PROCESSOR)")
@@ -3534,12 +3510,15 @@ def start_background_services():
             services_started = False
         raise
 
+# ====== FIX: ensure_background_services with lock ======
 @app.before_request
 def ensure_background_services():
     if app.testing or os.getenv('SKIP_BACKGROUND_SERVICES', 'false').strip().lower() in ('1', 'true', 'yes'):
         return
     if not services_started:
-        start_background_services()
+        with services_started_lock:
+            if not services_started:
+                start_background_services()
 
 @app.route('/admin/debug')
 @admin_required
