@@ -107,30 +107,6 @@ from collections import deque, defaultdict
 load_dotenv()
 
 # ============================================================
-# Database fallback function
-# ============================================================
-def get_working_database_uri(configured_uri):
-    if configured_uri and configured_uri.startswith('sqlite'):
-        logging.info(f"Using SQLite database: {configured_uri}")
-        return configured_uri
-    if not configured_uri:
-        logging.warning("No DATABASE_URI configured. Using SQLite fallback.")
-        return 'sqlite:///app_fallback.db'
-    try:
-        connect_args = {}
-        if 'postgresql' in configured_uri:
-            connect_args = {'connect_timeout': 5}
-        engine = create_engine(configured_uri, connect_args=connect_args)
-        with engine.connect() as conn:
-            conn.execute(text('SELECT 1'))
-        logging.info(f"Successfully connected to primary database: {configured_uri}")
-        return configured_uri
-    except Exception as e:
-        logging.warning(f"Failed to connect to primary database: {e}")
-        logging.warning("Falling back to SQLite.")
-        return 'sqlite:///app_fallback.db'
-
-# ============================================================
 # KNOWN_LOCATION_COORDS (full dictionary)
 # ============================================================
 KNOWN_LOCATION_COORDS = {
@@ -1335,49 +1311,6 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     dlambda = radians(lon2 - lon1)
     a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
     return round(6371 * 2 * atan2(sqrt(a), sqrt(1 - a)), 1)
-
-def estimate_distance(origin, dest):
-    if not origin or not dest:
-        return 1000
-    origin_norm, origin_coords = resolve_location(origin)
-    dest_norm, dest_coords = resolve_location(dest)
-    if origin_coords and dest_coords:
-        return haversine_distance(
-            origin_coords['lat'], origin_coords['lon'],
-            dest_coords['lat'], dest_coords['lon']
-        )
-    city_coords = {
-        "Lagos, NG": (6.5244, 3.3792), "Abuja, NG": (9.0579, 7.4951), "Port Harcourt, NG": (4.8156, 7.0498),
-        "Kano, NG": (12.0001, 8.5167), "Ibadan, NG": (7.3775, 3.9470), "Enugu, NG": (6.4584, 7.5170),
-        "New York, NY": (40.7128, -74.0060), "Los Angeles, CA": (34.0522, -118.2437), "London, UK": (51.5074, -0.1278),
-        "Dubai, UAE": (25.2048, 55.2708), "Tokyo, JP": (35.6762, 139.6503), "Sydney, AU": (-33.8688, 151.2093),
-        "Paris, FR": (48.8566, 2.3522), "Berlin, DE": (52.5200, 13.4050), "Mumbai, IN": (19.0760, 72.8777),
-        "Singapore, SG": (1.3521, 103.8198), "Hong Kong, HK": (22.3193, 114.1694), "São Paulo, BR": (-23.5505, -46.6333),
-        "Johannesburg, ZA": (-26.2041, 28.0473), "Cairo, EG": (30.0444, 31.2357), "Moscow, RU": (55.7558, 37.6173),
-        "Toronto, CA": (43.6532, -79.3832), "Mexico City, MX": (19.4326, -99.1332), "Seoul, KR": (37.5665, 126.9780),
-        "Bangkok, TH": (13.7563, 100.5018), "Jakarta, ID": (-6.2088, 106.8456), "Delhi, IN": (28.7041, 77.1025),
-        "Beijing, CN": (39.9042, 116.4074), "Shanghai, CN": (31.2304, 121.4737), "Istanbul, TR": (41.0082, 28.9784),
-        "Karachi, PK": (24.8607, 67.0011), "Buenos Aires, AR": (-34.6037, -58.3816), "Rio de Janeiro, BR": (-22.9068, -43.1729),
-        "Lima, PE": (-12.0464, -77.0428), "Bogotá, CO": (4.7110, -74.0721), "Santiago, CL": (-33.4489, -70.6693),
-        "Cape Town, ZA": (-33.9249, 18.4241), "Nairobi, KE": (-1.2921, 36.8219), "Accra, GH": (5.6037, -0.1870),
-        "Addis Ababa, ET": (8.9806, 38.7578), "Kuala Lumpur, MY": (3.1390, 101.6869), "Hanoi, VN": (21.0285, 105.8342),
-        "Manila, PH": (14.5995, 120.9842), "Taipei, TW": (25.0330, 121.5654), "Riyadh, SA": (24.7136, 46.6753),
-        "Tel Aviv, IL": (32.0853, 34.7818), "Athens, GR": (37.9838, 23.7275), "Lisbon, PT": (38.7223, -9.1393),
-        "Stockholm, SE": (59.3293, 18.0686), "Oslo, NO": (59.9139, 10.7522), "Helsinki, FI": (60.1699, 24.9384),
-        "Warsaw, PL": (52.2297, 21.0122), "Prague, CZ": (50.0755, 14.4378), "Budapest, HU": (47.4979, 19.0402),
-        "Vienna, AT": (48.2082, 16.3738), "Zurich, CH": (47.3769, 8.5417), "Amsterdam, NL": (52.3676, 4.9041),
-        "Brussels, BE": (50.8476, 4.3572), "Dublin, IE": (53.3498, -6.2603), "Madrid, ES": (40.4168, -3.7038),
-        "Rome, IT": (41.9028, 12.4964), "Milan, IT": (45.4642, 9.1900), "Barcelona, ES": (41.3851, 2.1734)
-    }
-    origin_lower = origin.lower()
-    dest_lower = dest.lower()
-    origin_key = next((k for k in city_coords if origin_lower in k.lower() or k.lower().startswith(origin_lower)), None)
-    dest_key = next((k for k in city_coords if dest_lower in k.lower() or k.lower().startswith(dest_lower)), None)
-    if not origin_key or not dest_key:
-        return 1000
-    lat1, lon1 = city_coords[origin_key]
-    lat2, lon2 = city_coords[dest_key]
-    return haversine_distance(lat1, lon1, lat2, lon2)
 
 class DHLRealisticSimulator:
     STATUS_CODES = {
