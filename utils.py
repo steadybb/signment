@@ -437,7 +437,7 @@ DHL_CONFIG = {
     "name": "DHL Express",
     "primary_color": "#D40511",
     "secondary_color": "#FFCC00",
-    "logo_url": "https://www.dhl.com/etc.clientlibs/dhl/clientlibs/clientlib-site/resources/images/dhl-logo.svg",
+    "logo_url": "https://res.cloudinary.com/de1ucsg6q/image/upload/v1788186637/IMG_7797_qjmeow.jpg",
     "tracking_prefix": "JD",
     "tracking_format": r"^JD\d{10}$",
     "status_flow": {
