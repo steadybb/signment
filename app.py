@@ -925,20 +925,7 @@ def json_error_response(message, status_code=400, details=None):
     return jsonify(response), status_code
 
 # ========== Database URI Configuration with Fallback ==========
-# SECRET_KEY is required; SQLALCHEMY_DATABASE_URI is optional (fallback to SQLite)
-# (SECRET_KEY already checked above)
-
-# Determine initial URI (from env or default)
-initial_uri = app.config.get('SQLALCHEMY_DATABASE_URI')
-if not initial_uri:
-    initial_uri = 'sqlite:///app_default.db'
-    app.config['SQLALCHEMY_DATABASE_URI'] = initial_uri
-
-# Apply fallback logic
-app.config['SQLALCHEMY_DATABASE_URI'] = get_working_database_uri(initial_uri)
-flask_logger.info(f"Using database: {app.config['SQLALCHEMY_DATABASE_URI']}")
-
-# ========== End Database Configuration ==========
+# (REMOVED – now handled in utils.py before SQLAlchemy creation)
 
 class TrackForm(FlaskForm):
     tracking_number = StringField('Tracking Number', validators=[DataRequired()])
@@ -2201,15 +2188,9 @@ def track():
         invalidate_cache(tn)
     if shipment.status not in ['Delivered', 'Returned']:
         try:
-            if can_start_simulation():
-                spawn_simulation(tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping new thread for {tn}")
-        except Exception:
-            if can_start_simulation():
-                eventlet.spawn(simulate_tracking, tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
+            spawn_simulation(tn)
+        except Exception as e:
+            flask_logger.error(f"spawn_simulation raised for {tn}: {e}")
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify({'redirect': url_for('track_direct', tracking_number=tn)})
     return redirect(url_for('track_direct', tracking_number=tn))
@@ -2236,15 +2217,9 @@ def track_direct(tracking_number):
     proof_of_delivery = DHLRealisticSimulator.generate_pod_info()
     if shipment.status not in ['Delivered', 'Returned']:
         try:
-            if can_start_simulation():
-                spawn_simulation(tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping new thread for {tn}")
-        except Exception:
-            if can_start_simulation():
-                eventlet.spawn(simulate_tracking, tn)
-            else:
-                flask_logger.info(f"Simulator throttle active; skipping eventlet spawn for {tn}")
+            spawn_simulation(tn)
+        except Exception as e:
+            flask_logger.error(f"spawn_simulation raised for {tn}: {e}")
     progress = float(rget('progress', tn, '0') or '0')
     current_location = rget('current_location', tn, '') or ''
     current_lat = rget('current_lat', tn, None)
@@ -3438,7 +3413,9 @@ def on_disconnect():
     if redis_client:
         for key in redis_client.scan_iter("clients:*"):
             try:
-                tn = key.decode().split(":", 1)[1]
+                # handle both bytes and string keys
+                key_str = key.decode() if isinstance(key, bytes) else key
+                tn = key_str.split(":", 1)[1]
                 remove_client(tn, request.sid)
             except Exception:
                 continue
