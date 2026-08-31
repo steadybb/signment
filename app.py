@@ -404,6 +404,9 @@ from simulator_engine import SimulationRunner, RunnerHooks, Stage
 # ========== Import payment routes ==========
 import payment_routes
 
+# ========== Import bot handlers ==========
+from bot import register_handlers
+
 app = utils_app
 Shipment = UtilsShipment
 config = bot_config
@@ -425,6 +428,14 @@ app.config.update(
 
 # ========== Register payment routes ==========
 payment_routes.init_payment_routes(app)
+
+# ========== Register Telegram bot handlers (webhook mode) ==========
+try:
+    bot = get_bot()
+    register_handlers(bot)
+    flask_logger.info("Telegram bot handlers registered successfully.")
+except Exception as e:
+    flask_logger.error(f"Failed to register bot handlers: {e}")
 
 # ========== Context processor ==========
 @app.context_processor
