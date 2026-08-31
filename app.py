@@ -365,7 +365,8 @@ from utils import (
     EMAIL_TEST_MODE, EMAIL_ENABLED, AUTO_EMAIL_ENABLED, EMAIL_THROTTLE_MINUTES,
     rget, rset, rkeys, rhgetall, rlist_lpop, rexists, rhlen,
     in_memory_clients, in_memory_sim,
-    SIMULATOR_THREAD_LIMIT, _simulator_thread_count
+    SIMULATOR_THREAD_LIMIT, _simulator_thread_count,
+    send_email_notification  # <-- email function from utils
 )
 
 from simulator_engine import SimulationRunner, RunnerHooks, Stage
@@ -1710,130 +1711,8 @@ def enqueue_dhl_email(tn, status, latest_checkpoint, destination, service_level=
         }
     })
 
-# ====== FIX: SMTP with timeout and socket default ======
-def open_smtp_connection(timeout=None):
-    host = app.config['SMTP_HOST']
-    port = int(app.config['SMTP_PORT'])
-    timeout = timeout or int(os.getenv('SMTP_TIMEOUT', '120'))
-    socket.setdefaulttimeout(timeout)
-    if port == 465:
-        server = smtplib.SMTP_SSL(host, port, timeout=timeout)
-    else:
-        server = smtplib.SMTP(host, port, timeout=timeout)
-        server.starttls()
-    server.login(app.config['SMTP_USER'], app.config['SMTP_PASS'])
-    return server
-
-def _is_smtp_host_resolvable(hostname):
-    if not hostname:
-        return False
-    try:
-        socket.getaddrinfo(hostname, None)
-        return True
-    except socket.gaierror:
-        return False
-
-def send_email_via_resend(recipient, subject, html_body=None, plain_body=None):
-    api_key = app.config.get('RESEND_API_KEY', '')
-    if not api_key:
-        return False
-    payload = {
-        'from': app.config.get('SMTP_FROM', 'onboarding@resend.dev'),
-        'to': [recipient],
-        'subject': subject,
-        'html': html_body or f'<p>{plain_body or ""}</p>'
-    }
-    if plain_body:
-        payload['text'] = plain_body
-    response = requests.post(
-        'https://api.resend.com/emails',
-        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-        json=payload,
-        timeout=20
-    )
-    response.raise_for_status()
-    return True
-
-def send_email_via_smtp(recipient, subject, html_body=None, plain_body=None):
-    smtp_host = app.config.get('SMTP_HOST')
-    smtp_user = app.config.get('SMTP_USER')
-    smtp_pass = app.config.get('SMTP_PASS')
-    if not all([smtp_host, smtp_user, smtp_pass]):
-        flask_logger.warning("SMTP not fully configured, skipping")
-        return False
-    if not _is_smtp_host_resolvable(smtp_host):
-        flask_logger.error(f"SMTP host '{smtp_host}' cannot be resolved - check your SMTP_HOST setting")
-        return False
-
-    msg = MIMEMultipart("alternative")
-    msg['From'] = app.config['SMTP_FROM']
-    msg['To'] = recipient
-    msg['Subject'] = subject
-    if plain_body:
-        msg.attach(MIMEText(plain_body, "plain"))
-    if html_body:
-        msg.attach(MIMEText(html_body, "html"))
-    with open_smtp_connection() as server:
-        server.send_message(msg)
-    return True
-
-def _store_email_history(tracking_number, email_type, recipient, subject, message):
-    if not tracking_number:
-        return
-    try:
-        history_key = f"email_history:{tracking_number}"
-        entry = {
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'type': email_type or 'status_update',
-            'recipient': recipient,
-            'subject': subject,
-            'message': message
-        }
-        if redis_client:
-            redis_client.lpush(history_key, json.dumps(entry))
-            redis_client.ltrim(history_key, 0, 99)
-    except Exception as e:
-        flask_logger.warning(f'Failed to store email history for {tracking_number}: {e}')
-
-def send_email_notification(recipient, subject, html_body=None, plain_body=None,
-                            tracking_number=None, email_type=None, message=None):
-    if EMAIL_TEST_MODE:
-        flask_logger.info(f"📧 TEST MODE - Email would be sent to: {recipient}")
-        flask_logger.info(f"   Subject: {subject}")
-        flask_logger.info(f"   Tracking: {tracking_number}")
-        return True
-    if not EMAIL_ENABLED:
-        flask_logger.info(f"📧 Email disabled - would send to {recipient}: {subject}")
-        return True
-
-    resend_key = app.config.get('RESEND_API_KEY')
-    smtp_configured = all([app.config.get('SMTP_HOST'), app.config.get('SMTP_USER'), app.config.get('SMTP_PASS')])
-    if smtp_configured and not _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
-        flask_logger.error(f"SMTP host '{app.config.get('SMTP_HOST')}' not resolvable – disabling SMTP for this attempt")
-        smtp_configured = False
-
-    if resend_key:
-        try:
-            success = send_email_via_resend(recipient, subject, html_body, plain_body)
-            if success:
-                flask_logger.info(f"Email sent via Resend to {recipient}")
-                _store_email_history(tracking_number, email_type, recipient, subject, message)
-                return True
-        except Exception as e:
-            flask_logger.warning(f"Resend failed: {e}, falling back to SMTP")
-
-    if smtp_configured:
-        try:
-            success = send_email_via_smtp(recipient, subject, html_body, plain_body)
-            if success:
-                flask_logger.info(f"Email sent via SMTP to {recipient}")
-                _store_email_history(tracking_number, email_type, recipient, subject, message)
-                return True
-        except Exception as e:
-            flask_logger.error(f"SMTP also failed: {e}")
-
-    flask_logger.error(f"Failed to send email to {recipient} via all providers")
-    return False
+# ====== Email functions removed – now imported from utils ======
+# All email sending is handled by utils.send_email_notification.
 
 def get_cached_route_coords(tn):
     if not redis_client:
@@ -2218,27 +2097,22 @@ def health_check():
     except Exception as e:
         status['redis'] = 'error'
         flask_logger.exception("Health check redis failed: %s", e)
-    try:
-        email_provider = 'resend' if app.config.get('RESEND_API_KEY') else app.config.get('EMAIL_PROVIDER', 'smtp')
-        if email_provider == 'resend':
-            if app.config.get('RESEND_API_KEY') and app.config.get('SMTP_FROM'):
-                status['smtp'] = 'resend'
-            else:
-                status['smtp'] = 'unconfigured'
-                flask_logger.warning("Resend email provider is not configured")
-        elif app.config.get('SMTP_HOST') and app.config.get('SMTP_USER') and app.config.get('SMTP_PASS'):
-            if _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
-                with open_smtp_connection() as s:
-                    s.noop()
+    # SMTP health check – only if SMTP is configured (microservice is checked elsewhere)
+    smtp_configured = all([app.config.get('SMTP_HOST'), app.config.get('SMTP_USER'), app.config.get('SMTP_PASS')])
+    if smtp_configured:
+        try:
+            # Simple DNS check – we could try a connection, but that may be heavy
+            if socket.getaddrinfo(app.config['SMTP_HOST'], None):
+                status['smtp'] = 'ok'
             else:
                 status['smtp'] = 'unresolvable'
                 flask_logger.warning(f"SMTP host '{app.config.get('SMTP_HOST')}' cannot be resolved")
-        else:
-            status['smtp'] = 'unconfigured'
-            flask_logger.warning("SMTP not configured")
-    except Exception as e:
-        status['smtp'] = 'unavailable'
-        flask_logger.warning("Health check smtp unavailable: %s", e)
+        except Exception as e:
+            status['smtp'] = 'unavailable'
+            flask_logger.warning(f"SMTP health check failed: {e}")
+    else:
+        status['smtp'] = 'unconfigured'
+        flask_logger.debug("SMTP not configured, skipping health check")
     critical_ok = status['database'] == 'ok' and status['redis'] != 'error'
     return jsonify(status), 200 if critical_ok else 500
 
@@ -2299,9 +2173,7 @@ def debug_info():
         flask_logger.exception("Debug redis check failed: %s", e)
     try:
         if app.config.get('SMTP_HOST') and app.config.get('SMTP_USER') and app.config.get('SMTP_PASS'):
-            if _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
-                with open_smtp_connection() as s:
-                    s.noop()
+            if socket.getaddrinfo(app.config.get('SMTP_HOST'), None):
                 status['smtp'] = 'ok'
             else:
                 status['smtp'] = 'unresolvable'
