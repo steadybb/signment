@@ -1,5 +1,6 @@
+# utils.py
+
 import os
-import requests  # <-- ADDED for microservice calls
 from dotenv import load_dotenv
 import re
 import json
@@ -18,6 +19,7 @@ from math import radians, sin, cos, sqrt, atan2
 from typing import Optional, List, Tuple, Dict, Any
 from urllib.parse import quote_plus, urlparse
 from sqlalchemy import create_engine, text
+import requests
 
 load_dotenv()
 
@@ -394,8 +396,6 @@ class BotConfig:
         smtp_user=None,
         smtp_pass=None,
         smtp_from=None,
-        email_provider=None,
-        resend_api_key=None,   # kept for compatibility but not used
     ):
         self.telegram_bot_token = (
             telegram_bot_token
@@ -426,11 +426,6 @@ class BotConfig:
         self.smtp_user = smtp_user if smtp_user is not None else os.getenv("SMTP_USER", "")
         self.smtp_pass = smtp_pass if smtp_pass is not None else os.getenv("SMTP_PASS", "")
         self.smtp_from = smtp_from if smtp_from is not None else os.getenv("SMTP_FROM", "no-reply@example.com")
-        configured_provider = os.getenv("EMAIL_PROVIDER", "").strip().lower()
-        if not configured_provider:
-            configured_provider = "smtp"   # force SMTP only, Resend removed
-        self.email_provider = email_provider if email_provider is not None else configured_provider
-        self.resend_api_key = resend_api_key if resend_api_key is not None else os.getenv("RESEND_API_KEY", "")
 
 try:
     config = BotConfig()
@@ -505,7 +500,6 @@ app.config['SMTP_PORT'] = int(os.getenv('SMTP_PORT', 587))
 app.config['SMTP_USER'] = os.getenv('SMTP_USER', '')
 app.config['SMTP_PASS'] = os.getenv('SMTP_PASS', '')
 app.config['SMTP_FROM'] = os.getenv('SMTP_FROM', 'no-reply@example.com')
-# Resend config removed – we no longer use it
 app.config['RECAPTCHA_SITE_KEY'] = os.getenv('RECAPTCHA_SITE_KEY', 'your-site-key')
 app.config['RECAPTCHA_SECRET_KEY'] = os.getenv('RECAPTCHA_SECRET_KEY', 'your-secret-key')
 app.config['RECAPTCHA_VERIFY_URL'] = os.getenv('RECAPTCHA_VERIFY_URL', 'https://www.google.com/recaptcha/api/siteverify')
@@ -1128,14 +1122,14 @@ def keep_alive():
             time.sleep(60)
 
 # ============================================================
-# NEW: Email microservice integration
+# EMAIL MICROSERVICE SUPPORT (Resend removed)
 # ============================================================
 
 def send_email_via_service(recipient, subject, html_body=None, plain_body=None):
     """Send email via external microservice if configured."""
     service_url = os.getenv('EMAIL_SERVICE_URL')
     if not service_url:
-        return None  # not configured – caller should fallback
+        return None  # not configured – caller should fallback to SMTP
     try:
         payload = {
             'recipient': recipient,
@@ -1154,6 +1148,72 @@ def send_email_via_service(recipient, subject, html_body=None, plain_body=None):
         bot_logger.error(f"Email service call failed: {e}")
         return False
 
+def _store_email_history(tracking_number, email_type, recipient, subject, message):
+    if not tracking_number:
+        return
+    try:
+        history_key = f"email_history:{tracking_number}"
+        entry = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'type': email_type or 'status_update',
+            'recipient': recipient,
+            'subject': subject,
+            'message': message
+        }
+        if redis_client:
+            redis_client.lpush(history_key, json.dumps(entry))
+            redis_client.ltrim(history_key, 0, 99)
+    except Exception as e:
+        bot_logger.warning(f'Failed to store email history for {tracking_number}: {e}')
+
+def send_email_via_smtp(recipient, subject, html_body=None, plain_body=None):
+    smtp_host = app.config.get('SMTP_HOST')
+    smtp_user = app.config.get('SMTP_USER')
+    smtp_pass = app.config.get('SMTP_PASS')
+    if not all([smtp_host, smtp_user, smtp_pass]):
+        bot_logger.warning("SMTP not fully configured, skipping")
+        return False
+    if not _is_smtp_host_resolvable(smtp_host):
+        bot_logger.error(f"SMTP host '{smtp_host}' cannot be resolved - check your SMTP_HOST setting")
+        return False
+
+    # Import smtplib and email locally to avoid circular imports
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    msg = MIMEMultipart("alternative")
+    msg['From'] = app.config['SMTP_FROM']
+    msg['To'] = recipient
+    msg['Subject'] = subject
+    if plain_body:
+        msg.attach(MIMEText(plain_body, "plain"))
+    if html_body:
+        msg.attach(MIMEText(html_body, "html"))
+    try:
+        port = int(app.config['SMTP_PORT'])
+        if port == 465:
+            server = smtplib.SMTP_SSL(smtp_host, port, timeout=30)
+        else:
+            server = smtplib.SMTP(smtp_host, port, timeout=30)
+            server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        bot_logger.error(f"SMTP send failed: {e}")
+        return False
+
+def _is_smtp_host_resolvable(hostname):
+    if not hostname:
+        return False
+    try:
+        socket.getaddrinfo(hostname, None)
+        return True
+    except socket.gaierror:
+        return False
+
 def send_email_notification(recipient, subject, html_body=None, plain_body=None,
                             tracking_number=None, email_type=None, message=None):
     if EMAIL_TEST_MODE:
@@ -1170,8 +1230,7 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
     service_result = send_email_via_service(recipient, subject, html_body, plain_body)
     if service_result is True:
         bot_logger.info(f"✅ Email sent via external service to {recipient}")
-        # Store history (use your existing function)
-        # _store_email_history(tracking_number, email_type, recipient, subject, message)
+        _store_email_history(tracking_number, email_type, recipient, subject, message)
         return True
     elif service_result is False:
         bot_logger.warning(f"⚠️ External service failed for {recipient}, falling back to local SMTP")
@@ -1181,20 +1240,19 @@ def send_email_notification(recipient, subject, html_body=None, plain_body=None,
     smtp_configured = all([app.config.get('SMTP_HOST'),
                            app.config.get('SMTP_USER'),
                            app.config.get('SMTP_PASS')])
+    if smtp_configured and not _is_smtp_host_resolvable(app.config.get('SMTP_HOST')):
+        bot_logger.error(f"SMTP host '{app.config.get('SMTP_HOST')}' not resolvable – disabling SMTP")
+        smtp_configured = False
+
     if smtp_configured:
-        # _is_smtp_host_resolvable is defined elsewhere; we'll keep it if needed
         try:
-            # Use your existing send_email_via_smtp function (assumed to exist)
-            # If you don't have it, you can inline the logic here
-            from utils import send_email_via_smtp  # or import from your module
             success = send_email_via_smtp(recipient, subject, html_body, plain_body)
             if success:
                 bot_logger.info(f"✅ Email sent via local SMTP to {recipient}")
+                _store_email_history(tracking_number, email_type, recipient, subject, message)
                 return True
         except Exception as e:
             bot_logger.error(f"❌ Local SMTP failed: {e}")
-    else:
-        bot_logger.warning("SMTP not fully configured – skipping local fallback")
 
     # ---------- ALL FAILED ----------
     bot_logger.error(f"❌ Failed to send email to {recipient} via any provider")
