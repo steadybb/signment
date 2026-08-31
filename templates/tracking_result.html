@@ -1758,7 +1758,7 @@
                 });
             }
 
-            // ===== TRACKING UPDATE HANDLER =====
+            // ===== TRACKING UPDATE HANDLER – FIXED =====
             let currentProgress = initialProgress;
             let checkpointSet = new Set(initialCheckpoints);
 
@@ -1815,11 +1815,7 @@
                     }
                 }
 
-                // Location
-                const incomingProgress = toNum(data.progress) || 0;
-                const isFinalStatus = data.status && ['Delivered', 'Exception'].includes(data.status);
-                const progressOk = incomingProgress >= currentProgress || isFinalStatus;
-
+                // ---- Location update: ALWAYS update marker if we have valid coordinates ----
                 if (data.current_location) {
                     document.getElementById('currentLocation').textContent = data.current_location;
                 }
@@ -1837,8 +1833,8 @@
                     }
                 }
 
-                // Update position if we have valid coordinates and progress is acceptable
-                if (lat !== null && lon !== null && progressOk) {
+                // UPDATE MARKER IF WE HAVE VALID COORDINATES – no progress condition
+                if (lat !== null && lon !== null) {
                     // Snap to route BEFORE updating marker and coordinates
                     if (window._lastRouteCoords && window._lastRouteCoords.length >= 2) {
                         const snapped = snapToRoute(lat, lon, window._lastRouteCoords);
@@ -1848,8 +1844,6 @@
                     document.getElementById('currentCoordinates').textContent = `${lat}, ${lon}`;
                     document.getElementById('positionStatusText').textContent = data.paused ? 'Paused' : 'Moving now';
                     moveLiveMarker(lat, lon, data.current_location);
-                } else if (lat !== null && lon !== null) {
-                    debugLog('Stale coordinates ignored (progress not advancing):', lat, lon);
                 }
 
                 applyPausedState(data.paused);
