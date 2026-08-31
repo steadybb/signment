@@ -1353,7 +1353,7 @@
 
   </div> <!-- end container-fluid -->
 
-  <!-- === MODALS (unchanged) === -->
+  <!-- === MODALS === -->
 
   <!-- EMAIL SEND MODAL -->
   <div class="modal fade" id="emailModal" tabindex="-1">
@@ -1471,6 +1471,12 @@
                 <div class="mb-3">
                   <label class="form-label fw-bold">Recipient Email <span class="text-muted">(for notifications)</span></label>
                   <input type="email" class="form-control" id="recipientEmail" placeholder="recipient@example.com">
+                </div>
+                <!-- NEW: Delivery Window (optional) -->
+                <div class="mb-3">
+                  <label class="form-label fw-bold">Delivery Window <span class="text-muted">(optional)</span></label>
+                  <input type="text" class="form-control" id="deliveryWindow" placeholder="e.g. September 05 (end of day) or 2026-09-05">
+                  <small class="text-muted">If left empty, the system will auto‑calculate.</small>
                 </div>
                 <!-- Bulk create toggle -->
                 <div class="form-check mb-3">
@@ -1810,6 +1816,8 @@
       const now = new Date();
       const localStr = now.toISOString().slice(0, 16);
       document.getElementById('shipmentDate').value = localStr;
+      // Clear delivery window field
+      document.getElementById('deliveryWindow').value = '';
       createModal.show();
       fetch('/admin/api/cities')
         .then(r => r.json())
@@ -1891,9 +1899,6 @@
         try {
           const shipments = JSON.parse(document.getElementById('bulkData').value);
           if (!shipments.length) throw new Error('At least one shipment required');
-          // For bulk, we still use the standard create_shipment_record for each, but we'll send to bulk endpoint
-          // The bulk endpoint expects an array of shipments with at least origin/destination.
-          // We'll send whatever fields are present.
           fetch('/admin/api/bulk_create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1918,7 +1923,7 @@
         return;
       }
 
-      // Single shipment – collect all fields
+      // Single shipment – collect all fields including delivery_window
       const data = {
         origin: document.getElementById('origin').value.trim(),
         destination: document.getElementById('destination').value.trim(),
@@ -1931,7 +1936,8 @@
         receiver_phone: document.getElementById('receiverPhone').value.trim(),
         receiver_email: document.getElementById('receiverEmail').value.trim(),
         weight_kg: parseFloat(document.getElementById('weightKg').value) || undefined,
-        shipment_date: document.getElementById('shipmentDate').value || undefined
+        shipment_date: document.getElementById('shipmentDate').value || undefined,
+        delivery_window: document.getElementById('deliveryWindow').value.trim() || undefined
       };
 
       if (!data.origin || !data.destination) {
