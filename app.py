@@ -1680,7 +1680,9 @@ def build_dhl_email_html(tn, status, latest_checkpoint, destination, service_lev
           Need help? Contact DHL Express Support
         </p>
       </div>
+      <!-- UPDATED FOOTER WITH PHYSICAL ADDRESS -->
       <div style="background:#FFCC00;padding:0.8rem;text-align:center;font-size:0.8rem;color:#111827;">
+        123 Logistics Way, London, UK<br>
         © {datetime.now().year} DHL International GmbH. All rights reserved.
       </div>
     </div>
