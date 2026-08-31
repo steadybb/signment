@@ -411,7 +411,8 @@ class SimulationRunner:
 
         pickup_request_logged = False
         pickup_complete_logged = False
-        last_checkpoint_time: Optional[datetime] = None
+        # FIX: use simulated elapsed time for checkpoint gap, not wall-clock datetime
+        last_checkpoint_elapsed: timedelta = timedelta(0)
 
         # Recover state from existing checkpoints
         for cp in checkpoints:
@@ -477,7 +478,7 @@ class SimulationRunner:
                     if self._append_checkpoint_if_new(checkpoints, line):
                         self.hooks.on_checkpoint_added(line)
                         pickup_request_logged = True
-                        last_checkpoint_time = now
+                        last_checkpoint_elapsed = elapsed_sim
                         self._commit(checkpoints, "Pending", stage, progress, origin,
                                      plan.legs[0].from_coords['lat'], plan.legs[0].from_coords['lon'])
                 elif elapsed_sim > plan.pickup_pad * 0.6 and not pickup_complete_logged:
@@ -486,7 +487,7 @@ class SimulationRunner:
                         self.hooks.on_checkpoint_added(line)
                         pickup_complete_logged = True
                         current_status = "In_Transit"
-                        last_checkpoint_time = now
+                        last_checkpoint_elapsed = elapsed_sim
                         self._commit(checkpoints, "In_Transit", stage, progress, origin,
                                      plan.legs[0].from_coords['lat'], plan.legs[0].from_coords['lon'])
                 else:
@@ -504,7 +505,7 @@ class SimulationRunner:
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('held')
                             current_status = "Customs_Clearance"
-                            last_checkpoint_time = now
+                            last_checkpoint_elapsed = elapsed_sim
                             lat, lon = leg.to_coords['lat'], leg.to_coords['lon']
                             self._commit(checkpoints, "Customs_Clearance", stage, progress, leg.to_place, lat, lon)
                 else:
@@ -516,7 +517,7 @@ class SimulationRunner:
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('depart')
                             current_status = "In_Transit"
-                            last_checkpoint_time = now
+                            last_checkpoint_elapsed = elapsed_sim
                             self._commit(checkpoints, "In_Transit", stage, progress, leg.from_place, lat, lon)
                     elif ('customs_cleared' not in leg.events_emitted and leg.customs_dwell > timedelta(0)
                           and 'held' in leg.events_emitted and frac >= 0.999):
@@ -525,7 +526,7 @@ class SimulationRunner:
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('customs_cleared')
                             current_status = "In_Transit"
-                            last_checkpoint_time = now
+                            last_checkpoint_elapsed = elapsed_sim
                             self._commit(checkpoints, "In_Transit", stage, progress, leg.to_place, lat, lon)
                     elif 'arrive' not in leg.events_emitted and frac >= 0.999:
                         line = self.checkpoints_generator.leg_arrive(now, leg)
@@ -533,20 +534,21 @@ class SimulationRunner:
                             self.hooks.on_checkpoint_added(line)
                             leg.events_emitted.add('arrive')
                             current_status = "In_Transit"
-                            last_checkpoint_time = now
+                            last_checkpoint_elapsed = elapsed_sim
                             self._commit(checkpoints, "In_Transit", stage, progress, leg.to_place, lat, lon)
                     else:
+                        # FIX: use simulated elapsed time for checkpoint gap
                         should_log_midpoint = (
                             leg.distance_km >= MIN_LEG_DISTANCE_FOR_CHECKPOINT_KM
                             and 0.15 < frac < 0.85
-                            and (last_checkpoint_time is None or now - last_checkpoint_time >= timedelta(seconds=CHECKPOINT_MIN_GAP_SECONDS))
+                            and (elapsed_sim - last_checkpoint_elapsed).total_seconds() >= CHECKPOINT_MIN_GAP_SECONDS
                             and self.rng.random() < 0.05
                         )
                         if should_log_midpoint:
                             line = self.checkpoints_generator.leg_depart(now, leg)
                             if self._append_checkpoint_if_new(checkpoints, line):
                                 self.hooks.on_checkpoint_added(line)
-                                last_checkpoint_time = now
+                                last_checkpoint_elapsed = elapsed_sim
                                 self._commit(checkpoints, "In_Transit", stage, progress, leg.from_place, lat, lon)
                         else:
                             self.hooks.on_position_update(progress, leg.from_place if frac < 0.5 else leg.to_place,
@@ -563,7 +565,7 @@ class SimulationRunner:
                         self.hooks.on_checkpoint_added(line)
                         last_leg.events_emitted.add('out_for_delivery')
                         current_status = "Out_for_Delivery"
-                        last_checkpoint_time = now
+                        last_checkpoint_elapsed = elapsed_sim
                         self._commit(checkpoints, "Out_for_Delivery", stage, progress, destination, lat, lon)
                 else:
                     time_since_ofd = elapsed_sim - (last_leg.end_offset + plan.last_mile_pad)
@@ -574,7 +576,7 @@ class SimulationRunner:
                                 self.hooks.on_checkpoint_added(line)
                                 delivery_attempts += 1
                                 current_status = "Exception"
-                                last_checkpoint_time = now
+                                last_checkpoint_elapsed = elapsed_sim
                                 self._commit(checkpoints, "Exception", Stage.EXCEPTION, progress, destination, lat, lon)
                                 self.hooks.sleep(self._scaled_sleep(20, 60, speed_multiplier))
                                 continue
