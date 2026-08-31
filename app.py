@@ -93,7 +93,6 @@ except Exception:
     fuzz = None
 RAPIDFUZZ_THRESHOLD = int(os.getenv('RAPIDFUZZ_THRESHOLD', '70'))
 
-# Fixed: removed invisible character before the first key
 HIGH_VALUE_TRANSLITERATION_MAP = {
     'רחובות': 'Rehovot, IL',
     'rehovot': 'Rehovot, IL',
@@ -111,18 +110,12 @@ load_dotenv()
 # Database fallback function
 # ============================================================
 def get_working_database_uri(configured_uri):
-    """
-    Test the configured database URI. If it works, return it.
-    Otherwise, fall back to SQLite.
-    """
     if configured_uri and configured_uri.startswith('sqlite'):
         logging.info(f"Using SQLite database: {configured_uri}")
         return configured_uri
-
     if not configured_uri:
         logging.warning("No DATABASE_URI configured. Using SQLite fallback.")
         return 'sqlite:///app_fallback.db'
-
     try:
         connect_args = {}
         if 'postgresql' in configured_uri:
@@ -429,14 +422,6 @@ app.config.update(
 # ========== Register payment routes ==========
 payment_routes.init_payment_routes(app)
 
-# ========== Register Telegram bot handlers (webhook mode) ==========
-try:
-    bot = get_bot()
-    register_handlers(bot)
-    flask_logger.info("Telegram bot handlers registered successfully.")
-except Exception as e:
-    flask_logger.error(f"Failed to register bot handlers: {e}")
-
 # ========== Context processor ==========
 @app.context_processor
 def utility_processor():
@@ -501,8 +486,18 @@ if redis_url:
     }
 cache = Cache(app, config=cache_config)
 
+# ====== Define flask_logger here (before using it) ======
 flask_logger = logging.getLogger('flask_app')
 sim_logger = logging.getLogger('simulator')
+
+# ========== Register Telegram bot handlers (webhook mode) ==========
+# Now flask_logger is defined, so we can log registration success/failure.
+try:
+    bot = get_bot()
+    register_handlers(bot)
+    flask_logger.info("Telegram bot handlers registered successfully.")
+except Exception as e:
+    flask_logger.error(f"Failed to register bot handlers: {e}")
 
 # ====== Thread-safe geocode rate limiter ======
 _geocode_rate_limiter_lock = threading.Lock()
