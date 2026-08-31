@@ -701,13 +701,22 @@ class DummyBot:
             url = None
         return Info()
 
+# ============================================================
+# FIX: Singleton bot instance
+# ============================================================
+_bot_instance = None
 
 def get_bot() -> TeleBot:
-    token = config.telegram_bot_token
-    if not token or ':' not in token:
-        bot_logger.warning("Invalid or missing Telegram token; using DummyBot")
-        return DummyBot()
-    return TeleBot(token)
+    global _bot_instance
+    if _bot_instance is None:
+        token = config.telegram_bot_token
+        if not token or ':' not in token:
+            bot_logger.warning("Invalid or missing Telegram token; using DummyBot")
+            _bot_instance = DummyBot()
+        else:
+            _bot_instance = TeleBot(token)
+    return _bot_instance
+# ============================================================
 
 def is_admin(user_id: int) -> bool:
     return user_id in config.allowed_admins
