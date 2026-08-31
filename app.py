@@ -93,14 +93,15 @@ except Exception:
     fuzz = None
 RAPIDFUZZ_THRESHOLD = int(os.getenv('RAPIDFUZZ_THRESHOLD', '70'))
 
+# Fixed: removed invisible character before the first key
 HIGH_VALUE_TRANSLITERATION_MAP = {
-‎    'רחובות': 'Rehovot, IL',
+    'רחובות': 'Rehovot, IL',
     'rehovot': 'Rehovot, IL',
-‎    'תל אביב': 'Tel Aviv, IL',
-‎    'תל-אביב': 'Tel Aviv, IL',
-‎    'תלאביב': 'Tel Aviv, IL',
-‎    'מדריד': 'Madrid, ES',
-‎    'לונדון': 'London, UK',
+    'תל אביב': 'Tel Aviv, IL',
+    'תל-אביב': 'Tel Aviv, IL',
+    'תלאביב': 'Tel Aviv, IL',
+    'מדריד': 'Madrid, ES',
+    'לונדון': 'London, UK',
 }
 from collections import deque, defaultdict
 
