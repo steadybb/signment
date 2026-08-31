@@ -1137,7 +1137,8 @@ def send_email_via_service(recipient, subject, html_body=None, plain_body=None):
             'html_body': html_body,
             'plain_body': plain_body
         }
-        resp = requests.post(service_url, json=payload, timeout=30)
+        # Increased timeout to 120 seconds to match worker
+        resp = requests.post(service_url, json=payload, timeout=120)
         if resp.status_code == 200:
             data = resp.json()
             return data.get('success', False)
@@ -1192,10 +1193,11 @@ def send_email_via_smtp(recipient, subject, html_body=None, plain_body=None):
         msg.attach(MIMEText(html_body, "html"))
     try:
         port = int(app.config['SMTP_PORT'])
+        # Increased timeout to 60 seconds
         if port == 465:
-            server = smtplib.SMTP_SSL(smtp_host, port, timeout=30)
+            server = smtplib.SMTP_SSL(smtp_host, port, timeout=60)
         else:
-            server = smtplib.SMTP(smtp_host, port, timeout=30)
+            server = smtplib.SMTP(smtp_host, port, timeout=60)
             server.starttls()
         server.login(smtp_user, smtp_pass)
         server.send_message(msg)
