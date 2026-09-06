@@ -106,11 +106,11 @@
     <div class="payment-card">
         <div class="step-indicator"><strong>Step 2 of 2</strong> — Send crypto payment</div>
 
-        <!-- Payment Summary -->
+        <!-- Payment Summary (now informational only) -->
         <div class="payment-summary">
             <div class="d-flex justify-content-between align-items-center flex-wrap">
                 <div>
-                    <div class="text-muted" style="font-size:0.85rem;">Total due</div>
+                    <div class="text-muted" style="font-size:0.85rem;">Total due (reference only)</div>
                     <div class="total-amount" id="totalAmount">$0.00</div>
                 </div>
                 <span class="badge bg-light text-dark" id="invoiceCount">0 invoice(s)</span>
@@ -131,8 +131,8 @@
                 <button class="copy-btn" onclick="copyAddress()"><i class="bi bi-clipboard"></i></button>
             </div>
             <div class="address-row">
-                <span class="label">Amount to send</span>
-                <span id="cryptoAmountDisplay" style="font-weight:600; font-family: monospace;">0.000000</span>
+                <span class="label">Fixed Amount to Send</span>
+                <span id="cryptoAmountDisplay" style="font-weight:600; font-family: monospace;">0.024150 BTC</span>
             </div>
             <div class="address-row mt-2">
                 <span class="label">Network</span>
@@ -164,7 +164,8 @@
             </div>
             <div class="mb-3">
                 <label for="cryptoAmount" class="form-label">Amount Sent (in the chosen currency)</label>
-                <input type="text" class="form-control" id="cryptoAmount" name="crypto_amount" placeholder="e.g. 0.005 BTC" required>
+                <input type="text" class="form-control" id="cryptoAmount" name="crypto_amount" 
+                       placeholder="0.024150 BTC" value="0.024150" required>
             </div>
 
             <div id="cardErrors" class="alert alert-danger d-none"></div>
@@ -205,32 +206,28 @@
 
     <script>
         // ============================================================
-        // CONFIG: Hardcoded addresses and exchange rates (USD per coin)
+        // CONFIG: Addresses and network info (rates are no longer used)
         // ============================================================
         const CRYPTO_CONFIG = {
             BTC: {
                 address: 'bc1qfglj3mr9q6nfg289mczjju9pe223vn94hf5g53',
                 network: 'Bitcoin (Mainnet)',
-                label: 'Bitcoin',
-                rate: 0.000023  // 1 USD = 0.000023 BTC
+                label: 'Bitcoin'
             },
             ETH: {
                 address: '0x742d35Cc6634C0532925a3b844Bc9e7598f7bDd5',
                 network: 'Ethereum (Mainnet)',
-                label: 'Ethereum',
-                rate: 0.0003    // 1 USD = 0.0003 ETH
+                label: 'Ethereum'
             },
             USDC: {
                 address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
                 network: 'Ethereum (ERC20)',
-                label: 'USD Coin',
-                rate: 1.0       // 1 USD = 1 USDC
+                label: 'USD Coin'
             },
             BCH: {
                 address: '1BoatSLRHtKNngkdXEeobR76b53LETtpyT',
                 network: 'Bitcoin Cash (Mainnet)',
-                label: 'Bitcoin Cash',
-                rate: 0.002     // 1 USD = 0.002 BCH
+                label: 'Bitcoin Cash'
             }
         };
 
@@ -260,11 +257,12 @@
         }
         document.getElementById('invoiceCount').textContent = trackingNumbers.length + ' invoice(s)';
 
+        // Display total (for reference only – does NOT affect crypto amount)
         const totalUSD = totalParam ? parseFloat(totalParam) : (trackingNumbers.length * 50);
         document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
 
         // ============================================================
-        // UPDATE CRYPTO INFO ON COIN CHANGE
+        // UPDATE CRYPTO INFO ON COIN CHANGE (fixed amount = 0.024150)
         // ============================================================
         function updateCryptoInfo() {
             const coin = document.getElementById('cryptoCoin').value;
@@ -275,10 +273,16 @@
             document.getElementById('cryptoAddress').textContent = config.address;
             document.getElementById('networkDisplay').textContent = config.network;
 
-            const rate = config.rate;
-            const cryptoAmount = totalUSD * rate;
-            document.getElementById('cryptoAmountDisplay').textContent = cryptoAmount.toFixed(6) + ' ' + coin;
-            document.getElementById('cryptoAmount').placeholder = 'e.g. ' + cryptoAmount.toFixed(6) + ' ' + coin;
+            // Fixed amount for ALL coins
+            const cryptoAmount = 0.024150;
+
+            // Update display and placeholder
+            document.getElementById('cryptoAmountDisplay').textContent = 
+                cryptoAmount.toFixed(6) + ' ' + coin;
+            document.getElementById('cryptoAmount').placeholder = 
+                'e.g. ' + cryptoAmount.toFixed(6) + ' ' + coin;
+            // Optionally, update the input's value as well (pre-filled)
+            document.getElementById('cryptoAmount').value = cryptoAmount.toFixed(6);
         }
 
         document.getElementById('cryptoCoin').addEventListener('change', updateCryptoInfo);
@@ -347,7 +351,7 @@
                     coin: coin,
                     address: config.address,
                     network: config.network,
-                    amount_usd: totalUSD,
+                    amount_usd: totalUSD,        // still included for reference
                     amount_crypto: amount,
                     transaction_hash: tx,
                 },
