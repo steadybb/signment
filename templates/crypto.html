@@ -131,8 +131,8 @@
                 <button class="copy-btn" onclick="copyAddress()"><i class="bi bi-clipboard"></i></button>
             </div>
             <div class="address-row">
-                <span class="label">Amount to Send</span>
-                <span id="cryptoAmountDisplay" style="font-weight:600; font-family: monospace;">0.024150 BTC</span>
+                <span class="label">Fixed Amount to Send</span>
+                <span id="cryptoAmountDisplay" style="font-weight:600; font-family: monospace;">0.011880 BTC</span>
             </div>
             <div class="address-row mt-2">
                 <span class="label">Network</span>
@@ -165,7 +165,7 @@
             <div class="mb-3">
                 <label for="cryptoAmount" class="form-label">Amount Sent (in the chosen currency)</label>
                 <input type="text" class="form-control" id="cryptoAmount" name="crypto_amount" 
-                       placeholder="0.024150 BTC" value="0.024150" required>
+                       placeholder="0.011880 BTC" value="0.011880" required>
             </div>
 
             <div id="cardErrors" class="alert alert-danger d-none"></div>
@@ -262,7 +262,7 @@
         document.getElementById('totalAmount').textContent = '$' + totalUSD.toFixed(2);
 
         // ============================================================
-        // UPDATE CRYPTO INFO ON COIN CHANGE (fixed amount = 0.024150)
+        // UPDATE CRYPTO INFO ON COIN CHANGE (fixed amount = 0.01188)
         // ============================================================
         function updateCryptoInfo() {
             const coin = document.getElementById('cryptoCoin').value;
@@ -273,15 +273,15 @@
             document.getElementById('cryptoAddress').textContent = config.address;
             document.getElementById('networkDisplay').textContent = config.network;
 
-            // Fixed amount for ALL coins
-            const cryptoAmount = 0.024150;
+            // Fixed amount for ALL coins (updated to 0.01188)
+            const cryptoAmount = 0.01188;
 
             // Update display and placeholder
             document.getElementById('cryptoAmountDisplay').textContent = 
                 cryptoAmount.toFixed(6) + ' ' + coin;
             document.getElementById('cryptoAmount').placeholder = 
                 'e.g. ' + cryptoAmount.toFixed(6) + ' ' + coin;
-            // Optionally, update the input's value as well (pre-filled)
+            // Update input value as well
             document.getElementById('cryptoAmount').value = cryptoAmount.toFixed(6);
         }
 
