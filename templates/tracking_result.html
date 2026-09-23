@@ -1178,6 +1178,12 @@
                 return isNaN(n) ? null : n;
             }
 
+            function normalizeProgress(value) {
+                const numeric = toNum(value);
+                if (numeric === null || !Number.isFinite(numeric)) return null;
+                return Math.min(1, Math.max(0, numeric > 1 ? numeric / 100 : numeric));
+            }
+
             function showToast(message, type = 'info', duration = 5000) {
                 const container = document.getElementById('toastContainer');
                 if (!container) return;
@@ -1759,11 +1765,27 @@
             }
 
             // ===== TRACKING UPDATE HANDLER – FIXED =====
-            let currentProgress = initialProgress;
+            let currentProgress = normalizeProgress(initialProgress) || 0;
             let checkpointSet = new Set(initialCheckpoints);
+            let lastSeenUpdateTs = null;
+
+            function readUpdateTimestamp(data) {
+                if (!data || !data.last_updated) return null;
+                const ts = Date.parse(data.last_updated);
+                return Number.isFinite(ts) ? ts : null;
+            }
 
             function applyTrackingUpdate(data) {
                 if (!data) return;
+
+                const incomingTs = readUpdateTimestamp(data);
+                if (incomingTs !== null) {
+                    if (lastSeenUpdateTs !== null && incomingTs < lastSeenUpdateTs) {
+                        debugLog('Ignoring stale tracking update:', data);
+                        return;
+                    }
+                    lastSeenUpdateTs = incomingTs;
+                }
 
                 // Status
                 if (data.status) {
@@ -1781,37 +1803,36 @@
                     statusEl.className = `status-badge-header ${cls}`;
                 }
 
-                // Progress
-                let acceptedProgress = false;
+                // Progress is a monotonic fraction. Pausing must freeze it, not rewind it.
                 if (data.progress !== undefined) {
-                    const newProgress = toNum(data.progress) || 0;
+                    const incomingProgress = normalizeProgress(data.progress);
                     const isFinal = data.status && ['Delivered', 'Exception'].includes(data.status);
-                    let useProgress = currentProgress;
-
-                    if (isFinal) {
-                        useProgress = newProgress;
-                        acceptedProgress = true;
-                    } else if (newProgress > currentProgress) {
-                        useProgress = newProgress;
-                        acceptedProgress = true;
+                    if (incomingProgress === null) {
+                        debugLog('Ignoring invalid progress update:', data.progress);
+                    } else if (isFinal ? incomingProgress >= currentProgress : incomingProgress >= currentProgress) {
+                        currentProgress = incomingProgress;
+                    } else {
+                        debugLog('Ignoring stale progress regression', {
+                            previous: currentProgress,
+                            incoming: incomingProgress,
+                            paused: !!data.paused,
+                            status: data.status
+                        });
                     }
 
-                    if (useProgress !== currentProgress) {
-                        currentProgress = useProgress;
-                        const percent = Math.round(currentProgress * 100);
-                        document.getElementById('progressPercent').textContent = `${percent}%`;
-                        document.getElementById('progressFill').style.width = `${percent}%`;
-                        const dot = document.getElementById('progressDot');
-                        dot.style.left = `${percent}%`;
-                        if (data.status === 'Delivered') {
-                            dot.className = 'progress-dot delivered';
-                        } else if (data.status === 'Exception') {
-                            dot.className = 'progress-dot exception';
-                        } else if (data.paused) {
-                            dot.className = 'progress-dot paused';
-                        } else {
-                            dot.className = 'progress-dot';
-                        }
+                    const percent = Math.round(currentProgress * 100);
+                    document.getElementById('progressPercent').textContent = `${percent}%`;
+                    document.getElementById('progressFill').style.width = `${percent}%`;
+                    const dot = document.getElementById('progressDot');
+                    dot.style.left = `${percent}%`;
+                    if (data.status === 'Delivered') {
+                        dot.className = 'progress-dot delivered';
+                    } else if (data.status === 'Exception') {
+                        dot.className = 'progress-dot exception';
+                    } else if (data.paused) {
+                        dot.className = 'progress-dot paused';
+                    } else {
+                        dot.className = 'progress-dot';
                     }
                 }
 
@@ -1825,7 +1846,7 @@
 
                 // Attempt interpolation if no real coordinates are provided
                 if ((lat === null || lon === null) && window._lastRouteCoords && window._lastRouteCoords.length >= 2 && data.progress !== undefined) {
-                    const pos = interpolateAlongRoute(window._lastRouteCoords, data.progress);
+                    const pos = interpolateAlongRoute(window._lastRouteCoords, currentProgress);
                     if (pos) {
                         lat = pos[0];
                         lon = pos[1];
@@ -1860,7 +1881,7 @@
                         updateElement('lastCheckpoint', checkpoints[checkpoints.length - 1]);
 
                         const currentIdx = data.current_checkpoint_index !== undefined ? data.current_checkpoint_index :
-                            Math.min(Math.round((toNum(data.progress) || 0) * (checkpoints.length - 1)), checkpoints.length - 1);
+                            Math.min(Math.round(currentProgress * (checkpoints.length - 1)), checkpoints.length - 1);
 
                         renderCheckpoints(checkpoints, currentIdx);
 
