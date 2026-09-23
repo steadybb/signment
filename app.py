@@ -775,6 +775,63 @@ def cached_geocode_with_fallback(address):
     return geocode_with_fallback(address)
 
 SIM_BROADCAST_INTERVAL_SEC = float(os.getenv('SIM_BROADCAST_INTERVAL_SEC', '2.0') or '2.0')
+_TRACKING_EMIT_CACHE = {}
+
+
+def _tracking_payload_fingerprint(payload):
+    safe = {}
+    for key, value in sorted((payload or {}).items()):
+        if key == 'tracking_number' and value is None:
+            continue
+        if isinstance(value, (dict, list, tuple)):
+            safe[key] = json.loads(json.dumps(value, default=str))
+        else:
+            safe[key] = value
+    return json.dumps(safe, sort_keys=True, separators=(',', ':'), default=str)
+
+
+def _should_emit_tracking_update(tn, payload):
+    if not tn or not isinstance(payload, dict):
+        return False
+
+    payload = dict(payload)
+    payload.setdefault('tracking_number', tn)
+
+    prev = _TRACKING_EMIT_CACHE.get(tn)
+    if prev:
+        prev_payload = prev.get('payload', {})
+        prev_ts = prev.get('timestamp')
+        current_ts = None
+        try:
+            last_updated = payload.get('last_updated')
+            if last_updated:
+                current_ts = datetime.fromisoformat(str(last_updated).replace('Z', '+00:00')).timestamp()
+        except Exception:
+            current_ts = None
+
+        if current_ts is not None and prev_ts is not None and current_ts < prev_ts:
+            return False
+
+        if prev_payload and _tracking_payload_fingerprint(payload) == _tracking_payload_fingerprint(prev_payload):
+            return False
+
+        try:
+            prev_progress = float(prev_payload.get('progress', 0) or 0)
+            current_progress = float(payload.get('progress', 0) or 0)
+            if prev_progress > current_progress and current_ts is None and payload.get('status') not in ('Delivered', 'Exception'):
+                return False
+        except Exception:
+            pass
+
+    _TRACKING_EMIT_CACHE[tn] = {
+        'payload': payload,
+        'timestamp': (
+            datetime.fromisoformat(str(payload.get('last_updated')).replace('Z', '+00:00')).timestamp()
+            if payload.get('last_updated') else time.time()
+        )
+    }
+    return True
+
 
 def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, current_lon=None,
                    status=None, delivery_location=None, last_updated=None,
@@ -823,6 +880,10 @@ def sim_emit_light(tn, progress=None, current_location=None, current_lat=None, c
             payload['proof_of_delivery'] = proof_of_delivery
         if stage is not None:
             payload['stage'] = stage
+
+        if not _should_emit_tracking_update(tn, payload):
+            return
+
         socketio.emit('tracking_update', payload, namespace='/', room=tn)
     except Exception:
         pass
@@ -1625,10 +1686,10 @@ def simulate_tracking(tn):
                 broadcast=lambda: broadcast_update(tn),
                 sleep=eventlet.sleep,
                 now=datetime.now,
-                generate_pod=DHLRealisticSimulator.generate_pod_info
+                generate_pod=DHLRealisticSimulator.generate_pod_info,
+                get_sim_days=lambda: rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10'))
             )
-            sim_days = float(rget('sim_days', tn, os.getenv('SIM_DEFAULT_DAYS', '10')))
-            runner = SimulationRunner(tn, hooks, sim_days_cap=sim_days)
+            runner = SimulationRunner(tn, hooks)
             runner.run()
     except Exception as e:
         flask_logger.error(f"Simulation error for {tn}: {e}")
@@ -1835,6 +1896,8 @@ def broadcast_update(tn):
         "payment_status": payment_status,
         "payment_reason": payment_reason
     }
+    if not _should_emit_tracking_update(tn, data):
+        return
     try:
         socketio.emit('tracking_update', data, namespace='/', room=tn)
     except TypeError:
@@ -3420,7 +3483,10 @@ def admin_debug():
     return jsonify(info)
 
 if __name__ == '__main__':
-    start_background_services()
+    if os.getenv('SKIP_BACKGROUND_SERVICES', 'false').strip().lower() in ('1', 'true', 'yes'):
+        flask_logger.info('SKIP_BACKGROUND_SERVICES enabled; skipping startup background services.')
+    else:
+        start_background_services()
     port_env = os.getenv('PORT') or app.config.get('PORT')
     try:
         port = int(port_env) if port_env else 10000
